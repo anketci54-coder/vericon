@@ -230,6 +230,32 @@ def _query_item(config: Config, query: str) -> dict:
     }
 
 
+def read_home_currency(config: Config) -> str | None:
+    """Read QBO base currency. Unknown for multicurrency, malformed or absent settings.
+
+    No FX inference or conversion is permitted in the sandbox price check.
+    """
+    token, realm = get_access_token(config)
+    response = requests.get(
+        f"{SANDBOX_API}/v3/company/{realm}/preferences",
+        headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+        timeout=20,
+    )
+    if response.status_code != 200:
+        raise ValueError(f"QuickBooks preferences GET failed (HTTP {response.status_code})")
+    payload = response.json()
+    prefs = payload.get("Preferences")
+    if payload.get("Fault") or not isinstance(prefs, dict):
+        raise ValueError("QuickBooks preferences unavailable")
+    currency = prefs.get("CurrencyPrefs") or {}
+    if currency.get("MultiCurrencyEnabled") is not False:
+        return None  # Different selling currencies may apply; block price comparison.
+    home = (currency.get("HomeCurrency") or {}).get("value")
+    if not isinstance(home, str) or not re.fullmatch(r"[A-Z]{3}", home):
+        return None
+    return home
+
+
 def read_inventory_item(config: Config, name: str) -> dict:
     if not re.fullmatch(r"[\w .-]{1,100}", name, flags=re.ASCII):
         raise ValueError("Invalid Item name for safe read-only query")

@@ -217,3 +217,30 @@ def test_qbo_source_has_no_accounting_write_http_calls():
     assert ("_query_item", "get") in outbound
     assert all(method == "get" or (fn == "_exchange" and method == "post")
                for fn, method in outbound)
+
+
+def test_qbo_currency_from_preferences_only_when_unambiguous(cfg, monkeypatch):
+    q._save_tokens(cfg, {"access_token": "A", "refresh_token": "B", "expires_in": 3600}, "12345")
+    seen=[]
+    def get(url, *, headers, timeout):
+        seen.append(url)
+        return FakeResponse({"Preferences": {"CurrencyPrefs": {
+            "MultiCurrencyEnabled": False, "HomeCurrency": {"value": "USD"}}}})
+    monkeypatch.setattr(q.requests,"get",get)
+    assert q.read_home_currency(cfg)=="USD"
+    assert seen[0].endswith('/preferences')
+    monkeypatch.setattr(q.requests,"get",lambda *args,**kwargs: FakeResponse({
+        "Preferences": {"CurrencyPrefs": {"MultiCurrencyEnabled": True,
+                                           "HomeCurrency": {"value": "USD"}}}}))
+    assert q.read_home_currency(cfg) is None
+    monkeypatch.setattr(q.requests,"get",lambda *args,**kwargs: FakeResponse({
+        "Preferences": {"CurrencyPrefs": {"MultiCurrencyEnabled": False}}}))
+    assert q.read_home_currency(cfg) is None
+
+
+def test_qbo_currency_api_failure_does_not_expose_body(cfg, monkeypatch):
+    q._save_tokens(cfg, {"access_token": "A", "refresh_token": "B", "expires_in": 3600}, "12345")
+    monkeypatch.setattr(q.requests,"get",lambda *args,**kwargs: FakeResponse({"secret":"HIDE"},status=403))
+    with pytest.raises(ValueError,match="HTTP 403") as err:
+        q.read_home_currency(cfg)
+    assert "HIDE" not in str(err.value)

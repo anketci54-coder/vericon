@@ -25,11 +25,14 @@ def cred():
 def records():
     return {
         "data": {
+            "shop": {"currencyCode": "TRY"},
             "productVariants": {
                 "pageInfo": {"hasNextPage": False, "endCursor": None},
                 "nodes": [{
                     "id": "gid://shopify/ProductVariant/1",
                     "sku": "VERICON-TEST-001",
+                    "price": "100.00",
+                    "product": {"status": "DRAFT"},
                     "inventoryItem": {
                         "id": "gid://shopify/InventoryItem/1",
                         "tracked": True,
@@ -87,6 +90,9 @@ def test_missing_read_scope_blocks_access(cred, monkeypatch):
 def test_exact_sku_stock_read_only(cred, monkeypatch, records):
     seen = install_fake_requests(monkeypatch, records)
     result = s.read_stock(cred, "VERICON-TEST-001")
+    assert result["catalog_price"] == "100.00"
+    assert result["catalog_currency"] == "TRY"
+    assert result["product_status"] == "DRAFT"
     assert result["total_on_hand"] == 10
     assert result["locations"][0]["available"] == 10
     assert result["locations"][0]["committed"] == 0
@@ -158,16 +164,20 @@ def test_controlled_comparison_one_location(cred, monkeypatch, records):
     monkeypatch.setattr(s, "load_setup", lambda: cred)
     import qbo_oauth
     monkeypatch.setattr(qbo_oauth, "load_saved_setup", lambda: object())
+    monkeypatch.setattr(qbo_oauth, "read_home_currency", lambda config: "USD")
     from datetime import datetime, timezone
     monkeypatch.setattr(qbo_oauth, "read_inventory_item_by_sku", lambda cfg, sku: {
         "query_time_utc": datetime.now(timezone.utc).isoformat(),
         "items": [{"Sku": "VERICON-TEST-001", "Type": "Inventory",
-                   "TrackQtyOnHand": True, "QtyOnHand": 7}]
+                   "TrackQtyOnHand": True, "QtyOnHand": 7, "UnitPrice": 100}]
     })
     res = s.check_both("VERICON-TEST-001")
     assert res["delta_shopify_minus_qbo"] == "3"
     assert res["status"] == "TEST_DIFFERENCE"
     assert res["read_gap_seconds"] <= 30
+    assert res["catalog_price_check"]["status"] == "BLOCKED_PRICE_CURRENCY_MISMATCH"
+    assert res["catalog_price_check"]["shopify_catalog_currency"] == "TRY"
+    assert res["catalog_price_check"]["quickbooks_home_currency"] == "USD"
     assert res["shopify_quantity_basis"] == "available"
     assert res["shopify_available"] == "10"
     assert res["data_origin"] == "live_shopify_and_quickbooks_sandbox_api_queries"
@@ -197,6 +207,7 @@ def test_stale_cross_api_read_is_blocked(cred, monkeypatch, records):
     monkeypatch.setattr(s, "load_setup", lambda: cred)
     import qbo_oauth
     monkeypatch.setattr(qbo_oauth, "load_saved_setup", lambda: object())
+    monkeypatch.setattr(qbo_oauth, "read_home_currency", lambda config: "USD")
     monkeypatch.setattr(qbo_oauth, "read_inventory_item_by_sku", lambda cfg, sku: {
         "query_time_utc": "2024-01-01T00:00:00+00:00",
         "items": [{"Sku": "VERICON-TEST-001", "Type": "Inventory",
@@ -269,3 +280,23 @@ def test_shopify_source_has_no_graphql_mutation_calls():
     assert outbound == {("get_access_token", "post"), ("read_stock", "post")}
     assert s.STOCK_QUERY.lstrip().startswith("query ")
     assert "mutation" not in s.STOCK_QUERY.lower()
+
+
+def test_price_guards_currency_draft_and_unverified_policy():
+    original = {"catalog_price": "100.00", "catalog_currency": "TRY", "product_status": "ACTIVE"}
+    item = {"UnitPrice": 100}
+    assert s.price_evidence(original, item, "USD")["status"] == "BLOCKED_PRICE_CURRENCY_MISMATCH"
+    assert s.price_evidence(original, item, None)["status"] == "BLOCKED_QBO_CURRENCY_UNKNOWN"
+    assert s.price_evidence(original, {"UnitPrice": None}, "TRY")["status"] == "BLOCKED_PRICE_FIELDS_MISSING"
+    assert s.price_evidence({**original, "product_status": "DRAFT"}, item, "TRY")["status"] == "BLOCKED_PRODUCT_NOT_ACTIVE"
+    assert s.price_evidence(original, item, "TRY")["status"] == "BLOCKED_PRICE_POLICY_UNVERIFIED"
+    assert "price_delta" not in s.price_evidence(original, item, "USD")
+
+
+def test_graphql_price_query_uses_read_only_shop_currency(cred, monkeypatch, records):
+    calls=install_fake_requests(monkeypatch,records)
+    s.read_stock(cred,"VERICON-TEST-001")
+    query=calls[1]["json"]["query"]
+    assert "shop { currencyCode }" in query
+    assert "price" in query
+    assert "mutation" not in query.lower()

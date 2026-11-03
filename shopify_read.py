@@ -30,10 +30,12 @@ SKU_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
 
 STOCK_QUERY = """
 query VericonSkuInventory($search: String!) {
+  shop { currencyCode }
   productVariants(first: 10, query: $search) {
     pageInfo { hasNextPage endCursor }
     nodes {
-      id sku
+      id sku price
+      product { status }
       inventoryItem {
         id tracked
         inventoryLevels(first: 20) {
@@ -140,7 +142,11 @@ def read_stock(config: Config, sku: str) -> dict:
     body = response.json()
     if body.get("errors"):
         raise ValueError("Shopify returned GraphQL errors; inventory not verified")
-    conn = body.get("data", {}).get("productVariants")
+    data = body.get("data") or {}
+    currency = (data.get("shop") or {}).get("currencyCode")
+    if not isinstance(currency, str) or not re.fullmatch(r"[A-Z]{3}", currency):
+        raise ValueError("Shopify default currency absent or invalid")
+    conn = data.get("productVariants")
     if not isinstance(conn, dict):
         raise ValueError("Malformed Shopify response")
     if conn.get("pageInfo", {}).get("hasNextPage"):
@@ -174,11 +180,34 @@ def read_stock(config: Config, sku: str) -> dict:
         raise ValueError("Shopify item has no inventory location")
     return {"source": "shopify", "sku": sku, "tracked": True,
             "query_time_utc": datetime.now(timezone.utc).isoformat(),
-            "locations": locations, "total_on_hand": sum(row["on_hand"] for row in locations)}
+            "locations": locations, "total_on_hand": sum(row["on_hand"] for row in locations),
+            "catalog_price": matches[0].get("price"), "catalog_currency": currency,
+            "product_status": (matches[0].get("product") or {}).get("status")}
+
+
+def price_evidence(shop: dict, qbo_item: dict, qbo_currency: str | None) -> dict:
+    """Record price context and fail closed. No FX rate or approved pricing policy."""
+    result = {"shopify_catalog_price": shop.get("catalog_price"),
+              "shopify_catalog_currency": shop.get("catalog_currency"),
+              "quickbooks_unit_price": qbo_item.get("UnitPrice"),
+              "quickbooks_home_currency": qbo_currency,
+              "shopify_product_status": shop.get("product_status")}
+    if qbo_currency is None:
+        result["status"] = "BLOCKED_QBO_CURRENCY_UNKNOWN"
+    elif not shop.get("catalog_currency") or not isinstance(shop.get("catalog_price"), str) or qbo_item.get("UnitPrice") is None:
+        result["status"] = "BLOCKED_PRICE_FIELDS_MISSING"
+    elif shop["catalog_currency"] != qbo_currency:
+        result["status"] = "BLOCKED_PRICE_CURRENCY_MISMATCH"
+    elif shop.get("product_status") != "ACTIVE":
+        result["status"] = "BLOCKED_PRODUCT_NOT_ACTIVE"
+    else:
+        # Catalog list price and QBO default UnitPrice may follow different policies.
+        result["status"] = "BLOCKED_PRICE_POLICY_UNVERIFIED"
+    return result
 
 
 def check_both(sku: str) -> dict:
-    from qbo_oauth import load_saved_setup, read_inventory_item_by_sku
+    from qbo_oauth import load_saved_setup, read_inventory_item_by_sku, read_home_currency
     from inventory_compare import compare
 
     shop = read_stock(load_setup(), sku)
@@ -208,6 +237,11 @@ def check_both(sku: str) -> dict:
     result["shopify_query_time_utc"] = shop.get("query_time_utc")
     result["shopify_location_id"] = shop["locations"][0]["location_id"]
     result["read_gap_seconds"] = round(read_gap_seconds, 3)
+    try:
+        home_currency = read_home_currency(load_saved_setup())
+    except (ValueError, PermissionError, requests.RequestException):
+        home_currency = None
+    result["catalog_price_check"] = price_evidence(shop, matches[0], home_currency)
     result["data_origin"] = "live_shopify_and_quickbooks_sandbox_api_queries"
     result["note"] = ("Controlled sandbox comparison only; snapshot times, location coverage, "
                       "and accounting stock meaning require review. Not a real customer loss.")
