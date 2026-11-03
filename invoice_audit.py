@@ -234,7 +234,24 @@ def read_payments() -> list[dict]:
     return payments
 
 
-def audit_payment_links(invoices: list[dict], payments: list[dict]) -> dict:
+def read_credit_memos() -> list[dict]:
+    """Read a bounded set of CreditMemo endpoints using the existing QBO GET path."""
+    token, realm = get_access_token(load_saved_setup())
+    url = f"{SANDBOX_API}/v3/company/{realm}/query"
+    headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
+    count = _get_json(url, "SELECT COUNT(*) FROM CreditMemo", headers).get("totalCount")
+    if type(count) is not int or count < 0 or count > MAX_INVOICES:
+        raise ValueError("CreditMemo count unknown or above controlled batch limit")
+    rows = _get_json(url, f"SELECT * FROM CreditMemo STARTPOSITION 1 MAXRESULTS {MAX_INVOICES}", headers).get("CreditMemo", [])
+    if not isinstance(rows, list) or len(rows) != count:
+        raise ValueError("CreditMemo records incomplete or changed during read")
+    ids = [str(row.get("Id") or "") for row in rows if isinstance(row, dict)]
+    if len(ids) != count or any(not ident for ident in ids) or len(set(ids)) != count:
+        raise ValueError("CreditMemo identifiers missing or ambiguous")
+    return rows
+
+
+def audit_payment_links(invoices: list[dict], payments: list[dict], credit_memos: list[dict] | None = None) -> dict:
     """Validate typed invoice-payment edges without confusing credit with cash.
 
     Invoice.LinkedTxn[Payment] and Payment.Line.LinkedTxn[Invoice] must agree.
@@ -272,6 +289,7 @@ def audit_payment_links(invoices: list[dict], payments: list[dict]) -> dict:
                     invoice_edges.add(edge)
         payment_edges = {}
         credit_related = []
+        credit_edges = []
         for pid, pay in payment_index.items():
             if (pay.get("CurrencyRef") or {}).get("value") != "USD":
                 return {**base, "status": "BLOCKED_GRAPH_CURRENCY"}
@@ -289,7 +307,15 @@ def audit_payment_links(invoices: list[dict], payments: list[dict]) -> dict:
                 if len(types) != len(refs):
                     return base
                 if "CreditMemo" in types:
+                    if "Invoice" in types:
+                        return {**base, "status": "BLOCKED_AMBIGUOUS_ALLOCATION"}
                     credit_present = True
+                    if types != ["CreditMemo"] or not refs[0].get("TxnId"):
+                        return {**base, "status": "BLOCKED_AMBIGUOUS_CREDIT_LINK"}
+                    credit_amount = number(line.get("Amount"))
+                    if credit_amount < 0:
+                        return {**base, "status": "BLOCKED_NEGATIVE_CREDIT_ALLOCATION"}
+                    credit_edges.append((pid, str(refs[0]["TxnId"]), credit_amount))
                 if "Invoice" not in types:
                     continue
                 # One allocation amount must refer to exactly one invoice.
@@ -327,6 +353,30 @@ def audit_payment_links(invoices: list[dict], payments: list[dict]) -> dict:
                 mismatches.append(iid)
             if paid_link_counts[iid] and balance > 0:
                 partial.append(iid)
+        credit_endpoints_verified = False
+        if credit_memos is not None and credit_edges:
+            memo_index = {str(m.get("Id") or ""): m for m in credit_memos if isinstance(m, dict)}
+            if (len(memo_index) != len(credit_memos) or not all(memo_index)):
+                return {**base, "status": "BLOCKED_CREDIT_MEMO_INDEX"}
+            seen_credit_edges = set()
+            allocated_to_credit = {ident: Decimal(0) for ident in memo_index}
+            for pid, memo_id, amount in credit_edges:
+                edge = (pid, memo_id)
+                if edge in seen_credit_edges:
+                    return {**base, "status": "BLOCKED_DUPLICATE_CREDIT_LINK"}
+                seen_credit_edges.add(edge)
+                memo = memo_index.get(memo_id)
+                payment = payment_index[pid]
+                if not memo or (memo.get("CurrencyRef") or {}).get("value") != "USD":
+                    return {**base, "status": "BLOCKED_CREDIT_MEMO_ENDPOINT"}
+                customer = (memo.get("CustomerRef") or {}).get("value")
+                payment_customer = (payment.get("CustomerRef") or {}).get("value")
+                if not customer or customer != payment_customer:
+                    return {**base, "status": "BLOCKED_CREDIT_MEMO_CUSTOMER"}
+                allocated_to_credit[memo_id] += amount
+                if allocated_to_credit[memo_id] - number(memo.get("TotalAmt")) > COMPONENT_CENT_TOLERANCE:
+                    return {**base, "status": "BLOCKED_CREDIT_OVERALLOCATION"}
+            credit_endpoints_verified = True
         result = {**base, "status": "GRAPH_LINKS_VERIFIED" if not mismatches
                   else "BLOCKED_BALANCE_ALLOCATION_MISMATCH",
                   "verified_edges": len(payment_edges),
@@ -334,13 +384,16 @@ def audit_payment_links(invoices: list[dict], payments: list[dict]) -> dict:
                   "invoices_with_multiple_payment_links": sum(x > 1 for x in paid_link_counts.values()),
                   "partial_balance_invoice_ids": sorted(partial),
                   "credit_memo_related_payment_ids": sorted(credit_related),
+                  "credit_memo_endpoints_verified": credit_endpoints_verified,
+                  "credit_memo_reference_count": len(credit_edges),
                   "invoice_balance_mismatch_ids": sorted(mismatches)}
         return result
     except (KeyError, TypeError, AttributeError, ValueError):
         return base
 
 
-def audit_all(invoices: list[dict], payments: list[dict] | None = None) -> dict:
+def audit_all(invoices: list[dict], payments: list[dict] | None = None,
+              credit_memos: list[dict] | None = None) -> dict:
     results = [audit_invoice(inv) for inv in invoices]
     financial = [audit_financial_components(inv) for inv in invoices]
     blocked = [r["invoice_id"] for r in results if r["status"].startswith("BLOCKED_")]
@@ -365,7 +418,7 @@ def audit_all(invoices: list[dict], payments: list[dict] | None = None) -> dict:
             "cross_system_order_matching": "NOT_CHECKED_NO_SHOPIFY_ORDERS_OR_READ_ORDERS_SCOPE",
             "tax_law_discount_eligibility_delivery_validation": "NOT_CHECKED",
             "financial_loss_claimed": False,
-            "payment_graph": audit_payment_links(invoices, payments) if payments is not None
+            "payment_graph": audit_payment_links(invoices, payments, credit_memos) if payments is not None
                              else {"status": "NOT_CHECKED"}}
 
 
@@ -373,7 +426,8 @@ if __name__ == "__main__":
     try:
         invoices = read_invoices()
         payments = read_payments()
-        print(json.dumps(audit_all(invoices, payments), ensure_ascii=False))
+        credit_memos = read_credit_memos()
+        print(json.dumps(audit_all(invoices, payments, credit_memos), ensure_ascii=False))
     except ValueError as exc:
         print(json.dumps({"status": "BLOCKED_INVOICE_READ", "reason": str(exc)}))
         raise SystemExit(2) from None

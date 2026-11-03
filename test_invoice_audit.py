@@ -279,3 +279,51 @@ def test_graph_summary_is_separate_from_invoice_arithmetic():
     assert summary["payment_graph"]["status"] == "GRAPH_LINKS_VERIFIED"
     assert summary["financial_loss_claimed"] is False
     assert summary["cross_system_order_matching"].startswith("NOT_CHECKED_")
+
+
+def test_graph_credit_endpoint_validated_but_not_cash_claim():
+    i=graph_invoice(71,205,0,(74,72))
+    i["CustomerRef"]={"value":"CUSTOMER-1"}
+    p=graph_payment(74,[("Invoice",71,100),("CreditMemo",73,100)],0)
+    p["CustomerRef"]={"value":"CUSTOMER-1"}
+    p2=graph_payment(72,[("Invoice",71,105)],105)
+    p2["CustomerRef"]={"value":"CUSTOMER-1"}
+    memo={"Id":"73","CurrencyRef":{"value":"USD"},
+          "CustomerRef":{"value":"CUSTOMER-1"},"TotalAmt":100,"Balance":0}
+    before=a.audit_payment_links([i],[p,p2])
+    assert before["status"]=="GRAPH_LINKS_VERIFIED"
+    assert before["credit_memo_endpoints_verified"] is False
+    result=a.audit_payment_links([i],[p,p2],[memo])
+    assert result["status"]=="GRAPH_LINKS_VERIFIED"
+    assert result["credit_memo_reference_count"]==1
+    assert result["credit_memo_endpoints_verified"] is True
+    assert result["cash_received_verified"] is False
+    assert result["shopify_order_links_verified"] is False
+
+
+def test_graph_credit_endpoint_absent_or_wrong_customer_blocks():
+    i=graph_invoice(71,100,0,(74,))
+    p=graph_payment(74,[("Invoice",71,100),("CreditMemo",73,100)],0)
+    p["CustomerRef"]={"value":"C1"}
+    assert a.audit_payment_links([i],[p],[])["status"]=="BLOCKED_CREDIT_MEMO_ENDPOINT"
+    memo={"Id":"73","CurrencyRef":{"value":"USD"},"CustomerRef":{"value":"C2"},"TotalAmt":100}
+    assert a.audit_payment_links([i],[p],[memo])["status"]=="BLOCKED_CREDIT_MEMO_CUSTOMER"
+    memo["CustomerRef"]={"value":"C1"}
+    memo["TotalAmt"]=50
+    assert a.audit_payment_links([i],[p],[memo])["status"]=="BLOCKED_CREDIT_OVERALLOCATION"
+
+
+def test_credit_reader_rejects_partial_and_duplicate_records(monkeypatch):
+    monkeypatch.setattr(a,"load_saved_setup",lambda: object())
+    monkeypatch.setattr(a,"get_access_token",lambda config:("FAKE","123"))
+    calls=[]
+    def read(url,query,headers):
+        calls.append(query)
+        return {"totalCount":2} if "COUNT(*)" in query else {"CreditMemo":[{"Id":"73"},{"Id":"74"}]}
+    monkeypatch.setattr(a,"_get_json",read)
+    assert len(a.read_credit_memos())==2
+    assert calls==["SELECT COUNT(*) FROM CreditMemo", "SELECT * FROM CreditMemo STARTPOSITION 1 MAXRESULTS 100"]
+    monkeypatch.setattr(a,"_get_json",lambda url,query,headers:
+                        {"totalCount":2} if "COUNT(*)" in query else {"CreditMemo":[{"Id":"73"},{"Id":"73"}]})
+    with pytest.raises(ValueError,match="ambiguous"):
+        a.read_credit_memos()
