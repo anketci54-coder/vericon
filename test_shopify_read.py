@@ -166,4 +166,24 @@ def test_controlled_comparison_one_location(cred, monkeypatch, records):
     res = s.check_both("VERICON-TEST-001")
     assert res["delta_shopify_minus_qbo"] == "3"
     assert res["status"] == "TEST_DIFFERENCE"
+    assert res["shopify_quantity_basis"] == "available"
+    assert res["shopify_available"] == "10"
     assert res["data_origin"] == "live_shopify_and_quickbooks_sandbox_api_queries"
+
+
+def test_committed_stock_does_not_create_false_shortage():
+    from inventory_compare import compare
+    qbo = {"Sku": "VERICON-TEST-001", "Type": "Inventory", "TrackQtyOnHand": True, "QtyOnHand": 7}
+    result = compare({"shopify": {"sku": "VERICON-TEST-001", "onHand": 12,
+                                  "available": 7}, "quickbooks": qbo, "testMode": True})
+    assert result["status"] == "TEST_MATCH"
+    assert result["delta_shopify_minus_qbo"] == "0"
+    assert result["shopify_on_hand"] == "12"
+    assert result["shopify_available"] == "7"
+
+def test_missing_available_blocks_comparison():
+    from inventory_compare import compare
+    qbo = {"Sku": "VERICON-TEST-001", "Type": "Inventory", "TrackQtyOnHand": True, "QtyOnHand": 7}
+    with pytest.raises(ValueError, match="shopify.available"):
+        compare({"shopify": {"sku": "VERICON-TEST-001", "onHand": 10},
+                 "quickbooks": qbo, "testMode": True})

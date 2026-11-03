@@ -6,7 +6,8 @@
 - [x] VERICON-TEST-001 kontrollu test replay: Shopify API on_hand=10, QBO kullanicinin API Explorer QueryResponse QtyOnHand=7, ayni SKU, fark=3. inventory_compare.py deterministik kod ile 3 farki hesapliyor; esit stokta 0, farkli SKU icin BLOCK. Bu gercek musteri kaybi veya canli entegrasyon kaniti degildir.
 - [x] QBO Sandbox OAuth bir defa yetkilendirildi, tokenlar private/ icinde, VPS GET Item tekrar basarili: VERICON-TEST-001 QtyOnHand=7. Ek localhost tuneli gerekmiyor; servis halen baslatilmadi. Tokenin suresi dolunca otomatik refresh CANLI olarak henuz olculmedi.
 - [x] Shopify VERICON Audit Test v2 kurulu; read_products/read_inventory/read_locations scope verildi. Gelistirme kimlik bilgileri private/ icinde. 2026-11-03 VPS uzerinden API ile ayni SKU icin on_hand=10, available=10, committed=0 okundu. QBO Sandbox Item QtyOnHand=7 VPS API ile okundu; shopify_read.py check ile delta=3 ve TEST_DIFFERENCE elde edildi. Kurulu ve BAGLI iki test kaynakli tek seferlik sorgu dogrulandi. Bunun gercek musteri hatasi veya saatlik otomatik tarama oldugu ileri surulmez.
-- [ ] Ilk sonraki teknik karar: stok alanlarinin gercek ticari semantigini ve zaman farkini dogrula; baglantilari cron/service ile otomatiklestirmeden once tek-dongu snapshot kalitesini olc. Token yenilemesini gercek vade sonunda dogrula.
+- [x] Stok alanlari: Shopify on_hand yerine available / QBO QtyOnHand (available for sale) kiyasina gecildi; ayrilmis stok yanlis alarma yol acmasin diye 21 testle kontrol edildi.
+- [ ] Token yenilemesini canli Sandbox API ile dogrula, sonrasinda tek-dongu snapshot saatleri ve stok hareketlerini yorumla. Bunlardan sonra dusuk frekansli salt-okunur zamanlayici icin karar ver.
 - [ ] Ucretli urun kararindan once rakipten ek faydayi ve gercek musteri odeme istegini olc.
 
 ## DAHA SONRA - simdi yapma

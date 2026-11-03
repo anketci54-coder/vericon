@@ -29,15 +29,21 @@ def compare(data):
     if qbo.get("Type") != "Inventory" or qbo.get("TrackQtyOnHand") is not True:
         return {"status": "BLOCKED_NOT_TRACKED_INVENTORY", "sku": sku}
 
-    stock_shopify = qty(shopify.get("onHand"), "shopify.onHand")
+    # QBO QtyOnHand is available for sale; Shopify on_hand also includes
+    # committed/reserved stock. Comparing on_hand directly creates false alarms.
+    stock_shopify = qty(shopify.get("available"), "shopify.available")
+    shopify_on_hand = qty(shopify.get("onHand"), "shopify.onHand")
     stock_qbo = qty(qbo.get("QtyOnHand"), "quickbooks.QtyOnHand")
     delta = stock_shopify - stock_qbo
     is_test = data.get("testMode") is True
 
     return {
         "sku": sku,
-        "shopify_on_hand": str(stock_shopify),
+        "shopify_on_hand": str(shopify_on_hand),
+        "shopify_available": str(stock_shopify),
+        "shopify_quantity_basis": "available",
         "qbo_qty_on_hand": str(stock_qbo),
+        "qbo_quantity_basis": "QtyOnHand",
         "delta_shopify_minus_qbo": str(delta),
         "status": "TEST_DIFFERENCE" if is_test and delta else
                   "TEST_MATCH" if is_test else

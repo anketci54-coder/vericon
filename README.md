@@ -74,3 +74,9 @@ Guncel is listesi: TODO.md. Muhendislik kurallari: AGENTS.md.
 - VPS QBO Sandbox sonucunda VERICON-TEST-001: QtyOnHand=7, Inventory, tracked=true.
 - `python3 shopify_read.py check --sku VERICON-TEST-001` bu iki canli API yanitini ayni cagri akisi icinde alip farki 3 olarak dondu (TEST_DIFFERENCE).
 - Henuz otomatik zamanlama/servis yok. Shopify testi trial magazada; QuickBooks Sandbox. Bu kasitli fark, ticari zarar kaniti DEGIL.
+
+## 2026-11-03 stok semantigi duzeltmesi
+- Shopify `on_hand` fiziksel toplamdir: available + committed + reserved + damaged + safety_stock + quality_control. QuickBooks `Item.QtyOnHand` dokumanda "available for sale" olarak tanimlanir.
+- Bu nedenle VERICON farki icin Shopify `available` ile QBO `QtyOnHand` karsilastirilir; Shopify `on_hand` ayrica kanit olarak korunur. Committed/reserved stokun varligi otomatik kayip kaniti degildir.
+- Tek depo ve SKU kanitlanmadan, zaman farkini ve stok hareketlerini denetlemeden ticari kayip raporlanmaz. Kontrollu test `VERICON-TEST-001` icin iki API'den Shopify available=10, QBO QtyOnHand=7, delta=3.
+- Kaynak: Shopify inventory quantities states; QuickBooks Item API reference.

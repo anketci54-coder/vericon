@@ -189,7 +189,8 @@ def check_both(sku: str) -> dict:
     if len(shop["locations"]) != 1:
         return {"status": "BLOCKED_MULTIPLE_LOCATIONS", "sku": sku,
                 "location_count": len(shop["locations"])}
-    result = compare({"shopify": {"sku": sku, "onHand": shop["locations"][0]["on_hand"]},
+    result = compare({"shopify": {"sku": sku, "onHand": shop["locations"][0]["on_hand"],
+                                   "available": shop["locations"][0]["available"]},
                       "quickbooks": matches[0], "testMode": True})
     result["quickbooks_query_time_utc"] = qbo_result.get("query_time_utc")
     result["shopify_query_time_utc"] = shop.get("query_time_utc")
