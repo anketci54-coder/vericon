@@ -54,3 +54,16 @@ Guncel is listesi: TODO.md. Muhendislik kurallari: AGENTS.md.
 - Callback tuneli kapandi: kodu almaya yarayan gecici portun kapatılması normal; veri okuma icin yeni tunel gerekmez.
 - Shopify ChatGPT eklentisi OAuth jetonlari VPS'ye aktarilmaz. Iki kaynagi tek VPS calistiricisindan otomatik okumak icin ayri Shopify yetkilendirmesi hala gerekli.
 - Dogrulanan: OAuth saklama + QBO Item canli okuma. Dogrulanmayan: gercek sure dolunca refresh basarisi, Shopify otomasyonu, periyodik isci, musteri kaybi/kar.
+
+## Shopify VPS baglantisi (2026-11-03)
+- Kod: shopify_read.py; cevrimdisi test: test_shopify_read.py. Tek test Shopify magazasi: hudys3-p0.myshopify.com.
+- Shopify Dev Dashboard uzerinden VERICON icin kendi magazamiza kurulan bir app gerekir. ChatGPT'nin Shopify plugin baglantisiyla VPS kimlik bilgileri farklidir.
+- Mevcut test magazasiyla AYNI Shopify organization icindeyse client_credentials grant kullanilir. Baska bir organization musterisinde kullanmak icin bu akisi yeniden kullanma, ayri onay/dağıtım akisi gerekir.
+- Shopify Admin > Settings > Apps > Develop apps > Build apps in Dev Dashboard > Create app > Start from Dev Dashboard.
+- App adi: VERICON Audit Test. Yeni version: App URL as default https://shopify.dev/apps/default-app-home, access scopes SADECE read_products,read_inventory,read_locations; Release. Installs > Install app, hudys3-p0.myshopify.com sec ve yetkileri kontrol et.
+- Sonra Dev Dashboard > App Settings > Credentials icindeki Client ID ve Secret'i SOHBETE GONDERMEDEN VPS'de interaktif olarak gir: python3 shopify_read.py setup. Bu komut kimlik bilgilerini 0600 izinli private/ dosyasina koyar, konsola veya GitHub'a yazmaz.
+- `python3 shopify_read.py stock --sku VERICON-TEST-001`: Iki kaynak degil, sadece Shopify'a sunucudan baglanip stok durumlarini ve konumlari okur.
+- `python3 shopify_read.py check --sku VERICON-TEST-001`: Shopify ve QBO Sandbox verilerini iki API'den tek seferlik okur; kontrollu testte 3 farki hesaplamasi beklenir. Bu komut veriyi degistirmez ve servisi devamli calistirmaz.
+- 2026-11-03: ChatGPT Shopify baglantisindan ayni SKU icin GraphQL read dogrulandi: on_hand=10, available=10, committed=0, bir konum. VPS uzerinden Shopify API yetkilendirmesi HENUZ YOK.
+- Bağımsız musteri verisinde stok anlamini, depo sayisini, rezervleri ve anlik zaman farkini dogrulamadan gercek kayip yorumu yapma. Buradaki fark yapay test verisidir.
+- Shopify mağazasi trial planinda; satis icin plana gecmek gerekir, ancak test sirasinda bunu yapma.

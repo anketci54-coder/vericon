@@ -5,7 +5,7 @@
 - [x] Shopify test magazasi verisini salt-okunur sorgula: 0 urun / 0 siparis (2026-11-02 dogrulamasi). Veri uydurma, kayitlari degistirme.
 - [x] VERICON-TEST-001 kontrollu test replay: Shopify API on_hand=10, QBO kullanicinin API Explorer QueryResponse QtyOnHand=7, ayni SKU, fark=3. inventory_compare.py deterministik kod ile 3 farki hesapliyor; esit stokta 0, farkli SKU icin BLOCK. Bu gercek musteri kaybi veya canli entegrasyon kaniti degildir.
 - [x] QBO Sandbox OAuth bir defa yetkilendirildi, tokenlar private/ icinde, VPS GET Item tekrar basarili: VERICON-TEST-001 QtyOnHand=7. Ek localhost tuneli gerekmiyor; servis halen baslatilmadi. Tokenin suresi dolunca otomatik refresh CANLI olarak henuz olculmedi.
-- [ ] VPS icin ayri Shopify OAuth/install okuma erisimi sagla (ChatGPT Shopify eklentisi sunucuya devredilemez). Yetkiler ve kisitlari kontrol et; salt-okunur ve minimum scope. Sonra tek kontrol dongusunde iki kaynagi oku, gercek snapshot zamani ile karsilastir.
+- [ ] VPS icin Shopify app kurulumunu tamamla: Dev Dashboard app (ayni org), read_products/read_inventory/read_locations, Release + Install; sonra gizli credential VPS private/ kaydi. shopify_read.py hazir ve cevrimdisi testli, ancak GERCEK VPS SHOPIFY API OKUMA HENUZ YOK. Ardindan stock ve check komutlariyla dogrula; snapshot/stock anlami analizi sonraki karar kapisi.
 - [ ] Ucretli urun kararindan once rakipten ek faydayi ve gercek musteri odeme istegini olc.
 
 ## DAHA SONRA - simdi yapma

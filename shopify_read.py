@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""VERICON Shopify read-only server-to-server connector (owned store pilot).
+
+Requires a Shopify Dev Dashboard app installed on the SAME organization store.
+Uses client_credentials (24h token), with only the scopes needed for stock reads.
+No Shopify writes, no web listener, no token/secret in logs.
+"""
+from __future__ import annotations
+
+import argparse
+import getpass
+import json
+import os
+import re
+import stat
+import tempfile
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+import requests
+
+ROOT = Path(__file__).resolve().parent
+PRIVATE = ROOT / "private"
+CONFIG_FILE = PRIVATE / "shopify_setup.json"
+STORE = "hudys3-p0.myshopify.com"
+API_VERSION = "2026-10"
+REQUIRED_SCOPES = frozenset(("read_products", "read_inventory", "read_locations"))
+SKU_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
+
+STOCK_QUERY = """
+query VericonSkuInventory($search: String!) {
+  productVariants(first: 10, query: $search) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id sku
+      inventoryItem {
+        id tracked
+        inventoryLevels(first: 20) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            location { id name }
+            updatedAt
+            quantities(names: ["on_hand", "available", "committed"]) { name quantity }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+@dataclass(frozen=True)
+class Config:
+    client_id: str
+    client_secret: str
+    store: str = STORE
+
+
+def _ensure_private() -> None:
+    PRIVATE.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if stat.S_IMODE(PRIVATE.stat().st_mode) != 0o700 or PRIVATE.is_symlink():
+        raise PermissionError("private/ must be an ordinary directory with mode 0700")
+
+
+def _atomic_save(path: Path, data: dict) -> None:
+    _ensure_private()
+    fd, name = tempfile.mkstemp(prefix=".shopify-", dir=PRIVATE)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(name, 0o600)
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def save_setup(client_id: str, client_secret: str) -> None:
+    if not client_id or not client_secret:
+        raise ValueError("Missing Shopify credentials")
+    if CONFIG_FILE.exists():
+        raise FileExistsError("Shopify credentials already exist; will not overwrite them")
+    _atomic_save(CONFIG_FILE, {"client_id": client_id,
+                               "client_secret": client_secret,
+                               "store": STORE})
+
+
+def load_setup() -> Config:
+    _ensure_private()
+    if CONFIG_FILE.is_symlink() or not CONFIG_FILE.is_file():
+        raise ValueError("Shopify private setup is not configured")
+    if stat.S_IMODE(CONFIG_FILE.stat().st_mode) != 0o600:
+        raise PermissionError("Shopify credential file must be mode 0600")
+    raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    if raw.get("store") != STORE:
+        raise ValueError("Shopify store does not match approved pilot store")
+    if not raw.get("client_id") or not raw.get("client_secret"):
+        raise ValueError("Shopify credentials are incomplete")
+    return Config(client_id=raw["client_id"], client_secret=raw["client_secret"])
+
+
+def get_access_token(config: Config) -> str:
+    if config.store != STORE:
+        raise ValueError("Shopify store is not the approved store")
+    r = requests.post(
+        f"https://{STORE}/admin/oauth/access_token",
+        data={"grant_type": "client_credentials",
+              "client_id": config.client_id,
+              "client_secret": config.client_secret},
+        headers={"Accept": "application/json"},
+        timeout=20,
+    )
+    if r.status_code != 200:
+        raise ValueError(f"Shopify client credentials refused (HTTP {r.status_code})")
+    body = r.json()
+    scopes = frozenset(s.strip() for s in str(body.get("scope", "")).split(","))
+    if not REQUIRED_SCOPES.issubset(scopes):
+        raise ValueError("Shopify app lacks the required read-only scopes")
+    if not body.get("access_token"):
+        raise ValueError("Shopify response missing access token")
+    return str(body["access_token"])
+
+
+def read_stock(config: Config, sku: str) -> dict:
+    if not SKU_PATTERN.fullmatch(sku):
+        raise ValueError("Invalid SKU; refusing unsafe inventory query")
+    token = get_access_token(config)
+    response = requests.post(
+        f"https://{STORE}/admin/api/{API_VERSION}/graphql.json",
+        json={"query": STOCK_QUERY, "variables": {"search": f"sku:{sku}"}},
+        headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"},
+        timeout=25,
+    )
+    if response.status_code != 200:
+        raise ValueError(f"Shopify inventory query refused (HTTP {response.status_code})")
+    body = response.json()
+    if body.get("errors"):
+        raise ValueError("Shopify returned GraphQL errors; inventory not verified")
+    conn = body.get("data", {}).get("productVariants")
+    if not isinstance(conn, dict):
+        raise ValueError("Malformed Shopify response")
+    if conn.get("pageInfo", {}).get("hasNextPage"):
+        raise ValueError("Too many variant search results; refusing ambiguous match")
+    matches = [row for row in (conn.get("nodes") or []) if row.get("sku") == sku]
+    if len(matches) != 1:
+        raise ValueError("Shopify SKU not found or matches multiple variants")
+    inventory = matches[0].get("inventoryItem") or {}
+    if inventory.get("tracked") is not True:
+        raise ValueError("Shopify SKU inventory tracking disabled")
+    levels = inventory.get("inventoryLevels") or {}
+    if levels.get("pageInfo", {}).get("hasNextPage"):
+        raise ValueError("More than 20 locations; pagination not yet supported")
+    locations = []
+    for node in (levels.get("nodes") or []):
+        quantities = {e["name"]: e["quantity"] for e in (node.get("quantities") or [])}
+        if not all(name in quantities for name in ("on_hand", "available", "committed")):
+            raise ValueError("Missing Shopify inventory quantity states")
+        if any(not isinstance(quantities[name], int) or isinstance(quantities[name], bool)
+               for name in ("on_hand", "available", "committed")):
+            raise ValueError("Invalid Shopify quantity type")
+        location = node.get("location") or {}
+        if not location.get("id"):
+            raise ValueError("Shopify location missing")
+        locations.append({"location_id": location["id"], "location_name": location.get("name"),
+                          "updated_at": node.get("updatedAt"),
+                          "on_hand": quantities["on_hand"],
+                          "available": quantities["available"],
+                          "committed": quantities["committed"]})
+    if not locations:
+        raise ValueError("Shopify item has no inventory location")
+    return {"source": "shopify", "sku": sku, "tracked": True,
+            "query_time_utc": datetime.now(timezone.utc).isoformat(),
+            "locations": locations, "total_on_hand": sum(row["on_hand"] for row in locations)}
+
+
+def check_both(sku: str) -> dict:
+    from qbo_oauth import load_saved_setup, read_inventory_item
+    from inventory_compare import compare
+
+    shop = read_stock(load_setup(), sku)
+    qbo_result = read_inventory_item(load_saved_setup(), "VERICON TEST")
+    matches = [item for item in qbo_result["items"] if item.get("Sku") == sku]
+    if len(matches) != 1:
+        raise ValueError("QuickBooks SKU missing or ambiguous")
+    if len(shop["locations"]) != 1:
+        return {"status": "BLOCKED_MULTIPLE_LOCATIONS", "sku": sku,
+                "location_count": len(shop["locations"])}
+    result = compare({"shopify": {"sku": sku, "onHand": shop["locations"][0]["on_hand"]},
+                      "quickbooks": matches[0], "testMode": True})
+    result["quickbooks_query_time_utc"] = qbo_result.get("query_time_utc")
+    result["shopify_query_time_utc"] = shop.get("query_time_utc")
+    result["shopify_location_id"] = shop["locations"][0]["location_id"]
+    result["note"] = ("Controlled sandbox comparison only; snapshot times, location coverage, "
+                      "and accounting stock meaning require review. Not a real customer loss.")
+    return result
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="VERICON Shopify read-only pilot")
+    cmd = parser.add_subparsers(dest="cmd", required=True)
+    cmd.add_parser("setup", help="Enter keys privately in an interactive terminal")
+    cmd.add_parser("status", help="Check local config presence, without revealing keys")
+    read = cmd.add_parser("stock", help="Read Shopify inventory by exact SKU")
+    read.add_argument("--sku", default="VERICON-TEST-001")
+    check = cmd.add_parser("check", help="One-shot Shopify + QBO controlled inventory comparison")
+    check.add_argument("--sku", default="VERICON-TEST-001")
+    args = parser.parse_args()
+
+    if args.cmd == "setup":
+        import sys
+        if not sys.stdin.isatty():
+            raise ValueError("Interactive terminal required for private credentials")
+        print("Shopify Dev Dashboard app must already be installed on this owned trial store.")
+        client_id = input("Shopify Client ID: ").strip()
+        client_secret = getpass.getpass("Shopify Client Secret (hidden): ").strip()
+        save_setup(client_id, client_secret)
+        print("Shopify credentials saved privately. No token printed.")
+        return
+
+    if args.cmd == "status":
+        try:
+            load_setup()
+            print(json.dumps({"configured": True, "shop": STORE}))
+        except (ValueError, PermissionError):
+            print(json.dumps({"configured": False, "shop": STORE}))
+        return
+
+    if args.cmd == "stock":
+        print(json.dumps(read_stock(load_setup(), args.sku), ensure_ascii=False))
+    else:
+        print(json.dumps(check_both(args.sku), ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (ValueError, PermissionError, FileExistsError, requests.RequestException) as exc:
+        raise SystemExit(f"BLOCKED: {exc}") from None
