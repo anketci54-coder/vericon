@@ -45,3 +45,12 @@ Guncel is listesi: TODO.md. Muhendislik kurallari: AGENTS.md.
 - SSH localhost port yonlendirmesi (8782) aktifken OAuth izin linkini acip Intuit onayi verir; sadece localhost'a bagli gecici callback'i kullanir. Yetki bitince ilk VERICON TEST Item sorgusunu okur, sunucuyu kapatir. Bu dosya yayinlanan servis degildir.
 - Ilk kurulumdan once, daha once ekran goruntusunde gorunen Development Client Secret rotasyonu/degişimi yetkili Intuit panelinde dogrulanmali. UI rotasyonu desteklemiyorsa hesap yetkilisi tarafindan yeni sandbox uygulamasi veya resmi Intuit destek yolu degerlendirilmeli.
 - Bu islemler sadece gelistirme ortaminda kullanilacak; production baglantisi yok.
+
+## QuickBooks baglantisi dogrulama (2026-11-03)
+- Kullanici Intuit Sandbox'a bir defa OAuth izni verdi; VPS'de kilitli private klasorden token okuma ve yeni GET /Item dogrulandi.
+- Gercek veri: SKU VERICON-TEST-001, Inventory, TrackQtyOnHand=true, QtyOnHand=7. Shopify'da ayni SKU on_hand=10. Fark=3, kasitli test.
+- `python3 qbo_oauth.py --saved-setup status` sadece tokenin kayitli olmasini/sona ermesini bildirir; secret yazmaz.
+- `python3 qbo_oauth.py --saved-setup item --name 'VERICON TEST'` sandbox Item GET ve gerekli olursa refresh token yenilemesini dener; json sadece secilen Item alanlarini icerir. Bu otomatik servis/cron degildir.
+- Callback tuneli kapandi: kodu almaya yarayan gecici portun kapatılması normal; veri okuma icin yeni tunel gerekmez.
+- Shopify ChatGPT eklentisi OAuth jetonlari VPS'ye aktarilmaz. Iki kaynagi tek VPS calistiricisindan otomatik okumak icin ayri Shopify yetkilendirmesi hala gerekli.
+- Dogrulanan: OAuth saklama + QBO Item canli okuma. Dogrulanmayan: gercek sure dolunca refresh basarisi, Shopify otomasyonu, periyodik isci, musteri kaybi/kar.

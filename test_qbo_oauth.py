@@ -129,3 +129,27 @@ def test_sandbox_loopback_redirect_is_supported(monkeypatch, tmp_path):
     monkeypatch.setenv("VERICON_QBO_REDIRECT_URI", "http://localhost:8782/oauth/quickbooks/callback")
     monkeypatch.setenv("VERICON_QBO_PRIVATE_DIR", str(tmp_path / "private"))
     assert q.Config.from_env().redirect_uri.startswith("http://localhost:8782/")
+
+
+def test_saved_setup_permissions_and_values(monkeypatch, tmp_path):
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    setup = private / "qbo_setup.json"
+    setup.write_text(json.dumps({
+        "VERICON_QBO_CLIENT_ID": "TEST_ID",
+        "VERICON_QBO_CLIENT_SECRET": "TEST_SECRET",
+        "VERICON_QBO_REDIRECT_URI": "http://localhost:8782/oauth/quickbooks/callback",
+        "VERICON_QBO_EXPECTED_REALM": "12345",
+    }), encoding="utf-8")
+    setup.chmod(0o600)
+    monkeypatch.setattr(q, "BASE_DIR", tmp_path)
+    result = q.load_saved_setup()
+    assert result.expected_realm == "12345"
+    assert result.private_dir == private
+    setup.chmod(0o644)
+    with pytest.raises(PermissionError, match="unsafe"):
+        q.load_saved_setup()
+    setup.chmod(0o600)
+    private.chmod(0o755)
+    with pytest.raises(PermissionError, match="unsafe"):
+        q.load_saved_setup()

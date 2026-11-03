@@ -250,15 +250,37 @@ def quickbooks_callback(state: str = "", code: str = "", realmId: str = "", erro
     return "QuickBooks Sandbox connection authorized. You can close this tab."
 
 
+def load_saved_setup() -> Config:
+    private = BASE_DIR / "private"
+    path = private / "qbo_setup.json"
+    if not private.is_dir() or private.stat().st_mode & 0o077:
+        raise PermissionError("Private directory missing or unsafe")
+    if not path.is_file() or path.stat().st_mode & 0o077:
+        raise PermissionError("Saved setup missing or unsafe")
+    values = json.loads(path.read_text(encoding="utf-8"))
+    required = ("VERICON_QBO_CLIENT_ID", "VERICON_QBO_CLIENT_SECRET",
+                "VERICON_QBO_REDIRECT_URI", "VERICON_QBO_EXPECTED_REALM")
+    if any(not values.get(k) for k in required):
+        raise ValueError("Saved setup incomplete")
+    if not str(values["VERICON_QBO_EXPECTED_REALM"]).isdigit():
+        raise ValueError("Invalid sandbox company ID")
+    return Config(client_id=values["VERICON_QBO_CLIENT_ID"],
+                  client_secret=values["VERICON_QBO_CLIENT_SECRET"],
+                  redirect_uri=values["VERICON_QBO_REDIRECT_URI"],
+                  private_dir=private, expected_realm=values["VERICON_QBO_EXPECTED_REALM"])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="VERICON QBO sandbox connector")
+    parser.add_argument("--saved-setup", action="store_true",
+                        help="Use secure private sandbox setup without retyping credentials")
     cmd = parser.add_subparsers(dest="command", required=True)
     cmd.add_parser("auth-url", help="Generate a state-protected authorization URL")
     item_cmd = cmd.add_parser("item", help="Read one QBO sandbox item by exact name")
     item_cmd.add_argument("--name", default="VERICON TEST")
     cmd.add_parser("status", help="Show connection status without revealing credentials")
     args = parser.parse_args()
-    config = Config.from_env()
+    config = load_saved_setup() if args.saved_setup else Config.from_env()
     if args.command == "auth-url":
         print(create_authorization_url(config))
     elif args.command == "item":
