@@ -5,7 +5,7 @@
 - [x] Shopify test magazasi verisini salt-okunur sorgula: 0 urun / 0 siparis (2026-11-02 dogrulamasi). Veri uydurma, kayitlari degistirme.
 - [x] VERICON-TEST-001 kontrollu test replay: Shopify API on_hand=10, QBO kullanicinin API Explorer QueryResponse QtyOnHand=7, ayni SKU, fark=3. inventory_compare.py deterministik kod ile 3 farki hesapliyor; esit stokta 0, farkli SKU icin BLOCK. Bu gercek musteri kaybi veya canli entegrasyon kaniti degildir.
 - [x] QBO Sandbox OAuth bir defa yetkilendirildi, tokenlar private/ icinde, VPS GET Item tekrar basarili: VERICON-TEST-001 QtyOnHand=7. Ek localhost tuneli gerekmiyor; servis halen baslatilmadi. Tokenin suresi dolunca otomatik refresh CANLI olarak henuz olculmedi.
-- [ ] VPS icin Shopify app kurulumunu tamamla: Dev Dashboard app (ayni org), read_products/read_inventory/read_locations, Release + Install; sonra gizli credential VPS private/ kaydi. shopify_read.py hazir ve cevrimdisi testli, ancak GERCEK VPS SHOPIFY API OKUMA HENUZ YOK. Ardindan stock ve check komutlariyla dogrula; snapshot/stock anlami analizi sonraki karar kapisi.
+- [ ] Shopify VERICON Audit Test v2 magasin AppInstallations API sorgusunda KURULU goruldu, accessScopes: read_products/read_inventory/read_locations (2026-11-03). Sirada App Settings icindeki Client ID + Secret'i sohbetten gecirmeden VPS uzerindeki `python3 shopify_read.py setup` ile 0600 private dosyasina girme; ardindan `python3 shopify_read.py stock` ile gercek VPS API test, `python3 shopify_read.py check` ile ilk iki kaynaktan tek komut. Appin kurulu olmasi VPS kimlik dogrulamasi demek DEGIL. Müşteri organizasyonları icin farkli OAuth gerekir.
 - [ ] Ucretli urun kararindan once rakipten ek faydayi ve gercek musteri odeme istegini olc.
 
 ## DAHA SONRA - simdi yapma
