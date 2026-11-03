@@ -4,7 +4,7 @@
 - [x] QuickBooks Sandbox Item sorgusu dogrulandi: Item Id=19, SKU=VERICON-TEST-001, Type=Inventory, TrackQtyOnHand=true, QtyOnHand=7. Cikti kullanicinin Intuit API Explorer oturumundan geldi; VERICON uygulamasinin dogrudan OAuth baglantisi HALA YOK.
 - [x] Shopify test magazasi verisini salt-okunur sorgula: 0 urun / 0 siparis (2026-11-02 dogrulamasi). Veri uydurma, kayitlari degistirme.
 - [x] VERICON-TEST-001 kontrollu test replay: Shopify API on_hand=10, QBO kullanicinin API Explorer QueryResponse QtyOnHand=7, ayni SKU, fark=3. inventory_compare.py deterministik kod ile 3 farki hesapliyor; esit stokta 0, farkli SKU icin BLOCK. Bu gercek musteri kaybi veya canli entegrasyon kaniti degildir.
-- [ ] Sonraki teknik adim: Intuit OAuth ile VERICON tarafindan gercek sandbox Item API okuma, snapshot saati / depo kapsaminda gercek karsilastirma; sonra yanlis alarm/belirsizlik olcumu. Simdilik sadece kontrollu replay var.
+- [ ] QBO OAuth kodu (qbo_oauth.py) ve cevrimdisi testleri HAZIR; Intuit Development Client Secret yenileme, guvenli HTTPS callback adresi ve kullanicinin bir defalik yetkilendirmesi eksik. BUNLAR olmadan SERVIS ACMA. Sonrasinda VPS uzerinden sandbox Item GET 200 + QtyOnHand=7 ile canli baglantiyi kanitla; en son Shopify snapshot zamani/depo kapsami denetimi.
 - [ ] Ucretli urun kararindan once rakipten ek faydayi ve gercek musteri odeme istegini olc.
 
 ## DAHA SONRA - simdi yapma
