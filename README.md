@@ -1,5 +1,7 @@
 # VERICON
 
+**GUNCEL DURUM (2026-11-03, plan denetimi):** Iki ayri ticari modul hedefi DEGİSMEDİ. Mevcut is sadece Shopify+QBO Sandbox test SKU stok POC; gercek musteri hata kaniti, fatura modulu, e-ticaret fiyat/siparis denetimi, panel ve abonelik henuz yok. Asagidaki tarihli bolumler TARIHSEL ANLIK DURUMLARDIR ve yeni notlarin onune gecmez.
+
 Durum: Baslangic deposu (2026-11-02). Canli urun veya dogrulanmis hata tespit sistemi yok.
 
 ## Hedef
@@ -111,3 +113,11 @@ Guncel is listesi: TODO.md. Muhendislik kurallari: AGENTS.md.
 - Live bounded batch komutu iki SKU ile denendi: `VERICON-TEST-001` => TEST_DIFFERENCE, Shopify available=10, QBO QtyOnHand=7, delta=3; `VERICON-TEST-002` => BLOCKED_ITEM_READ, *delta yok*. Grup TEST_BATCH_PARTIAL_BLOCKED, exit code=2 (bilerek fail-closed). Testler 29/29.
 - **Kanıt disiplini:** Iki farkli mevcut ve eslesen SKU icin 2 basarili sonuc henüz kanitlanmadi, çünkü test hesaplarinda ikinci ortak SKU yok. Bu siniri kod degistirerek ya da sahte veriyi gercek diye sunarak asmayacagiz. Mevcut tek-SKU saatlik systemd kontrolu yerinde tutuldu. Ikinci fixture olusturmak iki dis sistemde veri YAZMA gerektirir; bu adim yapilmadi.
 - Olcum UTC: 2026-11-03T11:48:11+00:00
+
+## Plana donus denetimi (2026-11-03, guncel)
+- Baslangic iki modul: (A) fatura/siparis/teslimat tutar ve miktar uyusmazliklari; (B) e-ticaret SKU/stok/fiyat/urun uyusmazliklari. A henuz teknik olarak baslamadi; B icinde yalnizca stok SKU POC var. Gercek musteri sonucu 0, ucretli pilot 0, parasal kayip 0 kanit.
+- Kanitli teknik altyapi: Shopify ve QBO Sandbox dogrudan VPS erisimi; tek SKU farki 3 (10 available - 7 QtyOnHand, kasitli test), 29/29 yerel test, systemd saatlik test zamanlayicisinin ilk otomatik dongusu 13:00 EET'de basarili. Bunlar urun/fatura dogrulamasi DEGIL.
+- 2026-11-03 13:52 EET civarinda QBO Sandbox'a `VERICON-TEST-002` (Id=20, QtyOnHand=5, track=True) **yazilarak olusturuldu**; 14:00 oncesi salt-okunur tekrar sorguda varligi dogrulandi. Shopify tarafinda sadece `VERICON-TEST-001` var. Henuz iki ortak SKU yok. Yeni fixture yazma veya ikinci test SKU takip dongusu yapilmayacak; eski dokumandaki 'veri yazilmadi' ibareleri zamanindaki durumu anlatiyor, su an icin yanlis. Test kaydi otomatik silinmedi.
+- Shopify app read_products, read_inventory, read_locations ile sinirli. QBO `com.intuit.quickbooks.accounting` OAuth kapsami teknik olarak veri yazma yetkisi de verebilir. Kontrol modullerinin GET ile sinirli olmasi API yetkisini read-only yapmaz. QBO POST ile bir Sandbox Item yaratildi; bu ayrimin guvenlik riski oldugu kaydedildi. Saatlik oneshot root kullanicisi ile calisir; production oncesi asgari yetki degerlendirmesi gerekir.
+- **SAPMA:** Muhasebe/fatura ve gercek hata degeri yerine tekrarlanan test SKU olusturma ve zamanlama adimlarina yoneldik. Yeni ürün/panel/servis eklemiyoruz. Siradaki karar, mevcut baglantilardan (salt-okunur) gercek siparis/fatura orneklerinin varligini kanitlamak; yoksa yapilmis gibi ileri surmemek. Ticari fayda ve odeme istegi dogrulanmadan urun hazir ilan edilmez.
+- Bu durum denetimi kaynak kodunu, mevcut timer hedefini, Shopify veya QBO verilerini degistirmedi.
