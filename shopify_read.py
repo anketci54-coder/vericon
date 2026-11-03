@@ -214,6 +214,31 @@ def check_both(sku: str) -> dict:
     return result
 
 
+def check_many(skus: list[str]) -> dict:
+    # Bounded, explicitly selected test SKUs only. Never discover or modify products.
+    if not 2 <= len(skus) <= 5:
+        raise ValueError("Batch must contain 2 to 5 explicitly selected SKUs")
+    if any(not SKU_PATTERN.fullmatch(sku) for sku in skus):
+        raise ValueError("Batch contains an invalid SKU")
+    if len(set(skus)) != len(skus):
+        raise ValueError("Batch contains duplicate SKUs")
+
+    results = []
+    for sku in skus:
+        try:
+            result = check_both(sku)
+        except (ValueError, PermissionError, requests.RequestException):
+            # A failed lookup is not an inventory discrepancy. Do not leak API internals.
+            result = {"sku": sku, "status": "BLOCKED_ITEM_READ"}
+        if result.get("sku") != sku:
+            result = {"sku": sku, "status": "BLOCKED_SKU_RESULT_MISMATCH"}
+        results.append(result)
+    blocked = sum(item["status"].startswith("BLOCKED_") for item in results)
+    return {"status": "TEST_BATCH_PARTIAL_BLOCKED" if blocked else "TEST_BATCH_COMPLETE",
+            "requested": len(skus), "checked": len(skus) - blocked, "blocked": blocked,
+            "results": results}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="VERICON Shopify read-only pilot")
     cmd = parser.add_subparsers(dest="cmd", required=True)
@@ -223,6 +248,8 @@ def main() -> None:
     read.add_argument("--sku", default="VERICON-TEST-001")
     check = cmd.add_parser("check", help="One-shot Shopify + QBO controlled inventory comparison")
     check.add_argument("--sku", default="VERICON-TEST-001")
+    batch = cmd.add_parser("check-many", help="One-shot read-only comparison of 2 to 5 explicitly selected test SKUs")
+    batch.add_argument("--sku", action="append", required=True)
     args = parser.parse_args()
 
     if args.cmd == "setup":
@@ -246,6 +273,11 @@ def main() -> None:
 
     if args.cmd == "stock":
         print(json.dumps(read_stock(load_setup(), args.sku), ensure_ascii=False))
+    elif args.cmd == "check-many":
+        result = check_many(args.sku)
+        print(json.dumps(result, ensure_ascii=False))
+        if result["blocked"]:
+            raise SystemExit(2)
     else:
         print(json.dumps(check_both(args.sku), ensure_ascii=False))
 

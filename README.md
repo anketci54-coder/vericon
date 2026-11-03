@@ -99,3 +99,9 @@ Guncel is listesi: TODO.md. Muhendislik kurallari: AGENTS.md.
 - systemd timer ilk otomatik tetikleme 13:00:04 EET; servis 13:00:06 EET basarili cikis (Result=success, ExecMainStatus=0). Iki API result: Shopify available=10, QBO QtyOnHand=7, kontrollu fark=3, read_gap=1.166 saniye.
 - Intuit Item API `Sku` alaninin filterable oldugu dogrulandi ve Sandbox API `SELECT * FROM Item WHERE Sku = 'VERICON-TEST-001'` sorgusu 200 OK + tek Item sonucunu verdi. Kontrol kodu artik QuickBooks urun adini sabitlemez, dogrudan istenilen SKU ile sorgular. Tekilleşmeyen SKU BLOCK olur.
 - Bu tek-SKU test kontrolunun calismasini dogrular; envanterde ticari dogruluk, diger SKUlar, musteri bazli yanlis alarm ve finansal etki henuz dogrulanmadi. Timer hala ayni test SKU ile saatlik calisir.
+
+## Elle secilmis coklu SKU korumali deneme (2026-11-03)
+- `python3 shopify_read.py check-many --sku VERICON-TEST-001 --sku VERICON-NOT-FOUND-999` yalnizca acikca secilen 2–5 SKU'yu sirasiyla okur. Mevcut tek-SKU `check`, `stock` ve saatlik systemd timer degismedi. Yeni zamanlayici, API yetkisi, urun yazma yetkisi ya da panel acilmadi.
+- Hatali, yinelenen veya 5'ten fazla SKU tum API cagrilarindan ONCE bloklanir. Her SKU'nun sonucu ayri kaydedilir; eksik veya okunamayan SKU `BLOCKED_ITEM_READ` olur, fark uydurulmaz. Blok varsa toplu komut JSON ciktisi sonrasi `exit 2` ile cikar.
+- 29 cevrimdisi test: sinir, tekillesme, sirali ayri SKU sonuc, karisik basarili/bloke, yanlis SKU cikti engeli. Gercek VPS iki API denemesi: `VERICON-TEST-001` => TEST_DIFFERENCE (available=10, QBO=7, delta=3); `VERICON-NOT-FOUND-999` => BLOCKED_ITEM_READ (fark raporlanmadi).
+- **Kanıt siniri:** Iki farkli GERCEK mevcut SKU'nun iki sistemde de olumlu eslesmesi henuz olculmedi. Sistem hala Sandbox, ticari envanter ve musteri uyarisi degildir. Tam envanter taramasina gecmek icin veri ve semantik teyidi gerekir.

@@ -205,3 +205,49 @@ def test_stale_cross_api_read_is_blocked(cred, monkeypatch, records):
     res = s.check_both("VERICON-TEST-001")
     assert res["status"] == "BLOCKED_SNAPSHOT_TIME_GAP"
     assert "delta_shopify_minus_qbo" not in res
+
+
+def test_batch_is_bounded_and_deduplicated_before_api(monkeypatch):
+    def no_network(sku):
+        raise AssertionError("Validation must happen before API calls")
+    monkeypatch.setattr(s, "check_both", no_network)
+    for values in (["VERICON-TEST-001"], ["VERICON-TEST-001"] * 2,
+                   ["VERICON-TEST-001", "' OR 1=1"],
+                   [f"TEST-{i:02d}" for i in range(6)]):
+        with pytest.raises(ValueError):
+            s.check_many(values)
+
+
+def test_batch_pairs_by_sku_without_cross_match(monkeypatch):
+    seen = []
+    expected = {"SKU-1": "2", "SKU-2": "-4"}
+    def controlled(sku):
+        seen.append(sku)
+        return {"sku": sku, "status": "TEST_DIFFERENCE",
+                "delta_shopify_minus_qbo": expected[sku]}
+    monkeypatch.setattr(s, "check_both", controlled)
+    result = s.check_many(["SKU-2", "SKU-1"])
+    assert seen == ["SKU-2", "SKU-1"]
+    assert result["status"] == "TEST_BATCH_COMPLETE"
+    assert result["checked"] == 2 and result["blocked"] == 0
+    assert [r["delta_shopify_minus_qbo"] for r in result["results"]] == ["-4", "2"]
+
+
+def test_batch_missing_source_is_blocked_not_false_difference(monkeypatch):
+    def controlled(sku):
+        if sku == "MISSING-SKU":
+            raise ValueError("Shopify SKU not found or matches multiple variants")
+        return {"sku": sku, "status": "TEST_MATCH", "delta_shopify_minus_qbo": "0"}
+    monkeypatch.setattr(s, "check_both", controlled)
+    result = s.check_many(["VERICON-TEST-001", "MISSING-SKU"])
+    assert result["status"] == "TEST_BATCH_PARTIAL_BLOCKED"
+    assert result["checked"] == 1 and result["blocked"] == 1
+    assert result["results"][1] == {"sku": "MISSING-SKU", "status": "BLOCKED_ITEM_READ"}
+    assert "delta_shopify_minus_qbo" not in result["results"][1]
+
+
+def test_batch_rejects_wrong_sku_return_from_internal_check(monkeypatch):
+    monkeypatch.setattr(s, "check_both", lambda sku: {"sku": "WRONG-SKU", "status": "TEST_MATCH"})
+    result = s.check_many(["SKU-1", "SKU-2"])
+    assert result["blocked"] == 2
+    assert all(item["status"] == "BLOCKED_SKU_RESULT_MISMATCH" for item in result["results"])
