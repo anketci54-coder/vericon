@@ -1,8 +1,8 @@
 # VERICON - Tek is listesi (2026-11-02)
 
 ## Simdi (kapsam sabit)
-- [ ] QuickBooks Sandbox icinde Item sorgusunu gercek API yanitiyla dogrula (CompanyInfo HTTP 200 yeterli degil).
-- [ ] Shopify deneme magazasinda yalnizca test amacli urun/siparis verisi mevcut mu, kontrollu olarak belirle; mevcut test sonucu 0 urun / 0 siparis.
+- [ ] QuickBooks Sandbox Item sorgusunu 200 OK + gercek QueryResponse.Item ile dogrula. Intuit tarayicisinda CompanyInfo HTTP 200 goruldu; ancak kullanicinin Intuit OAuth oturumu VPS/ChatGPT baglantisi degil. Kullaniciya tekrar Account sayfasi uzerinden sorgu yaptirma; resmi Item API Query an item hazir ornek SELECT * FROM Item maxresults 2 yeterli.
+- [x] Shopify test magazasi verisini salt-okunur sorgula: 0 urun / 0 siparis (2026-11-02 dogrulamasi). Veri uydurma, kayitlari degistirme.
 - [ ] Iki kaynak icin eslesebilir ayni SKU/tarih/lokasyon/para birimi verilerini olustur veya uygun test kaydiyla eslestir.
 - [ ] Salt-okunur karsilastirmada bulunan fark, yanlis alarm ve belirsiz kayit sayilarini raporla.
 - [ ] Ucretli urun kararindan once rakipten ek faydayi ve gercek musteri odeme istegini olc.
