@@ -153,3 +153,16 @@ def test_saved_setup_permissions_and_values(monkeypatch, tmp_path):
     private.chmod(0o755)
     with pytest.raises(PermissionError, match="unsafe"):
         q.load_saved_setup()
+
+
+def test_force_refresh_rotates_unexpired_tokens(cfg, monkeypatch):
+    q._save_tokens(cfg, {"access_token": "STILL_VALID", "refresh_token": "OLD_REFRESH", "expires_in": 3600}, "12345")
+    called = []
+    def post(url, *, auth, data, headers, timeout):
+        called.append(data.copy())
+        return FakeResponse({"access_token": "REFRESHED", "refresh_token": "NEW_REFRESH", "expires_in": 3600})
+    monkeypatch.setattr(q.requests, "post", post)
+    token, realm = q.get_access_token(cfg, force_refresh=True)
+    assert (token, realm) == ("REFRESHED", "12345")
+    assert len(called) == 1 and called[0]["grant_type"] == "refresh_token"
+    assert q.load_tokens(cfg)["refresh_token"] == "NEW_REFRESH"

@@ -189,12 +189,25 @@ def check_both(sku: str) -> dict:
     if len(shop["locations"]) != 1:
         return {"status": "BLOCKED_MULTIPLE_LOCATIONS", "sku": sku,
                 "location_count": len(shop["locations"])}
+    # Sequential API reads are not an atomic snapshot. Block large gaps.
+    try:
+        shop_time = datetime.fromisoformat(shop["query_time_utc"].replace("Z", "+00:00"))
+        qbo_time = datetime.fromisoformat(qbo_result["query_time_utc"].replace("Z", "+00:00"))
+        if shop_time.utcoffset() is None or qbo_time.utcoffset() is None:
+            raise ValueError("Timezone missing")
+        read_gap_seconds = abs((qbo_time - shop_time).total_seconds())
+    except (ValueError, TypeError, KeyError):
+        return {"status": "BLOCKED_INVALID_SNAPSHOT_TIMES", "sku": sku}
+    if read_gap_seconds > 30:
+        return {"status": "BLOCKED_SNAPSHOT_TIME_GAP", "sku": sku,
+                "read_gap_seconds": round(read_gap_seconds, 3)}
     result = compare({"shopify": {"sku": sku, "onHand": shop["locations"][0]["on_hand"],
                                    "available": shop["locations"][0]["available"]},
                       "quickbooks": matches[0], "testMode": True})
     result["quickbooks_query_time_utc"] = qbo_result.get("query_time_utc")
     result["shopify_query_time_utc"] = shop.get("query_time_utc")
     result["shopify_location_id"] = shop["locations"][0]["location_id"]
+    result["read_gap_seconds"] = round(read_gap_seconds, 3)
     result["data_origin"] = "live_shopify_and_quickbooks_sandbox_api_queries"
     result["note"] = ("Controlled sandbox comparison only; snapshot times, location coverage, "
                       "and accounting stock meaning require review. Not a real customer loss.")

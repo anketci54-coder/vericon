@@ -158,14 +158,16 @@ def test_controlled_comparison_one_location(cred, monkeypatch, records):
     monkeypatch.setattr(s, "load_setup", lambda: cred)
     import qbo_oauth
     monkeypatch.setattr(qbo_oauth, "load_saved_setup", lambda: object())
+    from datetime import datetime, timezone
     monkeypatch.setattr(qbo_oauth, "read_inventory_item", lambda cfg, name: {
-        "query_time_utc": "2026-11-03T07:00:00Z",
+        "query_time_utc": datetime.now(timezone.utc).isoformat(),
         "items": [{"Sku": "VERICON-TEST-001", "Type": "Inventory",
                    "TrackQtyOnHand": True, "QtyOnHand": 7}]
     })
     res = s.check_both("VERICON-TEST-001")
     assert res["delta_shopify_minus_qbo"] == "3"
     assert res["status"] == "TEST_DIFFERENCE"
+    assert res["read_gap_seconds"] <= 30
     assert res["shopify_quantity_basis"] == "available"
     assert res["shopify_available"] == "10"
     assert res["data_origin"] == "live_shopify_and_quickbooks_sandbox_api_queries"
@@ -187,3 +189,19 @@ def test_missing_available_blocks_comparison():
     with pytest.raises(ValueError, match="shopify.available"):
         compare({"shopify": {"sku": "VERICON-TEST-001", "onHand": 10},
                  "quickbooks": qbo, "testMode": True})
+
+
+def test_stale_cross_api_read_is_blocked(cred, monkeypatch, records):
+    from datetime import datetime, timezone
+    install_fake_requests(monkeypatch, records)
+    monkeypatch.setattr(s, "load_setup", lambda: cred)
+    import qbo_oauth
+    monkeypatch.setattr(qbo_oauth, "load_saved_setup", lambda: object())
+    monkeypatch.setattr(qbo_oauth, "read_inventory_item", lambda cfg, name: {
+        "query_time_utc": "2024-01-01T00:00:00+00:00",
+        "items": [{"Sku": "VERICON-TEST-001", "Type": "Inventory",
+                   "TrackQtyOnHand": True, "QtyOnHand": 7}]
+    })
+    res = s.check_both("VERICON-TEST-001")
+    assert res["status"] == "BLOCKED_SNAPSHOT_TIME_GAP"
+    assert "delta_shopify_minus_qbo" not in res

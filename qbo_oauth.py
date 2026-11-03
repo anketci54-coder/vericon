@@ -180,7 +180,7 @@ def complete_authorization(config: Config, *, state: str, code: str, realm: str)
     _save_tokens(config, token, realm)
 
 
-def get_access_token(config: Config) -> tuple[str, str]:
+def get_access_token(config: Config, *, force_refresh: bool = False) -> tuple[str, str]:
     _secure_dir(config)
     # Allow one renewal at a time: simultaneous renewals can invalidate rotated tokens.
     lock = config.private_dir / "qbo_refresh.lock"
@@ -190,7 +190,7 @@ def get_access_token(config: Config) -> tuple[str, str]:
         record = load_tokens(config)
         if config.expected_realm and record["realm"] != config.expected_realm:
             raise ValueError("Authorized company does not match configured sandbox")
-        if time.time() < float(record["expires_at"]) - 120:
+        if not force_refresh and time.time() < float(record["expires_at"]) - 120:
             return record["access_token"], record["realm"]
         updated = _exchange(config, {"grant_type": "refresh_token",
                                      "refresh_token": record["refresh_token"]})

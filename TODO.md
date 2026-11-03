@@ -7,7 +7,11 @@
 - [x] QBO Sandbox OAuth bir defa yetkilendirildi, tokenlar private/ icinde, VPS GET Item tekrar basarili: VERICON-TEST-001 QtyOnHand=7. Ek localhost tuneli gerekmiyor; servis halen baslatilmadi. Tokenin suresi dolunca otomatik refresh CANLI olarak henuz olculmedi.
 - [x] Shopify VERICON Audit Test v2 kurulu; read_products/read_inventory/read_locations scope verildi. Gelistirme kimlik bilgileri private/ icinde. 2026-11-03 VPS uzerinden API ile ayni SKU icin on_hand=10, available=10, committed=0 okundu. QBO Sandbox Item QtyOnHand=7 VPS API ile okundu; shopify_read.py check ile delta=3 ve TEST_DIFFERENCE elde edildi. Kurulu ve BAGLI iki test kaynakli tek seferlik sorgu dogrulandi. Bunun gercek musteri hatasi veya saatlik otomatik tarama oldugu ileri surulmez.
 - [x] Stok alanlari: Shopify on_hand yerine available / QBO QtyOnHand (available for sale) kiyasina gecildi; ayrilmis stok yanlis alarma yol acmasin diye 21 testle kontrol edildi.
-- [ ] Token yenilemesini canli Sandbox API ile dogrula, sonrasinda tek-dongu snapshot saatleri ve stok hareketlerini yorumla. Bunlardan sonra dusuk frekansli salt-okunur zamanlayici icin karar ver.
+- [x] Sandbox OAuth zorunlu token yenilemesini canli Intuit endpointinde test ettik: yeni access token geldi, sifreli depo guncellendi, Item 7 tekrar okundu (refresh token degismedi).
+- [x] Iki canli API snapshot okuma farkini olctuk: 0.927 sn, MAX=30 sn guard eklendi ve 23 test gecti. Ticari semantik, stok hareketleri ve muhasebe esaslari henuz dogrulanmadi.
+- [x] Systemd oneshot vericon-sandbox-scan.service manuel canli API cagrisi OK, Result=success/exit=0, TEST_DIFFERENCE=3, read_gap_seconds=0.917. Timer enabled+active ve ilk gelecek calisma 2026-11-03 13:00 EET olarak dogrulandi; ilk zamanlanmis calismanin gercek gerceklesmesi HENUZ dogrulanmadi.
+- [ ] Ilk saatlik otomatik tetikleme tamamlandiktan sonra journal sonucu, yenileme davranisi ve 0 hata kodunu dogrula; basarisizsa timeri durdurup nedenini incele.
+- [ ] Uretime gecis icin coklu-SKU, urun adi disinda Item eslestirme, butun konumlar, veri zamani ve ticari is akisi farklarini ayri kanitla. Mevcut kontrol YALNIZ test SKU.
 - [ ] Ucretli urun kararindan once rakipten ek faydayi ve gercek musteri odeme istegini olc.
 
 ## DAHA SONRA - simdi yapma

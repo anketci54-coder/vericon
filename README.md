@@ -80,3 +80,17 @@ Guncel is listesi: TODO.md. Muhendislik kurallari: AGENTS.md.
 - Bu nedenle VERICON farki icin Shopify `available` ile QBO `QtyOnHand` karsilastirilir; Shopify `on_hand` ayrica kanit olarak korunur. Committed/reserved stokun varligi otomatik kayip kaniti degildir.
 - Tek depo ve SKU kanitlanmadan, zaman farkini ve stok hareketlerini denetlemeden ticari kayip raporlanmaz. Kontrollu test `VERICON-TEST-001` icin iki API'den Shopify available=10, QBO QtyOnHand=7, delta=3.
 - Kaynak: Shopify inventory quantities states; QuickBooks Item API reference.
+
+## Sandbox-saatlik deneme (2026-11-03)
+- Yalnizca VERICON-TEST-001 kontrollu SKU; saatlik, GET yalnizca okuma. systemd unit kaynaklari: deploy/vericon-sandbox-scan.service ve deploy/vericon-sandbox-scan.timer.
+- Kullanicinin gercek stok ve muhasebe kayitlarini degistirmez, panel/uyari/odeme servisi degildir. Test sonucu TEST_DIFFERENCE sadece kurgusal SKU farkidir.
+- Shopify available ile QBO QtyOnHand karsilastirilir; on_hand raporlanir. Iki okuma arasindaki zaman farki 30 saniyeyi asarsa BLOCKED_SNAPSHOT_TIME_GAP doner; bu kapinin ticari gecerliligi henuz olculmedi.
+- Acilis yetkisi root private dizini icindir, kimlik bilgileri ve OAuth jetonlari GitHub veya systemd unit dosyalarina yazilmaz. OAuth refresh kodu once gercek Sandbox token degisimiyle kontrol edildi; refresh token her seferinde degismek zorunda degil.
+- Kontrol: systemctl status vericon-sandbox-scan.timer; journalctl -u vericon-sandbox-scan.service -n 15 --no-pager. Durdur: systemctl disable --now vericon-sandbox-scan.timer.
+
+## Saatlik kontrollu deneme: durum (2026-11-03)
+- Tek SKU read-only systemd oneshot manuel olarak basariyla calistirildi; iki kaynakli sonuc TEST_DIFFERENCE delta=3; QBO QtyOnHand=7, Shopify available=10, query read gap 0.917 sn.
+- Systemd timer aktif/enable; ilk planli calisma 2026-11-03 13:00 EET. Zamanlayicinin gelecekte otomatik basarisi henuz gozlenmedi.
+- Terminal veya tarayici acik tutmak gerekmez. Sadece tek test SKU; otomatik stok duzeltme, mesaj ve gercek musteri raporu YOK.
+- `systemctl status vericon-sandbox-scan.timer` ve `journalctl -u vericon-sandbox-scan.service -n 20 --no-pager` ile gercek sonuc okunabilir.
+- `systemctl disable --now vericon-sandbox-scan.timer` ile otomasyon aninda kapatilir. Kullanilmayan baska projelere dokunulmadi.
