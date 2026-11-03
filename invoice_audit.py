@@ -215,7 +215,132 @@ def read_invoices() -> list[dict]:
     return invoices
 
 
-def audit_all(invoices: list[dict]) -> dict:
+def read_payments() -> list[dict]:
+    """Bounded, read-only Payment records. No payment/credit creation permitted."""
+    token, realm = get_access_token(load_saved_setup())
+    url = f"{SANDBOX_API}/v3/company/{realm}/query"
+    headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
+    count_data = _get_json(url, "SELECT COUNT(*) FROM Payment", headers)
+    count = count_data.get("totalCount")
+    if type(count) is not int or count < 0 or count > MAX_INVOICES:
+        raise ValueError("Payment count unknown or above controlled batch limit")
+    data = _get_json(url, f"SELECT * FROM Payment STARTPOSITION 1 MAXRESULTS {MAX_INVOICES}", headers)
+    payments = data.get("Payment", [])
+    if not isinstance(payments, list) or len(payments) != count:
+        raise ValueError("Payment collection incomplete or changed during read")
+    ids = [row.get("Id") for row in payments if isinstance(row, dict)]
+    if len(ids) != count or any(not v for v in ids) or len(set(ids)) != count:
+        raise ValueError("Payment identifiers missing or ambiguous")
+    return payments
+
+
+def audit_payment_links(invoices: list[dict], payments: list[dict]) -> dict:
+    """Validate typed invoice-payment edges without confusing credit with cash.
+
+    Invoice.LinkedTxn[Payment] and Payment.Line.LinkedTxn[Invoice] must agree.
+    Payment.Line.Amount is the applied amount; Payment.TotalAmt may be zero
+    when a credit memo offsets an invoice, so it must not be used as cash proof.
+    """
+    base = {"status": "BLOCKED_GRAPH_INPUT", "invoice_nodes": len(invoices),
+            "payment_nodes": len(payments), "verified_edges": 0,
+            "invoices_with_payment_links": 0, "partial_balance_invoice_ids": [],
+            "credit_memo_related_payment_ids": [], "invoice_balance_mismatch_ids": [],
+            "cash_received_verified": False, "credit_memo_endpoints_verified": False,
+            "shopify_order_links_verified": False}
+    try:
+        invoice_index = {str(x["Id"]): x for x in invoices}
+        payment_index = {str(x["Id"]): x for x in payments}
+        if (len(invoice_index) != len(invoices) or len(payment_index) != len(payments) or
+                any(not key for key in (*invoice_index, *payment_index,))):
+            return base
+        invoice_edges = set()
+        for iid, inv in invoice_index.items():
+            if (inv.get("CurrencyRef") or {}).get("value") != "USD":
+                return {**base, "status": "BLOCKED_GRAPH_CURRENCY"}
+            refs = inv.get("LinkedTxn", [])
+            if not isinstance(refs, list):
+                return base
+            for ref in refs:
+                if not isinstance(ref, dict):
+                    return base
+                if ref.get("TxnType") == "Payment":
+                    if not ref.get("TxnId"):
+                        return base
+                    edge = (iid, str(ref["TxnId"]))
+                    if edge in invoice_edges:
+                        return {**base, "status": "BLOCKED_DUPLICATE_EDGE"}
+                    invoice_edges.add(edge)
+        payment_edges = {}
+        credit_related = []
+        for pid, pay in payment_index.items():
+            if (pay.get("CurrencyRef") or {}).get("value") != "USD":
+                return {**base, "status": "BLOCKED_GRAPH_CURRENCY"}
+            lines = pay.get("Line", [])
+            if not isinstance(lines, list):
+                return base
+            credit_present = False
+            for line in lines:
+                if not isinstance(line, dict):
+                    return base
+                refs = line.get("LinkedTxn", [])
+                if not isinstance(refs, list):
+                    return base
+                types = [r.get("TxnType") for r in refs if isinstance(r, dict)]
+                if len(types) != len(refs):
+                    return base
+                if "CreditMemo" in types:
+                    credit_present = True
+                if "Invoice" not in types:
+                    continue
+                # One allocation amount must refer to exactly one invoice.
+                if types != ["Invoice"] or not refs[0].get("TxnId"):
+                    return {**base, "status": "BLOCKED_AMBIGUOUS_ALLOCATION"}
+                iid = str(refs[0]["TxnId"])
+                edge = (iid, pid)
+                if edge in payment_edges:
+                    return {**base, "status": "BLOCKED_DUPLICATE_EDGE"}
+                amount = number(line.get("Amount"))
+                if amount < 0:
+                    return {**base, "status": "BLOCKED_NEGATIVE_ALLOCATION"}
+                payment_edges[edge] = amount
+            if credit_present:
+                credit_related.append(pid)
+        if invoice_edges != set(payment_edges):
+            return {**base, "status": "BLOCKED_NONRECIPROCAL_LINKS",
+                    "invoice_only_edges": len(invoice_edges - set(payment_edges)),
+                    "payment_only_edges": len(set(payment_edges) - invoice_edges)}
+        if any(iid not in invoice_index or pid not in payment_index for iid, pid in payment_edges):
+            return {**base, "status": "BLOCKED_MISSING_GRAPH_NODE"}
+        allocated = {iid: Decimal(0) for iid in invoice_index}
+        paid_link_counts = {iid: 0 for iid in invoice_index}
+        for (iid, pid), amount in payment_edges.items():
+            allocated[iid] += amount
+            paid_link_counts[iid] += 1
+        mismatches = []
+        partial = []
+        for iid, inv in invoice_index.items():
+            total = number(inv.get("TotalAmt"))
+            balance = number(inv.get("Balance"))
+            if total < 0 or balance < 0 or balance > total:
+                return {**base, "status": "BLOCKED_INVALID_INVOICE_BALANCE"}
+            if abs(total - balance - allocated[iid]) > COMPONENT_CENT_TOLERANCE:
+                mismatches.append(iid)
+            if paid_link_counts[iid] and balance > 0:
+                partial.append(iid)
+        result = {**base, "status": "GRAPH_LINKS_VERIFIED" if not mismatches
+                  else "BLOCKED_BALANCE_ALLOCATION_MISMATCH",
+                  "verified_edges": len(payment_edges),
+                  "invoices_with_payment_links": sum(x > 0 for x in paid_link_counts.values()),
+                  "invoices_with_multiple_payment_links": sum(x > 1 for x in paid_link_counts.values()),
+                  "partial_balance_invoice_ids": sorted(partial),
+                  "credit_memo_related_payment_ids": sorted(credit_related),
+                  "invoice_balance_mismatch_ids": sorted(mismatches)}
+        return result
+    except (KeyError, TypeError, AttributeError, ValueError):
+        return base
+
+
+def audit_all(invoices: list[dict], payments: list[dict] | None = None) -> dict:
     results = [audit_invoice(inv) for inv in invoices]
     financial = [audit_financial_components(inv) for inv in invoices]
     blocked = [r["invoice_id"] for r in results if r["status"].startswith("BLOCKED_")]
@@ -239,12 +364,16 @@ def audit_all(invoices: list[dict]) -> dict:
             "tax_review_invoice_ids": [r["invoice_id"] for r in financial if r["tax_status"].startswith("REVIEW_")],
             "cross_system_order_matching": "NOT_CHECKED_NO_SHOPIFY_ORDERS_OR_READ_ORDERS_SCOPE",
             "tax_law_discount_eligibility_delivery_validation": "NOT_CHECKED",
-            "financial_loss_claimed": False}
+            "financial_loss_claimed": False,
+            "payment_graph": audit_payment_links(invoices, payments) if payments is not None
+                             else {"status": "NOT_CHECKED"}}
 
 
 if __name__ == "__main__":
     try:
-        print(json.dumps(audit_all(read_invoices()), ensure_ascii=False))
+        invoices = read_invoices()
+        payments = read_payments()
+        print(json.dumps(audit_all(invoices, payments), ensure_ascii=False))
     except ValueError as exc:
         print(json.dumps({"status": "BLOCKED_INVOICE_READ", "reason": str(exc)}))
         raise SystemExit(2) from None

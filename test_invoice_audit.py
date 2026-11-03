@@ -176,3 +176,106 @@ def test_financial_summary_counts_components_without_claiming_legal_tax_correctn
     assert result["total_component_match_invoice_count"]==2
     assert result["tax_law_discount_eligibility_delivery_validation"]=="NOT_CHECKED"
     assert result["financial_loss_claimed"] is False
+
+
+def graph_invoice(iid, total, balance, payment_ids=(), extra_refs=()):
+    return {"Id": str(iid), "CurrencyRef": {"value": "USD"},
+            "TotalAmt": total, "Balance": balance,
+            "LinkedTxn": [{"TxnType": "Payment", "TxnId": str(pid)} for pid in payment_ids]
+                         + list(extra_refs)}
+
+
+def graph_payment(pid, links, total=None):
+    return {"Id": str(pid), "CurrencyRef": {"value": "USD"},
+            "TotalAmt": total, "Line": [
+                {"Amount": amt, "LinkedTxn": [{"TxnType": kind, "TxnId": str(iid)}]}
+                for kind, iid, amt in links]}
+
+
+def test_graph_one_to_many_partial_and_credit_memo_are_not_cash_proof():
+    invoices=[graph_invoice(1, 150, 30, (10, 11)), graph_invoice(2, 100, 0, (12,))]
+    payments=[graph_payment(10, [("Invoice",1,40)],40),
+              graph_payment(11, [("Invoice",1,80)],80),
+              graph_payment(12, [("Invoice",2,100),("CreditMemo",33,100)],0)]
+    res=a.audit_payment_links(invoices, payments)
+    assert res["status"] == "GRAPH_LINKS_VERIFIED"
+    assert res["invoice_nodes"] == 2 and res["payment_nodes"] == 3
+    assert res["verified_edges"] == 3
+    assert res["invoices_with_multiple_payment_links"] == 1
+    assert res["partial_balance_invoice_ids"] == ["1"]
+    assert res["credit_memo_related_payment_ids"] == ["12"]
+    assert res["cash_received_verified"] is False
+    assert res["credit_memo_endpoints_verified"] is False
+    assert res["shopify_order_links_verified"] is False
+
+
+def test_graph_nonreciprocal_or_missing_payment_does_not_claim_success():
+    invoice=graph_invoice(1,20,0,(10,))
+    assert a.audit_payment_links([invoice],[])["status"] == "BLOCKED_NONRECIPROCAL_LINKS"
+    payment=graph_payment(10,[("Invoice",1,20)],20)
+    assert a.audit_payment_links([graph_invoice(1,20,0)], [payment])["status"] == "BLOCKED_NONRECIPROCAL_LINKS"
+
+
+def test_graph_ambiguous_payment_line_fails_closed():
+    invoice=graph_invoice(1,20,0,(10,))
+    payment=graph_payment(10,[("Invoice",1,20)],20)
+    payment["Line"][0]["LinkedTxn"].append({"TxnType":"CreditMemo","TxnId":"33"})
+    assert a.audit_payment_links([invoice],[payment])["status"] == "BLOCKED_AMBIGUOUS_ALLOCATION"
+
+
+def test_graph_mismatched_applied_amount_is_blocked_not_financial_loss():
+    invoice=graph_invoice(1,20,1,(10,))
+    payment=graph_payment(10,[("Invoice",1,20)],20)
+    res=a.audit_payment_links([invoice],[payment])
+    assert res["status"] == "BLOCKED_BALANCE_ALLOCATION_MISMATCH"
+    assert res["invoice_balance_mismatch_ids"] == ["1"]
+    assert res["cash_received_verified"] is False
+
+
+def test_graph_other_link_types_not_counted_as_payment():
+    invoice=graph_invoice(1,50,50,extra_refs=[{"TxnType":"Estimate","TxnId":"90"}])
+    res=a.audit_payment_links([invoice],[])
+    assert res["status"] == "GRAPH_LINKS_VERIFIED"
+    assert res["verified_edges"] == 0
+    assert res["invoices_with_payment_links"] == 0
+
+
+def test_graph_currency_or_duplicate_edges_fail():
+    invoice=graph_invoice(1,20,0,(10,))
+    payment=graph_payment(10,[("Invoice",1,20)],20)
+    payment["CurrencyRef"]["value"]="EUR"
+    assert a.audit_payment_links([invoice],[payment])["status"] == "BLOCKED_GRAPH_CURRENCY"
+    payment["CurrencyRef"]["value"]="USD"
+    invoice["LinkedTxn"].append({"TxnType":"Payment","TxnId":"10"})
+    assert a.audit_payment_links([invoice],[payment])["status"] == "BLOCKED_DUPLICATE_EDGE"
+
+
+def test_graph_payment_reader_get_only_and_rejects_partial_or_duplicate(monkeypatch):
+    monkeypatch.setattr(a,"load_saved_setup",lambda: object())
+    monkeypatch.setattr(a,"get_access_token",lambda config: ("FAKE","123"))
+    calls=[]
+    def response(url,query,headers):
+        calls.append(query)
+        if "COUNT(*)" in query:return {"totalCount":2}
+        return {"Payment":[{"Id":"10"},{"Id":"11"}]}
+    monkeypatch.setattr(a,"_get_json",response)
+    assert len(a.read_payments())==2
+    assert calls==["SELECT COUNT(*) FROM Payment", "SELECT * FROM Payment STARTPOSITION 1 MAXRESULTS 100"]
+    monkeypatch.setattr(a,"_get_json",lambda url,query,headers:
+                        {"totalCount":2} if "COUNT(*)" in query else {"Payment":[{"Id":"10"},{"Id":"10"}]})
+    with pytest.raises(ValueError,match="ambiguous"):
+        a.read_payments()
+    monkeypatch.setattr(a,"_get_json",lambda url,query,headers:
+                        {"totalCount":101} if "COUNT(*)" in query else {"Payment":[]})
+    with pytest.raises(ValueError,match="limit"):
+        a.read_payments()
+
+
+def test_graph_summary_is_separate_from_invoice_arithmetic():
+    invoice=graph_invoice(1,50,30,(10,))
+    payment=graph_payment(10,[("Invoice",1,20)],20)
+    inv={**invoice, "Line":[sales(qty=10,price=5,amount=50)]}
+    summary=a.audit_all([inv],[payment])
+    assert summary["payment_graph"]["status"] == "GRAPH_LINKS_VERIFIED"
+    assert summary["financial_loss_claimed"] is False
+    assert summary["cross_system_order_matching"].startswith("NOT_CHECKED_")
