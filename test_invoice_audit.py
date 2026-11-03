@@ -75,3 +75,104 @@ def test_reader_blocks_incomplete_counts_and_duplicate_records(monkeypatch):
                         {"totalCount": 101} if "COUNT(*)" in query else {"Invoice":[]})
     with pytest.raises(ValueError,match="limit"):
         a.read_invoices()
+
+
+def financial_case(*, amount=15, total=15, subtotal=15, discount=None, tax_amount=0, taxable_base=None, tax_rate=None):
+    lines=[sales(qty=3, price=5, amount=amount),
+           {"DetailType":"SubTotalLineDetail", "Amount":subtotal}]
+    if discount is not None:
+        lines.append({"DetailType":"DiscountLineDetail", "Amount":discount,
+                      "DiscountLineDetail":{"PercentBased":True,"DiscountPercent":10}})
+    tax={"TotalTax":tax_amount}
+    if tax_rate is not None:
+        tax["TaxLine"]=[{"DetailType":"TaxLineDetail", "Amount":tax_amount,
+                         "TaxLineDetail":{"PercentBased":True,"TaxPercent":tax_rate,
+                                          "NetAmountTaxable":taxable_base}}]
+    return {"Id":"TEST-ID", "CurrencyRef":{"value":"USD"},
+            "Line":lines, "TxnTaxDetail":tax, "TotalAmt":total}
+
+
+def test_financial_components_exact_subtotal_zero_tax_and_total():
+    result=a.audit_financial_components(financial_case())
+    assert result["subtotal_status"]=="SUBTOTAL_MATCH"
+    assert result["discount_status"]=="NO_DISCOUNT"
+    assert result["tax_status"]=="NO_TAX_RECORDED"
+    assert result["total_status"]=="TOTAL_COMPONENTS_MATCH"
+    assert result["verified_tax_rate_lines"]==0
+
+
+def test_financial_tax_rate_math_and_inclusive_total():
+    result=a.audit_financial_components(financial_case(total=16.2,tax_amount=1.2,
+                                                         taxable_base=15,tax_rate=8))
+    assert result["tax_status"]=="TAX_COMPONENTS_MATCH"
+    assert result["verified_tax_rate_lines"]==1
+    assert result["total_status"]=="TOTAL_COMPONENTS_MATCH"
+
+
+def test_discount_percentage_calculation_and_net_total():
+    result=a.audit_financial_components(financial_case(discount=1.5,total=13.5))
+    assert result["discount_status"]=="DISCOUNT_MATCH"
+    assert result["total_status"]=="TOTAL_COMPONENTS_MATCH"
+
+
+def test_subtotal_without_product_basis_is_blocked_even_if_total_arithmetic_works():
+    row=financial_case(total=81,subtotal=75,tax_amount=6,taxable_base=75,tax_rate=8)
+    row["Line"]=row["Line"][1:]
+    result=a.audit_financial_components(row)
+    assert result["subtotal_status"]=="BLOCKED_NO_PRODUCT_BASIS"
+    assert result["tax_status"]=="TAX_COMPONENTS_MATCH"
+    assert result["total_status"]=="BLOCKED_UNVERIFIED_COMPONENT"
+
+
+def test_one_cent_difference_is_review_not_silently_accepted():
+    result=a.audit_financial_components(financial_case(total=15.01))
+    assert result["total_status"]=="REVIEW_TOTAL_AMOUNT"
+    result=a.audit_financial_components(financial_case(discount=1.51,total=13.49))
+    assert result["discount_status"]=="REVIEW_DISCOUNT_AMOUNT"
+    assert result["total_status"]=="BLOCKED_UNVERIFIED_COMPONENT"
+    result=a.audit_financial_components(financial_case(tax_amount=1.21,taxable_base=15,tax_rate=8,total=16.21))
+    assert result["tax_status"]=="REVIEW_TAX_COMPONENTS"
+    assert result["total_status"]=="BLOCKED_UNVERIFIED_COMPONENT"
+
+
+def test_missing_tax_and_unknown_discount_are_not_matched():
+    assert a.audit_financial_components(financial_case(tax_amount=2))["tax_status"]=="BLOCKED_MISSING_TAX_LINES"
+    row=financial_case()
+    row.pop("TxnTaxDetail")
+    assert a.audit_financial_components(row)["total_status"]=="BLOCKED_UNVERIFIED_COMPONENT"
+    row=financial_case(discount=2,total=13)
+    row["Line"][-1]["DiscountLineDetail"]={"PercentBased":False}
+    result=a.audit_financial_components(row)
+    assert result["discount_status"]=="BLOCKED_UNSUPPORTED_DISCOUNT"
+    assert result["total_status"]=="BLOCKED_UNVERIFIED_COMPONENT"
+
+
+def test_unsuitable_line_order_and_repeated_subtotals_block():
+    row=financial_case()
+    row["Line"].insert(0,{"DetailType":"SubTotalLineDetail","Amount":15})
+    assert a.audit_financial_components(row)["total_status"]=="BLOCKED_UNSUPPORTED_INVOICE"
+    row=financial_case()
+    row["Line"].append(sales(qty=1,price=2,amount=2))
+    assert a.audit_financial_components(row)["total_status"]=="BLOCKED_UNSUPPORTED_INVOICE"
+
+
+def test_missing_qty_blocks_line_but_keeps_separate_total_reconstruction():
+    row=financial_case()
+    row["Line"][0]["SalesItemLineDetail"]={}
+    assert a.audit_invoice(row)["status"]=="BLOCKED_INCOMPLETE_PRODUCT_LINE"
+    assert a.audit_financial_components(row)["total_status"]=="TOTAL_COMPONENTS_MATCH"
+
+
+def test_financial_summary_counts_components_without_claiming_legal_tax_correctness():
+    rows=[financial_case(total=16.2,tax_amount=1.2,taxable_base=15,tax_rate=8),
+          financial_case(discount=1.5,total=13.5)]
+    rows[1]["Id"]="TEST-ID-2"
+    result=a.audit_all(rows)
+    assert result["subtotal_match_invoice_count"]==2
+    assert result["discount_match_invoice_count"]==1
+    assert result["tax_rate_line_match_count"]==1
+    assert result["tax_component_match_invoice_count"]==1
+    assert result["no_tax_recorded_invoice_count"]==1
+    assert result["total_component_match_invoice_count"]==2
+    assert result["tax_law_discount_eligibility_delivery_validation"]=="NOT_CHECKED"
+    assert result["financial_loss_claimed"] is False
