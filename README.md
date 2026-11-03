@@ -39,3 +39,9 @@ Guncel is listesi: TODO.md. Muhendislik kurallari: AGENTS.md.
 - OAuth scope = com.intuit.quickbooks.accounting. Bu scope Intuit tarafinda teknik olarak sadece okuma yetkisi DEGILDIR; bizim adaptorumuz yalnizca GET yapar. Canli muhasebe sirketine baglama.
 - Yetkili ortam kurulduktan sonra: python3 qbo_oauth.py auth-url -> Intuit tek seferlik izin -> GET /oauth/quickbooks/callback -> python3 qbo_oauth.py item --name 'VERICON TEST'. Baska islem yapilmaz.
 - Not: QuickBooks baglantisi VERICON'a ait olmalidir. Intuit API Explorer'dan alinan gecici token VERICON'un token deposu degildir.
+
+### Tek seferlik yerel kurulum yardimcisi
+- qbo_setup.py: Development Client ID/Secret ve Sandbox realm ID'yi terminalde gizlice alir, private/qbo_setup.json dosyasina 0600 yetkisiyle kaydeder. Kodu ve sirri sohbete veya shell history'ye yazma.
+- SSH localhost port yonlendirmesi (8782) aktifken OAuth izin linkini acip Intuit onayi verir; sadece localhost'a bagli gecici callback'i kullanir. Yetki bitince ilk VERICON TEST Item sorgusunu okur, sunucuyu kapatir. Bu dosya yayinlanan servis degildir.
+- Ilk kurulumdan once, daha once ekran goruntusunde gorunen Development Client Secret rotasyonu/degişimi yetkili Intuit panelinde dogrulanmali. UI rotasyonu desteklemiyorsa hesap yetkilisi tarafindan yeni sandbox uygulamasi veya resmi Intuit destek yolu degerlendirilmeli.
+- Bu islemler sadece gelistirme ortaminda kullanilacak; production baglantisi yok.
