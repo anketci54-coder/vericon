@@ -121,3 +121,11 @@ def test_qbo_fault_is_blocked(cfg, monkeypatch):
     monkeypatch.setattr(q.requests, "get", lambda *args, **kwargs: FakeResponse({"Fault": {"type": "ValidationFault"}}))
     with pytest.raises(ValueError, match="fault"):
         q.read_inventory_item(cfg, "VERICON TEST")
+
+
+def test_sandbox_loopback_redirect_is_supported(monkeypatch, tmp_path):
+    monkeypatch.setenv("VERICON_QBO_CLIENT_ID", "fake-id")
+    monkeypatch.setenv("VERICON_QBO_CLIENT_SECRET", "fake-secret")
+    monkeypatch.setenv("VERICON_QBO_REDIRECT_URI", "http://localhost:8782/oauth/quickbooks/callback")
+    monkeypatch.setenv("VERICON_QBO_PRIVATE_DIR", str(tmp_path / "private"))
+    assert q.Config.from_env().redirect_uri.startswith("http://localhost:8782/")
