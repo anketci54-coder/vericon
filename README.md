@@ -88,3 +88,11 @@ python3 -B -m pytest -q -p no:cacheprovider test_qbo_oauth.py test_shopify_read.
 - QBO Sandbox CreditMemo ID73: USD 100, Balance=0. Payment ID74: TotalAmt=0; Invoice71'e 100 uygulama ve CreditMemo73'e 100 referans var. Payment/Invoice/CreditMemo musteri kimlikleri ayni. Bunlar gercek API `GET /query` ile okundu.
 - `invoice_audit.py` artik mevcut graf uzerinde (ayri DB olmadan) 100 kayit limitli CreditMemo GET yapar; Payment.Line.CreditMemo endpoint ID, musteri, para birimi, uygulanan tutarin memo TotalAmt'yi asmamasi kontrolleri ile `credit_memo_endpoints_verified=True` diyebilir. **Bu sadece tek tarafli referans+endpoint dogrulamasidir; CreditMemo kendi tarafindan karsilikli link bildirmiyor, banka/nakit tahsilati ve kredi mahsup kaynagi tumuyle kanitlanmis DEGIL.**
 - Canli sonuc: `GRAPH_LINKS_VERIFIED`, 16 fatura/odeme bagi, 1 CreditMemo referansi ve endpointi gecerli; `cash_received_verified=False`, `shopify_order_links_verified=False`. 62 offline test ve dogrudan QBO sorgusu; stok ve fiyat kontrolu korunuyor. Yeni dosya, servis, yetki veya dis sistem veri yazimi YOK.
+
+
+## Modul A / Tedarikci faturasi ↔ satin alma siparisi kaniti (2026-11-03)
+- Salt-okunur GET /query: QuickBooks Sandbox PurchaseOrder sayisi **3**, Bill sayisi **15**.
+- Yalniz PO **125** -> Bill **126** acik baglanti tasiyor: ayni vendor/para birimi (USD), 2 adet eslesen kalem, miktar, birim maliyet ve toplam **205 USD**. Denetimde **0 fark**.
+- Diger 2 PO'nun Bill bagi yok; bunlar hata diye raporlanmaz (NOT_CHECKED_NO_BILL_LINK). Kismi faturalar, desteklenmeyen satirlar ve bir faturanin birden cok PO'ya baglanmasi konservatif engellenir.
+- Bu **tek kaynak Sandbox iki-belge karsilastirmasidir**; teslimatin fiilen yapildigi, fatura kaydinin hukuken dogru oldugu, odemenin bankadan gectigi veya Shopify siparisiyle eslestirildigi anlamina GELMEZ.
+- invoice_audit.py, test_invoice_audit.py icinde uygulandi: **70 yerel test** ve yeni API sorgusunun gercek yaniti ile dogrulandi. Yeni dosya, servis, zamanlayici, yeni scope veya veri mutasyonu olusturulmadi.

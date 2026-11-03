@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from collections import Counter
 
 import requests
 
@@ -251,6 +252,138 @@ def read_credit_memos() -> list[dict]:
     return rows
 
 
+
+
+def read_supplier_documents(entity: str) -> list[dict]:
+    """Read a bounded QBO Sandbox purchase-order or vendor-bill collection."""
+    if entity not in ("PurchaseOrder", "Bill"):
+        raise ValueError("Unsupported supplier document")
+    token, realm = get_access_token(load_saved_setup())
+    url = f"{SANDBOX_API}/v3/company/{realm}/query"
+    headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
+    count = _get_json(url, f"SELECT COUNT(*) FROM {entity}", headers).get("totalCount")
+    if type(count) is not int or count < 0 or count > MAX_INVOICES:
+        raise ValueError("Supplier document count invalid or above limit")
+    rows = _get_json(url, f"SELECT * FROM {entity} STARTPOSITION 1 MAXRESULTS {MAX_INVOICES}",
+                     headers).get(entity, [])
+    if not isinstance(rows, list) or len(rows) != count:
+        raise ValueError("Supplier document collection incomplete")
+    ids = [str(row.get("Id") or "") for row in rows if isinstance(row, dict)]
+    if len(ids) != count or any(not ident for ident in ids) or len(set(ids)) != count:
+        raise ValueError("Supplier document identifiers missing or ambiguous")
+    return rows
+
+
+def _supplier_item_lines(txn: dict) -> Counter:
+    """Comparable item lines, independent of their order. Never infer SKU from name."""
+    rows = txn.get("Line")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("Missing item lines")
+    result = Counter()
+    for row in rows:
+        if not isinstance(row, dict) or row.get("DetailType") != "ItemBasedExpenseLineDetail":
+            raise ValueError("Unsupported supplier line")
+        detail = row.get("ItemBasedExpenseLineDetail")
+        if not isinstance(detail, dict) or not isinstance(detail.get("ItemRef"), dict):
+            raise ValueError("Unidentified supplier item")
+        item_id = str(detail["ItemRef"].get("value") or "")
+        if not item_id:
+            raise ValueError("Missing supplier item reference")
+        qty = number(detail.get("Qty"))
+        unit = number(detail.get("UnitPrice"))
+        amount = number(row.get("Amount"))
+        if qty < 0 or unit < 0 or amount < 0:
+            raise ValueError("Negative supplier item values unsupported")
+        if abs(qty * unit - amount) > COMPONENT_CENT_TOLERANCE:
+            raise ArithmeticError("Supplier line arithmetic needs review")
+        result[(item_id, qty, unit, amount)] += 1
+    return result
+
+
+def audit_supplier_po_bills(purchase_orders: list[dict], bills: list[dict]) -> dict:
+    """Only compare an explicitly linked single Bill and PurchaseOrder.
+
+    Missing links, partial billing, unsupported lines and other paths do not
+    become invented losses. This is NOT a delivery, payment or cross-system audit.
+    """
+    result = {"status": "PARTIAL_SOURCE_COVERAGE",
+              "purchase_order_count": len(purchase_orders), "bill_count": len(bills),
+              "linked_pairs": 0, "matched_pairs": 0, "review_pairs": 0,
+              "blocked_pairs": 0, "without_bill_link": 0, "pairs": [],
+              "delivery_verified": False, "financial_loss_claimed": False,
+              "shopify_order_matching": "NOT_CHECKED"}
+    bill_index = {str(b.get("Id") or ""): b for b in bills if isinstance(b, dict)}
+    if len(bill_index) != len(bills) or "" in bill_index:
+        return {**result, "status": "BLOCKED_BILL_INDEX"}
+    linked_bill_counts = Counter()
+    for po in purchase_orders:
+        refs = po.get("LinkedTxn", []) if isinstance(po, dict) else None
+        if isinstance(refs, list):
+            linked_bill_counts.update(
+                str(ref.get("TxnId") or "") for ref in refs
+                if isinstance(ref, dict) and ref.get("TxnType") == "Bill"
+            )
+    for po in purchase_orders:
+        if not isinstance(po, dict) or not po.get("Id"):
+            return {**result, "status": "BLOCKED_PURCHASE_ORDER_INDEX"}
+        refs = po.get("LinkedTxn", [])
+        if not isinstance(refs, list) or not all(isinstance(x, dict) for x in refs):
+            result["blocked_pairs"] += 1
+            result["pairs"].append({"po_id": str(po["Id"]), "status": "BLOCKED_LINK_FORMAT"})
+            continue
+        bill_links = [str(x.get("TxnId") or "") for x in refs if x.get("TxnType") == "Bill"]
+        if not bill_links:
+            result["without_bill_link"] += 1
+            result["pairs"].append({"po_id": str(po["Id"]),
+                                    "status": "NOT_CHECKED_NO_BILL_LINK"})
+            continue
+        result["linked_pairs"] += 1
+        bid = bill_links[0] if len(bill_links) == 1 else None
+        status = "BLOCKED_MULTIPLE_BILL_LINKS" if len(bill_links) != 1 or not bid else None
+        if status is None and linked_bill_counts[bid] > 1:
+            status = "BLOCKED_SHARED_BILL_REFERENCE"
+        bill = bill_index.get(bid) if bid else None
+        if status is None and not bill:
+            status = "BLOCKED_LINKED_BILL_MISSING"
+        if status is None:
+            vendor_a = (po.get("VendorRef") or {}).get("value")
+            vendor_b = (bill.get("VendorRef") or {}).get("value")
+            currency_a = (po.get("CurrencyRef") or {}).get("value")
+            currency_b = (bill.get("CurrencyRef") or {}).get("value")
+            if not vendor_a or vendor_a != vendor_b or not currency_a or currency_a != currency_b:
+                status = "BLOCKED_VENDOR_OR_CURRENCY"
+        if status is None:
+            try:
+                po_lines = _supplier_item_lines(po)
+                bill_lines = _supplier_item_lines(bill)
+                po_total = number(po.get("TotalAmt"))
+                bill_total = number(bill.get("TotalAmt"))
+                if po_total < 0 or bill_total < 0:
+                    status = "BLOCKED_NEGATIVE_TOTAL"
+                elif po_lines != bill_lines or abs(po_total - bill_total) > COMPONENT_CENT_TOLERANCE:
+                    status = "REVIEW_PO_BILL_DIFFERENCE"
+                else:
+                    status = "MATCHED_PO_BILL_LINES_AND_TOTAL"
+            except ArithmeticError:
+                status = "REVIEW_SOURCE_LINE_ARITHMETIC"
+            except (ValueError, TypeError, AttributeError):
+                status = "BLOCKED_INCOMPLETE_OR_UNSUPPORTED_LINES"
+        row = {"po_id": str(po["Id"]), "bill_id": bid, "status": status}
+        result["pairs"].append(row)
+        if status.startswith("BLOCKED_"):
+            result["blocked_pairs"] += 1
+        elif status.startswith("REVIEW_"):
+            result["review_pairs"] += 1
+        else:
+            result["matched_pairs"] += 1
+    result["status"] = ("NOT_CHECKED_NO_LINKED_PO_BILL_PAIRS" if not result["linked_pairs"]
+                        else "REVIEW_PO_BILL_DIFFERENCES" if result["review_pairs"] else
+                        "PARTIAL_LINKS_BLOCKED" if result["blocked_pairs"] else
+                        "LINKED_PAIRS_MATCH_WITH_UNLINKED_ORDERS" if result["without_bill_link"] else
+                        "LINKED_PAIRS_MATCH")
+    return result
+
+
 def audit_payment_links(invoices: list[dict], payments: list[dict], credit_memos: list[dict] | None = None) -> dict:
     """Validate typed invoice-payment edges without confusing credit with cash.
 
@@ -393,7 +526,9 @@ def audit_payment_links(invoices: list[dict], payments: list[dict], credit_memos
 
 
 def audit_all(invoices: list[dict], payments: list[dict] | None = None,
-              credit_memos: list[dict] | None = None) -> dict:
+              credit_memos: list[dict] | None = None,
+              purchase_orders: list[dict] | None = None,
+              bills: list[dict] | None = None) -> dict:
     results = [audit_invoice(inv) for inv in invoices]
     financial = [audit_financial_components(inv) for inv in invoices]
     blocked = [r["invoice_id"] for r in results if r["status"].startswith("BLOCKED_")]
@@ -419,7 +554,10 @@ def audit_all(invoices: list[dict], payments: list[dict] | None = None,
             "tax_law_discount_eligibility_delivery_validation": "NOT_CHECKED",
             "financial_loss_claimed": False,
             "payment_graph": audit_payment_links(invoices, payments, credit_memos) if payments is not None
-                             else {"status": "NOT_CHECKED"}}
+                             else {"status": "NOT_CHECKED"},
+            "supplier_po_bills": audit_supplier_po_bills(purchase_orders, bills)
+                                 if purchase_orders is not None and bills is not None
+                                 else {"status": "NOT_CHECKED"}}
 
 
 if __name__ == "__main__":
@@ -427,7 +565,9 @@ if __name__ == "__main__":
         invoices = read_invoices()
         payments = read_payments()
         credit_memos = read_credit_memos()
-        print(json.dumps(audit_all(invoices, payments, credit_memos), ensure_ascii=False))
+        purchase_orders = read_supplier_documents("PurchaseOrder")
+        bills = read_supplier_documents("Bill")
+        print(json.dumps(audit_all(invoices, payments, credit_memos, purchase_orders, bills), ensure_ascii=False))
     except ValueError as exc:
         print(json.dumps({"status": "BLOCKED_INVOICE_READ", "reason": str(exc)}))
         raise SystemExit(2) from None

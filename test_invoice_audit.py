@@ -327,3 +327,110 @@ def test_credit_reader_rejects_partial_and_duplicate_records(monkeypatch):
                         {"totalCount":2} if "COUNT(*)" in query else {"CreditMemo":[{"Id":"73"},{"Id":"73"}]})
     with pytest.raises(ValueError,match="ambiguous"):
         a.read_credit_memos()
+
+
+
+def supplier_txn(identity, *, bill_link=None, item="11", qty=8, unit=10, vendor="46",
+                 currency="USD", total=None):
+    amount=qty*unit
+    txn={"Id":str(identity),"VendorRef":{"value":vendor},
+         "CurrencyRef":{"value":currency},
+         "TotalAmt":amount if total is None else total,
+         "Line":[{"DetailType":"ItemBasedExpenseLineDetail","Amount":amount,
+                  "ItemBasedExpenseLineDetail":{"ItemRef":{"value":str(item)},
+                                                 "Qty":qty,"UnitPrice":unit}}]}
+    if bill_link is not None:
+        txn["LinkedTxn"]=[{"TxnType":"Bill","TxnId":str(bill_link)}]
+    return txn
+
+
+def test_supplier_po_bill_exact_link_is_verified_without_loss_claim():
+    p=supplier_txn(125,bill_link=126)
+    b=supplier_txn(126)
+    res=a.audit_supplier_po_bills([p],[b])
+    assert res["matched_pairs"]==1
+    assert res["review_pairs"]==0
+    assert res["pairs"][0]["status"]=="MATCHED_PO_BILL_LINES_AND_TOTAL"
+    assert res["financial_loss_claimed"] is False
+    assert res["delivery_verified"] is False
+    assert res["shopify_order_matching"]=="NOT_CHECKED"
+
+
+def test_supplier_po_bill_different_qty_or_total_is_review_not_loss():
+    p=supplier_txn(125,bill_link=126)
+    b=supplier_txn(126,qty=7)
+    res=a.audit_supplier_po_bills([p],[b])
+    assert res["review_pairs"]==1
+    assert res["financial_loss_claimed"] is False
+    b=supplier_txn(126,total=81)
+    assert a.audit_supplier_po_bills([p],[b])["review_pairs"]==1
+
+
+def test_supplier_po_bill_unknown_links_never_invent_error():
+    p=supplier_txn(125)
+    p["LinkedTxn"]=[{"TxnType":"Purchase","TxnId":"115"}]
+    res=a.audit_supplier_po_bills([p],[])
+    assert res["linked_pairs"]==0
+    assert res["review_pairs"]==0
+    assert res["pairs"][0]["status"]=="NOT_CHECKED_NO_BILL_LINK"
+    p["LinkedTxn"]=[{"TxnType":"Bill","TxnId":"999"}]
+    assert a.audit_supplier_po_bills([p],[])["blocked_pairs"]==1
+    p["LinkedTxn"]=[{"TxnType":"Bill","TxnId":"126"},{"TxnType":"Bill","TxnId":"127"}]
+    assert a.audit_supplier_po_bills([p],[])["blocked_pairs"]==1
+
+
+def test_supplier_po_bill_vendor_currency_or_line_unknown_blocks():
+    po=supplier_txn(125,bill_link=126)
+    assert a.audit_supplier_po_bills([po],[supplier_txn(126,vendor="47")])["blocked_pairs"]==1
+    assert a.audit_supplier_po_bills([po],[supplier_txn(126,currency="EUR")])["blocked_pairs"]==1
+    wrong=supplier_txn(126)
+    del wrong["Line"][0]["ItemBasedExpenseLineDetail"]["Qty"]
+    assert a.audit_supplier_po_bills([po],[wrong])["blocked_pairs"]==1
+    wrong=supplier_txn(126)
+    wrong["Line"][0]["Amount"]=81
+    assert a.audit_supplier_po_bills([po],[wrong])["review_pairs"]==1
+
+
+def test_supplier_po_bill_reader_bound_and_get_only(monkeypatch):
+    monkeypatch.setattr(a,"load_saved_setup",lambda:object())
+    monkeypatch.setattr(a,"get_access_token",lambda cfg:("FAKE","123"))
+    queries=[]
+    def getter(url,query,headers):
+        queries.append(query)
+        return {"totalCount":1} if "COUNT(*)" in query else {"Bill":[{"Id":"126"}]}
+    monkeypatch.setattr(a,"_get_json",getter)
+    assert len(a.read_supplier_documents("Bill"))==1
+    assert queries==["SELECT COUNT(*) FROM Bill",
+                     "SELECT * FROM Bill STARTPOSITION 1 MAXRESULTS 100"]
+    with pytest.raises(ValueError,match="Unsupported"):
+        a.read_supplier_documents("Invoice")
+    monkeypatch.setattr(a,"_get_json",lambda url,query,headers:
+                        {"totalCount":2} if "COUNT(*)" in query else
+                        {"Bill":[{"Id":"126"},{"Id":"126"}]})
+    with pytest.raises(ValueError,match="ambiguous"):
+        a.read_supplier_documents("Bill")
+
+
+def test_supplier_po_bill_summary_separate_from_payments():
+    r=a.audit_all([invoice(sales())], purchase_orders=[supplier_txn(125,bill_link=126)],
+                  bills=[supplier_txn(126)])
+    assert r["supplier_po_bills"]["matched_pairs"]==1
+    assert r["payment_graph"]["status"]=="NOT_CHECKED"
+    assert r["financial_loss_claimed"] is False
+
+
+
+def test_supplier_po_bill_no_link_is_not_success():
+    result=a.audit_supplier_po_bills([supplier_txn(45)],[])
+    assert result["status"]=="NOT_CHECKED_NO_LINKED_PO_BILL_PAIRS"
+    assert result["matched_pairs"]==0
+
+
+def test_supplier_po_bill_shared_reference_does_not_count_matches():
+    p1=supplier_txn(125,bill_link=126)
+    p2=supplier_txn(130,bill_link=126)
+    result=a.audit_supplier_po_bills([p1,p2],[supplier_txn(126)])
+    assert result["status"]=="PARTIAL_LINKS_BLOCKED"
+    assert result["matched_pairs"]==0
+    assert result["blocked_pairs"]==2
+    assert all(row["status"]=="BLOCKED_SHARED_BILL_REFERENCE" for row in result["pairs"])
