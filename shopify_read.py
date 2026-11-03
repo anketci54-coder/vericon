@@ -178,11 +178,11 @@ def read_stock(config: Config, sku: str) -> dict:
 
 
 def check_both(sku: str) -> dict:
-    from qbo_oauth import load_saved_setup, read_inventory_item
+    from qbo_oauth import load_saved_setup, read_inventory_item_by_sku
     from inventory_compare import compare
 
     shop = read_stock(load_setup(), sku)
-    qbo_result = read_inventory_item(load_saved_setup(), "VERICON TEST")
+    qbo_result = read_inventory_item_by_sku(load_saved_setup(), sku)
     matches = [item for item in qbo_result["items"] if item.get("Sku") == sku]
     if len(matches) != 1:
         raise ValueError("QuickBooks SKU missing or ambiguous")

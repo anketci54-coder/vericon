@@ -10,7 +10,8 @@
 - [x] Sandbox OAuth zorunlu token yenilemesini canli Intuit endpointinde test ettik: yeni access token geldi, sifreli depo guncellendi, Item 7 tekrar okundu (refresh token degismedi).
 - [x] Iki canli API snapshot okuma farkini olctuk: 0.927 sn, MAX=30 sn guard eklendi ve 23 test gecti. Ticari semantik, stok hareketleri ve muhasebe esaslari henuz dogrulanmadi.
 - [x] Systemd oneshot vericon-sandbox-scan.service manuel canli API cagrisi OK, Result=success/exit=0, TEST_DIFFERENCE=3, read_gap_seconds=0.917. Timer enabled+active ve ilk gelecek calisma 2026-11-03 13:00 EET olarak dogrulandi; ilk zamanlanmis calismanin gercek gerceklesmesi HENUZ dogrulanmadi.
-- [ ] Ilk saatlik otomatik tetikleme tamamlandiktan sonra journal sonucu, yenileme davranisi ve 0 hata kodunu dogrula; basarisizsa timeri durdurup nedenini incele.
+- [x] Ilk saatlik otomatik tetikleme: 2026-11-03 13:00:04 EET (systemd LastTrigger), exit=0/Result=success, TEST_DIFFERENCE=3, Shopify available=10, QBO QtyOnHand=7, read_gap=1.166sn; sonraki tetikleme 14:00 EET. Ayrica QuickBooks Item SKU sorgusu resmî filterable alanla yapildi ve gercek Sandbox API den 200 + tek Item QtyOnHand=7 alindi. Kod artik SKUya gore ariyor; 25 test ve ayri tek-seferlik API kontrolden gecti.
+- [ ] Saatlik kontrolun daha sonraki tetiklemelerini ve beklenmeyen degisimleri gozle; tum urunlere gecmeden once coklu SKU, stok kapsami, fiyat/muhasebe ve yalanci pozitif kanitini ayri olc.
 - [ ] Uretime gecis icin coklu-SKU, urun adi disinda Item eslestirme, butun konumlar, veri zamani ve ticari is akisi farklarini ayri kanitla. Mevcut kontrol YALNIZ test SKU.
 - [ ] Ucretli urun kararindan once rakipten ek faydayi ve gercek musteri odeme istegini olc.
 

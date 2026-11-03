@@ -199,11 +199,8 @@ def get_access_token(config: Config, *, force_refresh: bool = False) -> tuple[st
         return updated["access_token"], record["realm"]
 
 
-def read_inventory_item(config: Config, name: str) -> dict:
-    if not re.fullmatch(r"[\w .-]{1,100}", name, flags=re.ASCII):
-        raise ValueError("Invalid Item name for safe read-only query")
+def _query_item(config: Config, query: str) -> dict:
     access_token, realm = get_access_token(config)
-    query = "SELECT * FROM Item WHERE Name = '" + name + "'"
     response = requests.get(
         f"{SANDBOX_API}/v3/company/{realm}/query",
         params={"query": query},
@@ -231,6 +228,23 @@ def read_inventory_item(config: Config, name: str) -> dict:
             "UnitPrice": item.get("UnitPrice"),
         } for item in items],
     }
+
+
+def read_inventory_item(config: Config, name: str) -> dict:
+    if not re.fullmatch(r"[\w .-]{1,100}", name, flags=re.ASCII):
+        raise ValueError("Invalid Item name for safe read-only query")
+    return _query_item(config, "SELECT * FROM Item WHERE Name = '" + name + "'")
+
+
+def read_inventory_item_by_sku(config: Config, sku: str) -> dict:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}", sku):
+        raise ValueError("Invalid SKU for safe QuickBooks query")
+    result = _query_item(config, "SELECT * FROM Item WHERE Sku = '" + sku + "'")
+    matches = [item for item in result["items"] if item.get("Sku") == sku]
+    if len(matches) != 1:
+        raise ValueError("QuickBooks SKU missing or ambiguous")
+    result["items"] = matches
+    return result
 
 
 @app.get("/health", response_class=PlainTextResponse)

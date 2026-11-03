@@ -94,3 +94,8 @@ Guncel is listesi: TODO.md. Muhendislik kurallari: AGENTS.md.
 - Terminal veya tarayici acik tutmak gerekmez. Sadece tek test SKU; otomatik stok duzeltme, mesaj ve gercek musteri raporu YOK.
 - `systemctl status vericon-sandbox-scan.timer` ve `journalctl -u vericon-sandbox-scan.service -n 20 --no-pager` ile gercek sonuc okunabilir.
 - `systemctl disable --now vericon-sandbox-scan.timer` ile otomasyon aninda kapatilir. Kullanilmayan baska projelere dokunulmadi.
+
+## Ilk zamanlanmis gercek calisma ve SKU aramasi (2026-11-03)
+- systemd timer ilk otomatik tetikleme 13:00:04 EET; servis 13:00:06 EET basarili cikis (Result=success, ExecMainStatus=0). Iki API result: Shopify available=10, QBO QtyOnHand=7, kontrollu fark=3, read_gap=1.166 saniye.
+- Intuit Item API `Sku` alaninin filterable oldugu dogrulandi ve Sandbox API `SELECT * FROM Item WHERE Sku = 'VERICON-TEST-001'` sorgusu 200 OK + tek Item sonucunu verdi. Kontrol kodu artik QuickBooks urun adini sabitlemez, dogrudan istenilen SKU ile sorgular. Tekilleşmeyen SKU BLOCK olur.
+- Bu tek-SKU test kontrolunun calismasini dogrular; envanterde ticari dogruluk, diger SKUlar, musteri bazli yanlis alarm ve finansal etki henuz dogrulanmadi. Timer hala ayni test SKU ile saatlik calisir.

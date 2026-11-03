@@ -166,3 +166,30 @@ def test_force_refresh_rotates_unexpired_tokens(cfg, monkeypatch):
     assert (token, realm) == ("REFRESHED", "12345")
     assert len(called) == 1 and called[0]["grant_type"] == "refresh_token"
     assert q.load_tokens(cfg)["refresh_token"] == "NEW_REFRESH"
+
+
+def test_read_item_by_sku_real_filter(cfg, monkeypatch):
+    q._save_tokens(cfg, {"access_token": "A", "refresh_token": "B", "expires_in": 3600}, "12345")
+    seen = {}
+    def get(url, *, params, headers, timeout):
+        seen.update(params=params, url=url)
+        return FakeResponse({"QueryResponse": {"Item": [{
+            "Id": "19", "Name": "VERICON TEST", "Sku": "VERICON-TEST-001",
+            "Type": "Inventory", "TrackQtyOnHand": True, "QtyOnHand": 7,
+        }]}})
+    monkeypatch.setattr(q.requests, "get", get)
+    result = q.read_inventory_item_by_sku(cfg, "VERICON-TEST-001")
+    assert seen["params"]["query"] == "SELECT * FROM Item WHERE Sku = 'VERICON-TEST-001'"
+    assert result["items"][0]["QtyOnHand"] == 7
+    with pytest.raises(ValueError, match="Invalid SKU"):
+        q.read_inventory_item_by_sku(cfg, "TEST' OR 1=1")
+
+
+def test_read_item_by_sku_duplicates_fail_closed(cfg, monkeypatch):
+    q._save_tokens(cfg, {"access_token": "A", "refresh_token": "B", "expires_in": 3600}, "12345")
+    monkeypatch.setattr(q.requests, "get", lambda *args, **kwargs: FakeResponse({"QueryResponse": {"Item": [
+        {"Sku": "VERICON-TEST-001", "Type": "Inventory", "QtyOnHand": 7},
+        {"Sku": "VERICON-TEST-001", "Type": "Inventory", "QtyOnHand": 6},
+    ]}}))
+    with pytest.raises(ValueError, match="ambiguous"):
+        q.read_inventory_item_by_sku(cfg, "VERICON-TEST-001")

@@ -159,7 +159,7 @@ def test_controlled_comparison_one_location(cred, monkeypatch, records):
     import qbo_oauth
     monkeypatch.setattr(qbo_oauth, "load_saved_setup", lambda: object())
     from datetime import datetime, timezone
-    monkeypatch.setattr(qbo_oauth, "read_inventory_item", lambda cfg, name: {
+    monkeypatch.setattr(qbo_oauth, "read_inventory_item_by_sku", lambda cfg, sku: {
         "query_time_utc": datetime.now(timezone.utc).isoformat(),
         "items": [{"Sku": "VERICON-TEST-001", "Type": "Inventory",
                    "TrackQtyOnHand": True, "QtyOnHand": 7}]
@@ -197,7 +197,7 @@ def test_stale_cross_api_read_is_blocked(cred, monkeypatch, records):
     monkeypatch.setattr(s, "load_setup", lambda: cred)
     import qbo_oauth
     monkeypatch.setattr(qbo_oauth, "load_saved_setup", lambda: object())
-    monkeypatch.setattr(qbo_oauth, "read_inventory_item", lambda cfg, name: {
+    monkeypatch.setattr(qbo_oauth, "read_inventory_item_by_sku", lambda cfg, sku: {
         "query_time_utc": "2024-01-01T00:00:00+00:00",
         "items": [{"Sku": "VERICON-TEST-001", "Type": "Inventory",
                    "TrackQtyOnHand": True, "QtyOnHand": 7}]
