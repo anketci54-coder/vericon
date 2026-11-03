@@ -15,8 +15,8 @@ Mevcut yazilimlari degistirmeden e-ticaret ve muhasebe verilerindeki gercek uyus
 
 ## Dogrulanmis mevcut durum (2026-11-02)
 - Shopify baglantisi: calisti. Bagli magaza deneme planinda, sorguda 0 urun ve 0 siparis.
-- QuickBooks Online Plus sandbox: Intuit araciligiyla CompanyInfo sorgusu HTTP 200 dondu; urun/stok sorgusu ve dogrudan VERICON OAuth baglantisi HENUZ dogrulanmadi.
-- Her iki sistemden eslesebilir gercek musteri kaydi yok; uyusmazlik tespiti YAPILMADI.
+- QuickBooks Online Plus sandbox: CompanyInfo HTTP 200 ve Item SKU=VERICON-TEST-001, QtyOnHand=7 API Explorer sonucuyla dogrulandi. VERICON uygulamasinin dogrudan QuickBooks OAuth API erisimi HENUZ kurulmadı.
+- 2026-11-03: Shopify bagli deneme magazasinda draft SKU=VERICON-TEST-001 on_hand=10; kontrollu replayde inventory_compare.py 3 adet farki hesapladi, esitlik ve farkli SKU engelleme kontrolleri de gecti. Bu test kaydi, gercek musteri zarari veya canli iki yonlu API baglantisi degildir.
 - Ilk fiyat hipotezleri: tek modul 49 USD/ay, iki modul 69 USD/ay, yuksek hacim 99 USD/ay. Talep ve kar dogrulanmadi.
 - Rakipler: mevcut mutabakat / stok yazilimlari var; rekabet ustunlugu kanitlanmadi.
 

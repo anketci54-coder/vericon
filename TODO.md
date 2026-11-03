@@ -1,10 +1,10 @@
 # VERICON - Tek is listesi (2026-11-02)
 
 ## Simdi (kapsam sabit)
-- [ ] QuickBooks Sandbox Item sorgusunu 200 OK + gercek QueryResponse.Item ile dogrula. Intuit tarayicisinda CompanyInfo HTTP 200 goruldu; ancak kullanicinin Intuit OAuth oturumu VPS/ChatGPT baglantisi degil. Kullaniciya tekrar Account sayfasi uzerinden sorgu yaptirma; resmi Item API Query an item hazir ornek SELECT * FROM Item maxresults 2 yeterli.
+- [x] QuickBooks Sandbox Item sorgusu dogrulandi: Item Id=19, SKU=VERICON-TEST-001, Type=Inventory, TrackQtyOnHand=true, QtyOnHand=7. Cikti kullanicinin Intuit API Explorer oturumundan geldi; VERICON uygulamasinin dogrudan OAuth baglantisi HALA YOK.
 - [x] Shopify test magazasi verisini salt-okunur sorgula: 0 urun / 0 siparis (2026-11-02 dogrulamasi). Veri uydurma, kayitlari degistirme.
-- [ ] VERICON-TEST-001: Shopify draft, available=10, on_hand=10, committed=0 (2026-11-03 API dogrulamasi). Kullanici QuickBooks Inventory urununu QtyOnHand=7 ile kaydettigini bildirdi; QBO Item API yaniti HENUZ gorulmedi. Beklenen 3 fark KANITLANMIS HATA veya CALISAN MOTOR SONUCU DEGIL. QBO Item QueryResponse ile dogrula, sonra karsilastir.
-- [ ] Salt-okunur karsilastirmada bulunan fark, yanlis alarm ve belirsiz kayit sayilarini raporla.
+- [x] VERICON-TEST-001 kontrollu test replay: Shopify API on_hand=10, QBO kullanicinin API Explorer QueryResponse QtyOnHand=7, ayni SKU, fark=3. inventory_compare.py deterministik kod ile 3 farki hesapliyor; esit stokta 0, farkli SKU icin BLOCK. Bu gercek musteri kaybi veya canli entegrasyon kaniti degildir.
+- [ ] Sonraki teknik adim: Intuit OAuth ile VERICON tarafindan gercek sandbox Item API okuma, snapshot saati / depo kapsaminda gercek karsilastirma; sonra yanlis alarm/belirsizlik olcumu. Simdilik sadece kontrollu replay var.
 - [ ] Ucretli urun kararindan once rakipten ek faydayi ve gercek musteri odeme istegini olc.
 
 ## DAHA SONRA - simdi yapma
