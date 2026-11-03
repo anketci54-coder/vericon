@@ -251,3 +251,21 @@ def test_batch_rejects_wrong_sku_return_from_internal_check(monkeypatch):
     result = s.check_many(["SKU-1", "SKU-2"])
     assert result["blocked"] == 2
     assert all(item["status"] == "BLOCKED_SKU_RESULT_MISMATCH" for item in result["results"])
+
+
+def test_shopify_source_has_no_graphql_mutation_calls():
+    import ast
+    from pathlib import Path
+    tree = ast.parse(Path(s.__file__).read_text(encoding="utf-8"))
+    outbound = set()
+    for fn in tree.body:
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for call in ast.walk(fn):
+            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
+                continue
+            if isinstance(call.func.value, ast.Name) and call.func.value.id == "requests":
+                outbound.add((fn.name, call.func.attr))
+    assert outbound == {("get_access_token", "post"), ("read_stock", "post")}
+    assert s.STOCK_QUERY.lstrip().startswith("query ")
+    assert "mutation" not in s.STOCK_QUERY.lower()

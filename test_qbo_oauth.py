@@ -193,3 +193,27 @@ def test_read_item_by_sku_duplicates_fail_closed(cfg, monkeypatch):
     ]}}))
     with pytest.raises(ValueError, match="ambiguous"):
         q.read_inventory_item_by_sku(cfg, "VERICON-TEST-001")
+
+
+def test_qbo_source_has_no_accounting_write_http_calls():
+    # Regression guard: QBO data transport must remain GET-only.
+    # POST is permitted exclusively for the OAuth token endpoint.
+    import ast
+    from pathlib import Path
+    tree = ast.parse(Path(q.__file__).read_text(encoding="utf-8"))
+    outbound = set()
+    for fn in tree.body:
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for call in ast.walk(fn):
+            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
+                continue
+            if isinstance(call.func.value, ast.Name) and call.func.value.id == "requests":
+                outbound.add((fn.name, call.func.attr))
+                if (fn.name, call.func.attr) == ("_exchange", "post"):
+                    assert call.args and isinstance(call.args[0], ast.Name)
+                    assert call.args[0].id == "TOKEN_URL"
+    assert ("_exchange", "post") in outbound
+    assert ("_query_item", "get") in outbound
+    assert all(method == "get" or (fn == "_exchange" and method == "post")
+               for fn, method in outbound)
