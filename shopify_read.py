@@ -194,6 +194,7 @@ def check_both(sku: str) -> dict:
     result["quickbooks_query_time_utc"] = qbo_result.get("query_time_utc")
     result["shopify_query_time_utc"] = shop.get("query_time_utc")
     result["shopify_location_id"] = shop["locations"][0]["location_id"]
+    result["data_origin"] = "live_shopify_and_quickbooks_sandbox_api_queries"
     result["note"] = ("Controlled sandbox comparison only; snapshot times, location coverage, "
                       "and accounting stock meaning require review. Not a real customer loss.")
     return result

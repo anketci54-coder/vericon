@@ -166,3 +166,4 @@ def test_controlled_comparison_one_location(cred, monkeypatch, records):
     res = s.check_both("VERICON-TEST-001")
     assert res["delta_shopify_minus_qbo"] == "3"
     assert res["status"] == "TEST_DIFFERENCE"
+    assert res["data_origin"] == "live_shopify_and_quickbooks_sandbox_api_queries"

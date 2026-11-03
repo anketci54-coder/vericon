@@ -67,3 +67,10 @@ Guncel is listesi: TODO.md. Muhendislik kurallari: AGENTS.md.
 - 2026-11-03: ChatGPT Shopify baglantisindan ayni SKU icin GraphQL read dogrulandi: on_hand=10, available=10, committed=0, bir konum. VPS uzerinden Shopify API yetkilendirmesi HENUZ YOK.
 - Bağımsız musteri verisinde stok anlamini, depo sayisini, rezervleri ve anlik zaman farkini dogrulamadan gercek kayip yorumu yapma. Buradaki fark yapay test verisidir.
 - Shopify mağazasi trial planinda; satis icin plana gecmek gerekir, ancak test sirasinda bunu yapma.
+
+### Bagli iki API ile ilk gercek okuma (2026-11-03)
+- Geliştirici test magaza hesabi Shopify Dev Dashboard app v2 izinleri: read_products, read_inventory, read_locations. Client credentials sunucu private/ icinde, token API uzerinden alindi.
+- VPS Shopify GraphQL sonucunda VERICON-TEST-001: on_hand=10 / available=10 / committed=0, tek konum.
+- VPS QBO Sandbox sonucunda VERICON-TEST-001: QtyOnHand=7, Inventory, tracked=true.
+- `python3 shopify_read.py check --sku VERICON-TEST-001` bu iki canli API yanitini ayni cagri akisi icinde alip farki 3 olarak dondu (TEST_DIFFERENCE).
+- Henuz otomatik zamanlama/servis yok. Shopify testi trial magazada; QuickBooks Sandbox. Bu kasitli fark, ticari zarar kaniti DEGIL.
