@@ -105,3 +105,9 @@ Guncel is listesi: TODO.md. Muhendislik kurallari: AGENTS.md.
 - Hatali, yinelenen veya 5'ten fazla SKU tum API cagrilarindan ONCE bloklanir. Her SKU'nun sonucu ayri kaydedilir; eksik veya okunamayan SKU `BLOCKED_ITEM_READ` olur, fark uydurulmaz. Blok varsa toplu komut JSON ciktisi sonrasi `exit 2` ile cikar.
 - 29 cevrimdisi test: sinir, tekillesme, sirali ayri SKU sonuc, karisik basarili/bloke, yanlis SKU cikti engeli. Gercek VPS iki API denemesi: `VERICON-TEST-001` => TEST_DIFFERENCE (available=10, QBO=7, delta=3); `VERICON-NOT-FOUND-999` => BLOCKED_ITEM_READ (fark raporlanmadi).
 - **Kanıt siniri:** Iki farkli GERCEK mevcut SKU'nun iki sistemde de olumlu eslesmesi henuz olculmedi. Sistem hala Sandbox, ticari envanter ve musteri uyarisi degildir. Tam envanter taramasina gecmek icin veri ve semantik teyidi gerekir.
+
+## Iki AYRI gercek ortak SKU kanit arastirmasi (2026-11-03)
+- Salt-okunur, gercek API sorgulari: QuickBooks Sandbox `SELECT * FROM Item` 19 urun dondurdu, SKU tasiyan yalnizca `VERICON-TEST-001` (QtyOnHand=7); Shopify GraphQL `productVariants(first:100)` yalnizca 1 varyant dondurdu (hasNextPage=false), `VERICON-TEST-001` (tracked). Iki sistemde ortak mevcut SKU sayisi sadece **1**.
+- Live bounded batch komutu iki SKU ile denendi: `VERICON-TEST-001` => TEST_DIFFERENCE, Shopify available=10, QBO QtyOnHand=7, delta=3; `VERICON-TEST-002` => BLOCKED_ITEM_READ, *delta yok*. Grup TEST_BATCH_PARTIAL_BLOCKED, exit code=2 (bilerek fail-closed). Testler 29/29.
+- **Kanıt disiplini:** Iki farkli mevcut ve eslesen SKU icin 2 basarili sonuc henüz kanitlanmadi, çünkü test hesaplarinda ikinci ortak SKU yok. Bu siniri kod degistirerek ya da sahte veriyi gercek diye sunarak asmayacagiz. Mevcut tek-SKU saatlik systemd kontrolu yerinde tutuldu. Ikinci fixture olusturmak iki dis sistemde veri YAZMA gerektirir; bu adim yapilmadi.
+- Olcum UTC: 2026-11-03T11:48:11+00:00
