@@ -539,23 +539,30 @@ def audit_shopify_invoice_link(order: dict, invoices: list[dict]) -> dict:
     base["same_number_candidates"] = len(candidates)
     if not shop_total.get("currencyCode") or shop_total.get("amount") is None:
         return {**base, "status": "BLOCKED_MISSING_SHOPIFY_AMOUNT"}
+    linked = []
     for inv in invoices:
         fields = inv.get("CustomField") or []
-        explicit_links = [str(field.get("StringValue") or "") for field in fields
-                          if isinstance(field, dict) and str(field.get("Name") or "").lower()
+        if not isinstance(fields, list):
+            return {**base, "status": "BLOCKED_INVALID_QBO_CUSTOM_FIELDS"}
+        explicit_links = [str(field.get("StringValue") or "").strip() for field in fields
+                          if isinstance(field, dict) and str(field.get("Name") or "").strip().lower()
                           in ("shopify order id", "shopify_order_id")]
-        if order_gid not in explicit_links and order_gid.split("/")[-1] not in explicit_links:
-            continue
-        currency = (inv.get("CurrencyRef") or {}).get("value")
-        if currency != shop_total["currencyCode"]:
-            return {**base, "status": "BLOCKED_LINKED_CURRENCY_MISMATCH"}
-        try:
-            if abs(number(inv.get("TotalAmt")) - number(shop_total["amount"])) > Decimal("0.01"):
-                return {**base, "status": "REVIEW_LINKED_TOTAL_MISMATCH"}
-        except ValueError:
-            return {**base, "status": "BLOCKED_LINKED_AMOUNT_UNKNOWN"}
-        return {**base, "status": "REFERENCE_AND_TOTAL_MATCH_LINE_ITEMS_NOT_VERIFIED"}
-    return base
+        if order_gid in explicit_links or order_gid.split("/")[-1] in explicit_links:
+            linked.append(inv)
+    if not linked:
+        return base
+    if len(linked) != 1:
+        return {**base, "status": "BLOCKED_MULTIPLE_LINKED_INVOICES", "linked_count": len(linked)}
+    inv = linked[0]
+    currency = (inv.get("CurrencyRef") or {}).get("value")
+    if currency != shop_total["currencyCode"]:
+        return {**base, "status": "BLOCKED_LINKED_CURRENCY_MISMATCH"}
+    try:
+        if abs(number(inv.get("TotalAmt")) - number(shop_total["amount"])) > Decimal("0.01"):
+            return {**base, "status": "REVIEW_LINKED_TOTAL_MISMATCH"}
+    except ValueError:
+        return {**base, "status": "BLOCKED_LINKED_AMOUNT_UNKNOWN"}
+    return {**base, "status": "REFERENCE_AND_TOTAL_MATCH_LINE_ITEMS_NOT_VERIFIED"}
 
 
 def audit_all(invoices: list[dict], payments: list[dict] | None = None,

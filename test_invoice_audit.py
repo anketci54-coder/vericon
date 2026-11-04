@@ -454,3 +454,23 @@ def test_explicit_shopify_reference_with_wrong_currency_blocks():
     result=a.audit_shopify_invoice_link(order,[inv])
     assert result["status"]=="BLOCKED_LINKED_CURRENCY_MISMATCH"
     assert result["verified"] is False
+
+
+def test_linked_invoice_same_currency_total_still_not_fully_verified():
+    order={"id":"gid://shopify/Order/123", "name":"#1001",
+           "totalPriceSet":{"shopMoney":{"amount":"216", "currencyCode":"TRY"}}}
+    inv={"DocNumber":"2002", "CurrencyRef":{"value":"TRY"}, "TotalAmt":216,
+         "CustomField":[{"Name":"Shopify Order ID", "StringValue":"123"}]}
+    result=a.audit_shopify_invoice_link(order,[inv])
+    assert result["status"]=="REFERENCE_AND_TOTAL_MATCH_LINE_ITEMS_NOT_VERIFIED"
+    assert result["verified"] is False
+
+
+def test_duplicate_explicit_shopify_references_block_even_if_first_matches():
+    order={"id":"gid://shopify/Order/123", "name":"#1001",
+           "totalPriceSet":{"shopMoney":{"amount":"216", "currencyCode":"TRY"}}}
+    inv={"DocNumber":"2002", "CurrencyRef":{"value":"TRY"}, "TotalAmt":216,
+         "CustomField":[{"Name":"Shopify Order ID", "StringValue":"123"}]}
+    result=a.audit_shopify_invoice_link(order,[inv,{**inv,"DocNumber":"2003"}])
+    assert result["status"]=="BLOCKED_MULTIPLE_LINKED_INVOICES"
+    assert result["verified"] is False
