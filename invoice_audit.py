@@ -525,10 +525,44 @@ def audit_payment_links(invoices: list[dict], payments: list[dict], credit_memos
         return base
 
 
+def audit_shopify_invoice_link(order: dict, invoices: list[dict]) -> dict:
+    """Fail closed: a matching document number alone is not an order link."""
+    name = str(order.get("name") or "")
+    order_gid = str(order.get("id") or "")
+    shop_total = ((order.get("totalPriceSet") or {}).get("shopMoney") or {})
+    base = {"shopify_order": name, "status": "BLOCKED_NO_VERIFIED_ORDER_REFERENCE",
+            "verified": False, "same_number_candidates": 0}
+    if not name or not order_gid.startswith("gid://shopify/Order/"):
+        return {**base, "status": "BLOCKED_INVALID_SHOPIFY_ORDER"}
+    doc_number = name.lstrip("#")
+    candidates = [inv for inv in invoices if str(inv.get("DocNumber") or "") == doc_number]
+    base["same_number_candidates"] = len(candidates)
+    if not shop_total.get("currencyCode") or shop_total.get("amount") is None:
+        return {**base, "status": "BLOCKED_MISSING_SHOPIFY_AMOUNT"}
+    for inv in invoices:
+        fields = inv.get("CustomField") or []
+        explicit_links = [str(field.get("StringValue") or "") for field in fields
+                          if isinstance(field, dict) and str(field.get("Name") or "").lower()
+                          in ("shopify order id", "shopify_order_id")]
+        if order_gid not in explicit_links and order_gid.split("/")[-1] not in explicit_links:
+            continue
+        currency = (inv.get("CurrencyRef") or {}).get("value")
+        if currency != shop_total["currencyCode"]:
+            return {**base, "status": "BLOCKED_LINKED_CURRENCY_MISMATCH"}
+        try:
+            if abs(number(inv.get("TotalAmt")) - number(shop_total["amount"])) > Decimal("0.01"):
+                return {**base, "status": "REVIEW_LINKED_TOTAL_MISMATCH"}
+        except ValueError:
+            return {**base, "status": "BLOCKED_LINKED_AMOUNT_UNKNOWN"}
+        return {**base, "status": "REFERENCE_AND_TOTAL_MATCH_LINE_ITEMS_NOT_VERIFIED"}
+    return base
+
+
 def audit_all(invoices: list[dict], payments: list[dict] | None = None,
               credit_memos: list[dict] | None = None,
               purchase_orders: list[dict] | None = None,
-              bills: list[dict] | None = None) -> dict:
+              bills: list[dict] | None = None,
+              shopify_order: dict | None = None) -> dict:
     results = [audit_invoice(inv) for inv in invoices]
     financial = [audit_financial_components(inv) for inv in invoices]
     blocked = [r["invoice_id"] for r in results if r["status"].startswith("BLOCKED_")]
@@ -550,7 +584,8 @@ def audit_all(invoices: list[dict], payments: list[dict] | None = None,
             "subtotal_review_invoice_ids": [r["invoice_id"] for r in financial if r["subtotal_status"].startswith("REVIEW_")],
             "discount_review_invoice_ids": [r["invoice_id"] for r in financial if r["discount_status"].startswith("REVIEW_")],
             "tax_review_invoice_ids": [r["invoice_id"] for r in financial if r["tax_status"].startswith("REVIEW_")],
-            "cross_system_order_matching": "NOT_CHECKED_NO_SHOPIFY_ORDERS_OR_READ_ORDERS_SCOPE",
+            "cross_system_order_matching": (audit_shopify_invoice_link(shopify_order, invoices)
+                                            if shopify_order is not None else "NOT_CHECKED_NO_SHOPIFY_ORDERS_OR_READ_ORDERS_SCOPE"),
             "tax_law_discount_eligibility_delivery_validation": "NOT_CHECKED",
             "financial_loss_claimed": False,
             "payment_graph": audit_payment_links(invoices, payments, credit_memos) if payments is not None
@@ -567,7 +602,10 @@ if __name__ == "__main__":
         credit_memos = read_credit_memos()
         purchase_orders = read_supplier_documents("PurchaseOrder")
         bills = read_supplier_documents("Bill")
-        print(json.dumps(audit_all(invoices, payments, credit_memos, purchase_orders, bills), ensure_ascii=False))
+        from shopify_read import read_shopify_test_order
+        pilot_order = read_shopify_test_order()
+        print(json.dumps(audit_all(invoices, payments, credit_memos, purchase_orders, bills,
+                                   shopify_order=pilot_order), ensure_ascii=False))
     except ValueError as exc:
         print(json.dumps({"status": "BLOCKED_INVOICE_READ", "reason": str(exc)}))
         raise SystemExit(2) from None

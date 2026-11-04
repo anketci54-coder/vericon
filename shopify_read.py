@@ -25,6 +25,9 @@ PRIVATE = ROOT / "private"
 CONFIG_FILE = PRIVATE / "shopify_setup.json"
 STORE = "hudys3-p0.myshopify.com"
 API_VERSION = "2026-10"
+PILOT_ORDER_QUERY = '''query { orders(first: 2, query: "name:#1001") {
+  nodes { id name totalPriceSet { shopMoney { amount currencyCode } } }
+} }'''
 REQUIRED_SCOPES = frozenset(("read_products", "read_inventory", "read_locations"))
 SKU_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
 
@@ -271,6 +274,22 @@ def check_many(skus: list[str]) -> dict:
     return {"status": "TEST_BATCH_PARTIAL_BLOCKED" if blocked else "TEST_BATCH_COMPLETE",
             "requested": len(skus), "checked": len(skus) - blocked, "blocked": blocked,
             "results": results}
+
+
+def read_shopify_test_order() -> dict:
+    """Read only pilot order #1001, without customer information or writes."""
+    token = get_access_token(load_setup())
+    response = requests.post(
+        f"https://{STORE}/admin/api/{API_VERSION}/graphql.json",
+        json={"query": PILOT_ORDER_QUERY}, headers={"X-Shopify-Access-Token": token}, timeout=20)
+    response.raise_for_status()
+    body = response.json()
+    if body.get("errors"):
+        raise ValueError("Shopify order read denied")
+    nodes = ((body.get("data") or {}).get("orders") or {}).get("nodes") or []
+    if len(nodes) != 1 or nodes[0].get("name") != "#1001":
+        raise ValueError("Pilot order missing or ambiguous")
+    return nodes[0]
 
 
 def main() -> None:

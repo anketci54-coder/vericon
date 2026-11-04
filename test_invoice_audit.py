@@ -434,3 +434,23 @@ def test_supplier_po_bill_shared_reference_does_not_count_matches():
     assert result["matched_pairs"]==0
     assert result["blocked_pairs"]==2
     assert all(row["status"]=="BLOCKED_SHARED_BILL_REFERENCE" for row in result["pairs"])
+
+
+def test_shopify_order_number_is_not_a_verified_invoice_reference():
+    order={"id":"gid://shopify/Order/123", "name":"#1001",
+           "totalPriceSet":{"shopMoney":{"amount":"216", "currencyCode":"TRY"}}}
+    inv={"DocNumber":"1001", "CurrencyRef":{"value":"USD"}, "TotalAmt":108}
+    result=a.audit_shopify_invoice_link(order,[inv])
+    assert result["status"]=="BLOCKED_NO_VERIFIED_ORDER_REFERENCE"
+    assert result["same_number_candidates"]==1
+    assert result["verified"] is False
+
+
+def test_explicit_shopify_reference_with_wrong_currency_blocks():
+    order={"id":"gid://shopify/Order/123", "name":"#1001",
+           "totalPriceSet":{"shopMoney":{"amount":"216", "currencyCode":"TRY"}}}
+    inv={"DocNumber":"2002", "CurrencyRef":{"value":"USD"}, "TotalAmt":216,
+         "CustomField":[{"Name":"Shopify Order ID", "StringValue":"123"}]}
+    result=a.audit_shopify_invoice_link(order,[inv])
+    assert result["status"]=="BLOCKED_LINKED_CURRENCY_MISMATCH"
+    assert result["verified"] is False

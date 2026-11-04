@@ -277,9 +277,13 @@ def test_shopify_source_has_no_graphql_mutation_calls():
                 continue
             if isinstance(call.func.value, ast.Name) and call.func.value.id == "requests":
                 outbound.add((fn.name, call.func.attr))
-    assert outbound == {("get_access_token", "post"), ("read_stock", "post")}
+    assert outbound == {("get_access_token", "post"), ("read_stock", "post"),
+                        ("read_shopify_test_order", "post")}
     assert s.STOCK_QUERY.lstrip().startswith("query ")
     assert "mutation" not in s.STOCK_QUERY.lower()
+    assert s.PILOT_ORDER_QUERY.lstrip().startswith("query ")
+    assert "mutation" not in s.PILOT_ORDER_QUERY.lower()
+    assert "customer" not in s.PILOT_ORDER_QUERY.lower()
 
 
 def test_price_guards_currency_draft_and_unverified_policy():
