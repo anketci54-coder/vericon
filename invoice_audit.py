@@ -758,6 +758,65 @@ def audit_refund_credit_links(order: dict, refunds: list[dict], credits: list[di
         return base
 
 
+def normalize_refund_credit_api(order: dict, raw_credits: list[dict]) -> dict:
+    """Adapt actual Shopify Refund and QBO CreditMemo read responses, fail closed."""
+    base = {"status": "BLOCKED_REFUND_API_MAPPING", "verified": False,
+            "bank_settlement_verified": False, "real_cash_claimed": False}
+    raw_refunds = order.get("refunds")
+    if not isinstance(raw_refunds, list) or not isinstance(raw_credits, list):
+        return base
+    if len(raw_refunds) > 20 or len(raw_credits) > 100:
+        return {**base, "status": "BLOCKED_REFUND_API_LIMIT"}
+    if not raw_refunds:
+        return {**base, "status": "NO_SHOPIFY_REFUNDS", "shopify_refund_count": 0,
+                "qbo_credit_memo_count": len(raw_credits)}
+    try:
+        refunds = []
+        for row in raw_refunds:
+            amount = ((row.get("totalRefundedSet") or {}).get("shopMoney") or {})
+            connection = row.get("transactions") or {}
+            txs = connection.get("nodes")
+            page_info = connection.get("pageInfo") or {}
+            if page_info.get("hasNextPage") is not False:
+                return {**base, "status": "BLOCKED_REFUND_TRANSACTION_PAGINATION"}
+            if not isinstance(txs, list) or len(txs) > 20:
+                return base
+            refunds.append({"id": row.get("id"), "order_id": (row.get("order") or {}).get("id"),
+                "amount": {"value": amount.get("amount"), "currency": amount.get("currencyCode")},
+                "transactions": [{"id": t.get("id"), "kind": t.get("kind"),
+                    "status": t.get("status"), "test": t.get("test"),
+                    "currency": ((t.get("amountSet") or {}).get("shopMoney") or {}).get("currencyCode"),
+                    "amount": ((t.get("amountSet") or {}).get("shopMoney") or {}).get("amount")}
+                    for t in txs]})
+        credits = []
+        known_refund_ids = {row["id"] for row in refunds}
+        for row in raw_credits:
+            fields = row.get("CustomField")
+            if not isinstance(fields, list):
+                return base
+            refs = [str(f.get("StringValue") or "").strip() for f in fields
+                    if isinstance(f, dict) and str(f.get("Name") or "").strip().lower()
+                    in ("shopify refund id", "shopify_refund_id")]
+            if len(refs) > 1:
+                return {**base, "status": "BLOCKED_AMBIGUOUS_CREDIT_REFUND_FIELD"}
+            if not refs:
+                continue
+            ref = refs[0]
+            if ref.isdigit():
+                ref = "gid://shopify/Refund/" + ref
+            if ref not in known_refund_ids:
+                continue
+            credits.append({"id": row.get("Id"), "shopify_refund_id": ref,
+                 "currency": (row.get("CurrencyRef") or {}).get("value"),
+                 "amount": row.get("TotalAmt")})
+        result = audit_refund_credit_links(order, refunds, credits)
+        result["qbo_credit_memo_count"] = len(raw_credits)
+        result["qbo_explicit_ref_count"] = len(credits)
+        return result
+    except (TypeError, ValueError, AttributeError, KeyError):
+        return base
+
+
 def read_try_pilot_invoice() -> dict:
     """Read the single TRY pilot invoice using a separate sandbox token vault."""
     from qbo_oauth import Config
@@ -779,6 +838,45 @@ def read_try_pilot_invoice() -> dict:
     if not invoice or invoice.get("Id") != "145" or invoice.get("DocNumber") != "1038":
         raise ValueError("TRY pilot invoice missing or unexpected")
     return invoice
+
+
+def read_try_pilot_credit_memos() -> list[dict]:
+    """Read bounded CreditMemo records with enhanced custom fields, no writes."""
+    from qbo_oauth import Config
+    vault = Path(__file__).resolve().parent / "private" / "qbo_try_32e0"
+    setup = json.loads((vault / "qbo_setup.json").read_text(encoding="utf-8"))
+    if setup.get("VERICON_QBO_EXPECTED_REALM") != "9341458641399133":
+        raise ValueError("Unexpected TRY sandbox company")
+    config = Config(client_id=setup["VERICON_QBO_CLIENT_ID"],
+                    client_secret=setup["VERICON_QBO_CLIENT_SECRET"],
+                    redirect_uri=setup["VERICON_QBO_REDIRECT_URI"],
+                    private_dir=vault, expected_realm="9341458641399133")
+    token, realm = get_access_token(config)
+    headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
+    url = f"{SANDBOX_API}/v3/company/{realm}"
+    count = _get_json(url + "/query", "SELECT COUNT(*) FROM CreditMemo", headers).get("totalCount")
+    if type(count) is not int or count < 0 or count > 25:
+        raise ValueError("Pilot CreditMemo count invalid or above limit")
+    if not count:
+        return []
+    rows = _get_json(url + "/query", f"SELECT * FROM CreditMemo STARTPOSITION 1 MAXRESULTS {count}", headers).get("CreditMemo")
+    if not isinstance(rows, list) or len(rows) != count:
+        raise ValueError("Pilot CreditMemo query incomplete")
+    ids = [str(x.get("Id") or "") for x in rows if isinstance(x, dict)]
+    if len(ids) != count or any(not v.isdigit() for v in ids) or len(set(ids)) != count:
+        raise ValueError("Pilot CreditMemo IDs invalid or ambiguous")
+    detailed = []
+    for ident in ids:
+        response = requests.get(url + "/creditmemo/" + ident,
+                                params={"minorversion":"75", "include":"enhancedAllCustomFields"},
+                                headers=headers, timeout=20)
+        response.raise_for_status()
+        body = response.json()
+        memo = body.get("CreditMemo") if not body.get("Fault") else None
+        if not isinstance(memo, dict) or str(memo.get("Id")) != ident:
+            raise ValueError("Pilot CreditMemo detail incomplete")
+        detailed.append(memo)
+    return detailed
 
 
 def audit_all(invoices: list[dict], payments: list[dict] | None = None,
@@ -816,6 +914,18 @@ def audit_all(invoices: list[dict], payments: list[dict] | None = None,
             "supplier_po_bills": audit_supplier_po_bills(purchase_orders, bills)
                                  if purchase_orders is not None and bills is not None
                                  else {"status": "NOT_CHECKED"}}
+
+
+if __name__ == "__main__" and sys.argv[1:] == ["--pilot-refunds"]:
+    try:
+        from shopify_read import read_shopify_test_order
+        order = read_shopify_test_order()
+        credits = read_try_pilot_credit_memos()
+        print(json.dumps(normalize_refund_credit_api(order, credits), ensure_ascii=False))
+    except (ValueError, PermissionError, requests.RequestException, KeyError, OSError):
+        print(json.dumps({"status":"BLOCKED_REFUND_API_READ", "verified":False}))
+        raise SystemExit(2) from None
+    raise SystemExit(0)
 
 
 if __name__ == "__main__" and sys.argv[1:] == ["--pilot-link"]:

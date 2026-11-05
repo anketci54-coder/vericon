@@ -58,7 +58,7 @@ def test_guard_invoice_reader_only_uses_get_and_oauth_read():
     api_calls=[(n.func.value.id,n.func.attr) for n in ast.walk(tree)
                if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute)
                and isinstance(n.func.value,ast.Name) and n.func.value.id=="requests"]
-    assert api_calls == [("requests","get"), ("requests","get")]
+    assert api_calls == [("requests","get")] * 3
 
 
 def test_reader_blocks_incomplete_counts_and_duplicate_records(monkeypatch):
@@ -569,6 +569,36 @@ def test_refund_credit_reconciliation_guards():
                                              [credit(),credit(r2["id"],"50","C2")])
     assert duplicate_tx["status"]=="BLOCKED_DUPLICATE_REFUND_TRANSACTION"
     assert duplicate_tx["verified"] is False
+
+
+def test_raw_refund_credit_api_adapter_requires_explicit_reference():
+    order={"id":"gid://shopify/Order/123","test":True,
+           "totalPriceSet":{"shopMoney":{"amount":"216","currencyCode":"TRY"}},
+           "refunds":[{"id":"gid://shopify/Refund/567","order":{"id":"gid://shopify/Order/123"},
+             "totalRefundedSet":{"shopMoney":{"amount":"100","currencyCode":"TRY"}},
+             "transactions":{"pageInfo":{"hasNextPage":False},"nodes":[{"id":"gid://shopify/OrderTransaction/900",
+                  "kind":"REFUND","status":"SUCCESS","test":True,
+                  "amountSet":{"shopMoney":{"amount":"100","currencyCode":"TRY"}}}]}}]}
+    credit={"Id":"73","TotalAmt":100,"CurrencyRef":{"value":"TRY"},
+            "CustomField":[{"Name":"Shopify Refund ID","StringValue":"567"}]}
+    result=a.normalize_refund_credit_api(order,[credit])
+    assert result["status"]=="TEST_REFUND_CREDIT_RECORDS_MATCH"
+    assert result["verified"] is True and result["bank_settlement_verified"] is False
+    missing={**credit,"CustomField":[]}
+    result=a.normalize_refund_credit_api(order,[missing])
+    assert result["status"]=="BLOCKED_MISSING_CREDIT_MEMO" and result["verified"] is False
+    result=a.normalize_refund_credit_api({**order,"refunds":[]},[missing])
+    assert result["status"]=="NO_SHOPIFY_REFUNDS" and result["verified"] is False
+    assert result["qbo_credit_memo_count"]==1
+    bad={**credit,"CurrencyRef":{"value":"USD"}}
+    assert a.normalize_refund_credit_api(order,[bad])["status"]=="BLOCKED_CREDIT_AMOUNT_CURRENCY"
+    ambiguous={**credit,"CustomField":credit["CustomField"]*2}
+    assert a.normalize_refund_credit_api(order,[ambiguous])["status"]=="BLOCKED_AMBIGUOUS_CREDIT_REFUND_FIELD"
+    unrelated={**credit,"CustomField":[{"Name":"Shopify Refund ID","StringValue":"999"}]}
+    assert a.normalize_refund_credit_api(order,[unrelated])["status"]=="BLOCKED_MISSING_CREDIT_MEMO"
+    incomplete={**order,"refunds":[{**order["refunds"][0],"transactions":{
+        "pageInfo":{"hasNextPage":True},"nodes":order["refunds"][0]["transactions"]["nodes"]}}]}
+    assert a.normalize_refund_credit_api(incomplete,[credit])["status"]=="BLOCKED_REFUND_TRANSACTION_PAGINATION"
 
 
 def test_duplicate_explicit_shopify_references_block_even_if_first_matches():
