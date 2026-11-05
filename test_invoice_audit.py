@@ -58,7 +58,7 @@ def test_guard_invoice_reader_only_uses_get_and_oauth_read():
     api_calls=[(n.func.value.id,n.func.attr) for n in ast.walk(tree)
                if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute)
                and isinstance(n.func.value,ast.Name) and n.func.value.id=="requests"]
-    assert api_calls == [("requests","get")] * 3
+    assert api_calls == [("requests","get")] * 4
 
 
 def test_reader_blocks_incomplete_counts_and_duplicate_records(monkeypatch):
@@ -531,6 +531,30 @@ def test_pilot_payment_is_not_real_cash_or_bank_settlement():
     wrong=deepcopy(inv);wrong["Balance"]=217
     assert a.audit_pilot_payment_accounting(order,wrong,link)["status"]=="BLOCKED_INVALID_PAYMENT_TOTALS"
     assert a.audit_pilot_payment_accounting(order,inv,{"verified":False})["status"]=="BLOCKED_ORDER_INVOICE_LINK"
+
+
+def test_credit_application_is_offset_not_cash():
+    from copy import deepcopy
+    inv={"Id":"145","CustomerRef":{"value":"C1"},"CurrencyRef":{"value":"TRY"},
+         "TotalAmt":216,"Balance":116,"LinkedTxn":[{"TxnId":"148","TxnType":"Payment"}]}
+    credit={"Id":"146","CustomerRef":{"value":"C1"},"CurrencyRef":{"value":"TRY"},
+            "TotalAmt":100,"Balance":0}
+    payment={"Id":"148","CustomerRef":{"value":"C1"},"CurrencyRef":{"value":"TRY"},
+             "TotalAmt":0,"UnappliedAmt":0,"Line":[
+                 {"Amount":100,"LinkedTxn":[{"TxnId":"145","TxnType":"Invoice"}]},
+                 {"Amount":100,"LinkedTxn":[{"TxnId":"146","TxnType":"CreditMemo"}]}]}
+    valid=a.audit_pilot_credit_application(inv,credit,payment)
+    assert valid["status"]=="PILOT_CREDIT_APPLICATION_VERIFIED"
+    assert valid["verified"] is True
+    assert valid["cash_received_verified"] is False and valid["bank_settlement_verified"] is False
+    bad=deepcopy(inv);bad["Balance"]=117
+    assert a.audit_pilot_credit_application(bad,credit,payment)["verified"] is False
+    bad=deepcopy(payment);bad["Line"][1]["LinkedTxn"][0]["TxnId"]="WRONG"
+    assert a.audit_pilot_credit_application(inv,credit,bad)["status"]=="BLOCKED_CREDIT_APPLICATION_WRONG_ENDPOINT"
+    bad=deepcopy(payment);bad["TotalAmt"]=100
+    assert a.audit_pilot_credit_application(inv,credit,bad)["status"]=="BLOCKED_CREDIT_APPLICATION_AMOUNTS"
+    bad=deepcopy(credit);bad["CustomerRef"]["value"]="OTHER"
+    assert a.audit_pilot_credit_application(inv,bad,payment)["status"]=="BLOCKED_CREDIT_APPLICATION_CURRENCY_CUSTOMER"
 
 
 def test_refund_credit_reconciliation_guards():

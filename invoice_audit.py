@@ -832,6 +832,56 @@ def normalize_refund_credit_api(order: dict, raw_credits: list[dict], invoice: d
         return base
 
 
+def audit_pilot_credit_application(invoice: dict, credit: dict, payment: dict) -> dict:
+    """Verify QuickBooks credit application without treating it as cash received."""
+    base = {"status": "BLOCKED_CREDIT_APPLICATION_EVIDENCE", "verified": False,
+            "cash_received_verified": False, "bank_settlement_verified": False}
+    try:
+        invoice_id, credit_id = str(invoice.get("Id") or ""), str(credit.get("Id") or "")
+        payment_id = str(payment.get("Id") or "")
+        currency = (invoice.get("CurrencyRef") or {}).get("value")
+        customer = (invoice.get("CustomerRef") or {}).get("value")
+        if not all((invoice_id, credit_id, payment_id, currency, customer)):
+            return base
+        if (currency != (credit.get("CurrencyRef") or {}).get("value") or
+                currency != (payment.get("CurrencyRef") or {}).get("value") or
+                customer != (credit.get("CustomerRef") or {}).get("value") or
+                customer != (payment.get("CustomerRef") or {}).get("value")):
+            return {**base, "status": "BLOCKED_CREDIT_APPLICATION_CURRENCY_CUSTOMER"}
+        total, balance = number(invoice.get("TotalAmt")), number(invoice.get("Balance"))
+        credit_total, credit_balance = number(credit.get("TotalAmt")), number(credit.get("Balance"))
+        if (total <= 0 or credit_total <= 0 or balance < 0 or credit_balance != 0 or
+                number(payment.get("TotalAmt")) != 0 or number(payment.get("UnappliedAmt")) != 0):
+            return {**base, "status": "BLOCKED_CREDIT_APPLICATION_AMOUNTS"}
+        refs = invoice.get("LinkedTxn")
+        if not isinstance(refs, list) or len(refs) != 1 or refs[0] != {"TxnId": payment_id, "TxnType": "Payment"}:
+            return {**base, "status": "BLOCKED_CREDIT_APPLICATION_INVOICE_LINK"}
+        lines = payment.get("Line")
+        if not isinstance(lines, list) or len(lines) != 2:
+            return {**base, "status": "BLOCKED_CREDIT_APPLICATION_LINES"}
+        allocations = {}
+        for line in lines:
+            links = line.get("LinkedTxn")
+            if not isinstance(links, list) or len(links) != 1 or not isinstance(links[0], dict):
+                return {**base, "status": "BLOCKED_CREDIT_APPLICATION_LINE_REFERENCE"}
+            typ, ident = links[0].get("TxnType"), str(links[0].get("TxnId") or "")
+            if typ not in ("Invoice", "CreditMemo") or typ in allocations:
+                return {**base, "status": "BLOCKED_CREDIT_APPLICATION_DUPLICATE_LINE"}
+            allocations[typ] = (ident, number(line.get("Amount")))
+        if set(allocations) != {"Invoice", "CreditMemo"} or allocations["Invoice"][0] != invoice_id or allocations["CreditMemo"][0] != credit_id:
+            return {**base, "status": "BLOCKED_CREDIT_APPLICATION_WRONG_ENDPOINT"}
+        invoice_applied, credit_applied = allocations["Invoice"][1], allocations["CreditMemo"][1]
+        if (invoice_applied <= 0 or invoice_applied != credit_applied or
+                invoice_applied != credit_total or balance != total - invoice_applied):
+            return {**base, "status": "REVIEW_CREDIT_APPLICATION_BALANCE"}
+        return {**base, "status": "PILOT_CREDIT_APPLICATION_VERIFIED",
+                "verified": True, "applied": str(invoice_applied), "remaining": str(balance),
+                "currency": currency, "payment_id": payment_id,
+                "scope": "controlled_sandbox_credit_offset_not_cash"}
+    except (ValueError, TypeError, AttributeError, KeyError):
+        return base
+
+
 def read_try_pilot_invoice() -> dict:
     """Read the single TRY pilot invoice using a separate sandbox token vault."""
     from qbo_oauth import Config
@@ -894,6 +944,35 @@ def read_try_pilot_credit_memos() -> list[dict]:
     return detailed
 
 
+def read_try_pilot_credit_payment(invoice: dict) -> dict:
+    """Fetch only the payment referenced by the sandbox pilot invoice."""
+    from qbo_oauth import Config
+    links = invoice.get("LinkedTxn")
+    if not isinstance(links, list) or len(links) != 1 or links[0].get("TxnType") != "Payment":
+        raise ValueError("Missing or ambiguous pilot payment")
+    payment_id = str(links[0].get("TxnId") or "")
+    if not payment_id.isdigit():
+        raise ValueError("Invalid pilot payment ID")
+    vault = Path(__file__).resolve().parent / "private" / "qbo_try_32e0"
+    setup = json.loads((vault / "qbo_setup.json").read_text(encoding="utf-8"))
+    if setup.get("VERICON_QBO_EXPECTED_REALM") != "9341458641399133":
+        raise ValueError("Unexpected sandbox company")
+    config = Config(client_id=setup["VERICON_QBO_CLIENT_ID"],
+                    client_secret=setup["VERICON_QBO_CLIENT_SECRET"],
+                    redirect_uri=setup["VERICON_QBO_REDIRECT_URI"],
+                    private_dir=vault, expected_realm="9341458641399133")
+    token, realm = get_access_token(config)
+    response = requests.get(f"{SANDBOX_API}/v3/company/{realm}/payment/{payment_id}",
+                            headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                            timeout=20)
+    response.raise_for_status()
+    data = response.json()
+    payment = data.get("Payment") if not data.get("Fault") else None
+    if not isinstance(payment, dict) or str(payment.get("Id")) != payment_id:
+        raise ValueError("Payment response incomplete or unexpected")
+    return payment
+
+
 def audit_all(invoices: list[dict], payments: list[dict] | None = None,
               credit_memos: list[dict] | None = None,
               purchase_orders: list[dict] | None = None,
@@ -936,7 +1015,19 @@ if __name__ == "__main__" and sys.argv[1:] == ["--pilot-refunds"]:
         from shopify_read import read_shopify_test_order
         order = read_shopify_test_order()
         credits = read_try_pilot_credit_memos()
-        print(json.dumps(normalize_refund_credit_api(order, credits, read_try_pilot_invoice()), ensure_ascii=False))
+        invoice = read_try_pilot_invoice()
+        result = normalize_refund_credit_api(order, credits, invoice)
+        if result.get("verified") is True:
+            linked = [c for c in credits if any(
+                f.get("Name") == "Shopify Refund ID" and
+                str(f.get("StringValue")) == "1118350999854"
+                for f in c.get("CustomField", []))]
+            if len(linked) == 1:
+                result["credit_application"] = audit_pilot_credit_application(
+                    invoice, linked[0], read_try_pilot_credit_payment(invoice))
+            else:
+                result["credit_application"] = {"status": "BLOCKED_LINKED_CREDIT_AMBIGUITY", "verified": False}
+        print(json.dumps(result, ensure_ascii=False))
     except (ValueError, PermissionError, requests.RequestException, KeyError, OSError):
         print(json.dumps({"status":"BLOCKED_REFUND_API_READ", "verified":False}))
         raise SystemExit(2) from None
