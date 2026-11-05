@@ -27,7 +27,8 @@ STORE = "hudys3-p0.myshopify.com"
 API_VERSION = "2026-10"
 PILOT_ORDER_QUERY = '''query { orders(first: 2, query: "name:#1001") {
   nodes {
-    id name
+    id name test displayFinancialStatus
+    transactions(first: 10) { id kind status test amountSet { shopMoney { amount currencyCode } } }
     subtotalPriceSet { shopMoney { amount currencyCode } }
     totalTaxSet { shopMoney { amount currencyCode } }
     totalPriceSet { shopMoney { amount currencyCode } }

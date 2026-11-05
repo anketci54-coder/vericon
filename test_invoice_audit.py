@@ -509,6 +509,30 @@ def test_pilot_order_line_checks_fail_closed_on_bad_data():
     assert a.audit_shopify_invoice_link(q,[r])["status"]=="BLOCKED_NONPOSITIVE_PILOT_SALE"
 
 
+def test_pilot_payment_is_not_real_cash_or_bank_settlement():
+    from copy import deepcopy
+    order={"test":True,"displayFinancialStatus":"PAID",
+           "totalPriceSet":{"shopMoney":{"amount":"216","currencyCode":"TRY"}},
+           "transactions":[{"test":True,"kind":"SALE","status":"SUCCESS",
+                            "amountSet":{"shopMoney":{"amount":"216","currencyCode":"TRY"}}}]}
+    inv={"TotalAmt":216,"Balance":216,"CurrencyRef":{"value":"TRY"},"LinkedTxn":[]}
+    link={"status":"PILOT_ORDER_INVOICE_VERIFIED","verified":True}
+    good=a.audit_pilot_payment_accounting(order,inv,link)
+    assert good["status"]=="TEST_PAID_QBO_UNPAID_EXPECTED"
+    assert good["settlement_verified"] is False and good["real_cash_claimed"] is False
+    wrong=deepcopy(order);wrong["transactions"][0]["amountSet"]["shopMoney"]["amount"]="215"
+    assert a.audit_pilot_payment_accounting(wrong,inv,link)["status"]=="REVIEW_TEST_GATEWAY_PAYMENT_TOTAL"
+    wrong=deepcopy(order);wrong["test"]=False
+    assert a.audit_pilot_payment_accounting(wrong,inv,link)["status"]=="NOT_CHECKED_NONTEST_PAYMENT_SETTLEMENT"
+    wrong=deepcopy(order);wrong["transactions"][0]["test"]=False
+    assert a.audit_pilot_payment_accounting(wrong,inv,link)["status"]=="BLOCKED_PAYMENT_TEST_CLASSIFICATION"
+    wrong=deepcopy(inv);wrong["Balance"]=0
+    assert a.audit_pilot_payment_accounting(order,wrong,link)["status"]=="REVIEW_QBO_PAYMENT_RECORDS"
+    wrong=deepcopy(inv);wrong["Balance"]=217
+    assert a.audit_pilot_payment_accounting(order,wrong,link)["status"]=="BLOCKED_INVALID_PAYMENT_TOTALS"
+    assert a.audit_pilot_payment_accounting(order,inv,{"verified":False})["status"]=="BLOCKED_ORDER_INVOICE_LINK"
+
+
 def test_duplicate_explicit_shopify_references_block_even_if_first_matches():
     order={"id":"gid://shopify/Order/123", "name":"#1001",
            "totalPriceSet":{"shopMoney":{"amount":"216", "currencyCode":"TRY"}}}

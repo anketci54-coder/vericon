@@ -628,6 +628,54 @@ def _audit_pilot_line_items(order: dict, inv: dict, base: dict) -> dict:
             "scope": "controlled_shopify_qbo_sandbox_pilot_only"}
 
 
+def audit_pilot_payment_accounting(order: dict, invoice: dict, link: dict) -> dict:
+    """Do not infer real settlement from simulated Shopify checkout payments."""
+    base = {"status": "BLOCKED_PAYMENT_EVIDENCE", "settlement_verified": False,
+            "real_cash_claimed": False}
+    if link.get("verified") is not True or link.get("status") != "PILOT_ORDER_INVOICE_VERIFIED":
+        return {**base, "status": "BLOCKED_ORDER_INVOICE_LINK"}
+    try:
+        currency = (invoice.get("CurrencyRef") or {}).get("value")
+        total_money = ((order.get("totalPriceSet") or {}).get("shopMoney") or {})
+        if not currency or total_money.get("currencyCode") != currency:
+            return {**base, "status": "BLOCKED_PAYMENT_CURRENCY"}
+        total = number(total_money.get("amount"))
+        invoice_total, balance = number(invoice.get("TotalAmt")), number(invoice.get("Balance"))
+        if total <= 0 or invoice_total != total or balance < 0 or balance > invoice_total:
+            return {**base, "status": "BLOCKED_INVALID_PAYMENT_TOTALS"}
+        transactions = order.get("transactions")
+        if not isinstance(transactions, list) or not transactions:
+            return {**base, "status": "BLOCKED_MISSING_SHOPIFY_TRANSACTIONS"}
+        if any(not isinstance(txn, dict) for txn in transactions):
+            return base
+        if order.get("test") is not True:
+            return {**base, "status": "NOT_CHECKED_NONTEST_PAYMENT_SETTLEMENT"}
+        successful = [txn for txn in transactions if txn.get("status") == "SUCCESS"
+                      and txn.get("kind") in ("SALE", "CAPTURE")]
+        if not successful or any(txn.get("test") is not True for txn in successful):
+            return {**base, "status": "BLOCKED_PAYMENT_TEST_CLASSIFICATION"}
+        applied = Decimal(0)
+        for txn in successful:
+            money = ((txn.get("amountSet") or {}).get("shopMoney") or {})
+            if money.get("currencyCode") != currency:
+                return {**base, "status": "BLOCKED_PAYMENT_CURRENCY"}
+            applied += number(money.get("amount"))
+        if applied != total or order.get("displayFinancialStatus") != "PAID":
+            return {**base, "status": "REVIEW_TEST_GATEWAY_PAYMENT_TOTAL"}
+        linked = invoice.get("LinkedTxn")
+        if not isinstance(linked, list):
+            return {**base, "status": "BLOCKED_QBO_PAYMENT_LINKS"}
+        if balance == invoice_total and not linked:
+            return {**base, "status": "TEST_PAID_QBO_UNPAID_EXPECTED",
+                    "shopify_test_payment": str(applied), "qbo_outstanding": str(balance),
+                    "currency": currency}
+        return {**base, "status": "REVIEW_QBO_PAYMENT_RECORDS",
+                "shopify_test_payment": str(applied), "qbo_outstanding": str(balance),
+                "currency": currency}
+    except (ValueError, TypeError, AttributeError):
+        return base
+
+
 def read_try_pilot_invoice() -> dict:
     """Read the single TRY pilot invoice using a separate sandbox token vault."""
     from qbo_oauth import Config
@@ -691,8 +739,11 @@ def audit_all(invoices: list[dict], payments: list[dict] | None = None,
 if __name__ == "__main__" and sys.argv[1:] == ["--pilot-link"]:
     try:
         from shopify_read import read_shopify_test_order
-        print(json.dumps(audit_shopify_invoice_link(read_shopify_test_order(),
-                                                   [read_try_pilot_invoice()]), ensure_ascii=False))
+        order = read_shopify_test_order()
+        invoice = read_try_pilot_invoice()
+        link = audit_shopify_invoice_link(order, [invoice])
+        link["payment_accounting"] = audit_pilot_payment_accounting(order, invoice, link)
+        print(json.dumps(link, ensure_ascii=False))
     except (ValueError, PermissionError, requests.RequestException, KeyError, OSError):
         print(json.dumps({"status": "BLOCKED_PILOT_API_READ", "verified": False}))
         raise SystemExit(2) from None
