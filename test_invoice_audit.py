@@ -672,6 +672,29 @@ def test_later_mutations_invalidate_previous_financial_evidence():
     assert a.audit_pilot_evidence_change("",previous,checks)["verified"] is False
 
 
+def test_private_pilot_baseline_is_immutable_and_fails_closed(tmp_path):
+    import os
+    import hashlib
+    import stat
+    os.chmod(tmp_path, 0o700)
+    target = tmp_path / "baseline.sha256"
+    original = hashlib.sha256(b"original").hexdigest()
+    changed = hashlib.sha256(b"changed").hexdigest()
+    first = a.compare_pilot_baseline(original, target)
+    assert first == {"status":"BASELINE_RECORDED_NOT_VERIFIED", "verified":False}
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert target.read_text().strip() == original
+    assert a.compare_pilot_baseline(original, target)["status"] == "BASELINE_UNCHANGED"
+    assert a.compare_pilot_baseline(changed, target)["status"] == "REVIEW_EVIDENCE_CHANGED_RECHECK_REQUIRED"
+    assert target.read_text().strip() == original
+    assert a.compare_pilot_baseline("wrong",target)["status"] == "BLOCKED_INVALID_CURRENT_FINGERPRINT"
+    target.write_text("corrupt")
+    assert a.compare_pilot_baseline(original,target)["status"] == "BLOCKED_INVALID_STORED_BASELINE"
+    target.unlink()
+    target.symlink_to(tmp_path / "missing")
+    assert a.compare_pilot_baseline(original,target)["status"] == "BLOCKED_UNSAFE_BASELINE_FILE"
+
+
 def test_duplicate_explicit_shopify_references_block_even_if_first_matches():
     order={"id":"gid://shopify/Order/123", "name":"#1001",
            "totalPriceSet":{"shopMoney":{"amount":"216", "currencyCode":"TRY"}}}

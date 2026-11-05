@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
+import re
+import stat
 import sys
 from pathlib import Path
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -1049,6 +1052,35 @@ def audit_pilot_evidence_change(previous: str, current: str, checks: dict) -> di
     return {"status": "CURRENT_EVIDENCE_CONSISTENT", "verified": True}
 
 
+def compare_pilot_baseline(current: str, path: Path | None = None) -> dict:
+    """Create one private, immutable initial observation; later reads never overwrite it."""
+    if not isinstance(current, str) or re.fullmatch(r"[0-9a-f]{64}", current) is None:
+        return {"status": "BLOCKED_INVALID_CURRENT_FINGERPRINT", "verified": False}
+    target = path or (Path(__file__).resolve().parent / "private" / "pilot_evidence_baseline.sha256")
+    parent = target.parent
+    if not parent.is_dir() or parent.is_symlink() or stat.S_IMODE(parent.stat().st_mode) != 0o700:
+        return {"status": "BLOCKED_UNSAFE_BASELINE_DIRECTORY", "verified": False}
+    if not target.exists() and not target.is_symlink():
+        try:
+            fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            with os.fdopen(fd, "w", encoding="ascii") as handle:
+                handle.write(current + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            return {"status": "BASELINE_RECORDED_NOT_VERIFIED", "verified": False}
+    if target.is_symlink() or not target.is_file() or stat.S_IMODE(target.stat().st_mode) != 0o600:
+        return {"status": "BLOCKED_UNSAFE_BASELINE_FILE", "verified": False}
+    previous = target.read_text(encoding="ascii").strip()
+    if re.fullmatch(r"[0-9a-f]{64}", previous) is None:
+        return {"status": "BLOCKED_INVALID_STORED_BASELINE", "verified": False}
+    if previous != current:
+        return {"status": "REVIEW_EVIDENCE_CHANGED_RECHECK_REQUIRED", "verified": False}
+    return {"status": "BASELINE_UNCHANGED", "verified": False}
+
+
 def audit_all(invoices: list[dict], payments: list[dict] | None = None,
               credit_memos: list[dict] | None = None,
               purchase_orders: list[dict] | None = None,
@@ -1105,6 +1137,7 @@ if __name__ == "__main__" and sys.argv[1:] == ["--pilot-refunds"]:
                 result["credit_application"] = {"status": "BLOCKED_LINKED_CREDIT_AMBIGUITY", "verified": False}
         payment = read_try_pilot_credit_payment(invoice)
         result["evidence_fingerprint"] = pilot_evidence_fingerprint(order, invoice, credits, payment)
+        result["baseline_comparison"] = compare_pilot_baseline(result["evidence_fingerprint"])
         result["full_current_verification"] = bool(
             result.get("verified") is True and
             (result.get("credit_application") or {}).get("verified") is True)
