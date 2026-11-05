@@ -594,7 +594,9 @@ def _audit_pilot_line_items(order: dict, inv: dict, base: dict) -> dict:
         subtotal = money(order.get("subtotalPriceSet"))
         tax = money(order.get("totalTaxSet"))
         total = money(order.get("totalPriceSet"))
-        if qty != 1 or qty * unit != net or net != subtotal or net + delivery + tax != total:
+        if qty != 1 or unit <= 0 or net <= 0 or delivery < 0 or subtotal <= 0 or total <= 0:
+            return {**base, "status": "BLOCKED_NONPOSITIVE_PILOT_SALE"}
+        if qty * unit != net or net != subtotal or net + delivery + tax != total:
             return {**base, "status": "REVIEW_SHOPIFY_COMPONENTS"}
         lines = [line for line in (inv.get("Line") or []) if line.get("DetailType") == "SalesItemLineDetail"]
         unsupported = [line for line in (inv.get("Line") or []) if line.get("DetailType") not in

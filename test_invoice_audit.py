@@ -498,6 +498,15 @@ def test_pilot_order_line_checks_fail_closed_on_bad_data():
     assert a.audit_shopify_invoice_link(order,[q])["verified"] is False
     q=deepcopy(order);q["shippingLines"]["nodes"][0]["title"]="Unknown"
     assert a.audit_shopify_invoice_link(q,[inv])["verified"] is False
+    q=deepcopy(order);r=deepcopy(inv)
+    q["subtotalPriceSet"]["shopMoney"]["amount"]="-100"
+    q["totalPriceSet"]["shopMoney"]["amount"]="16"
+    q["lineItems"]["nodes"][0]["originalUnitPriceSet"]["shopMoney"]["amount"]="-100"
+    q["lineItems"]["nodes"][0]["discountedTotalSet"]["shopMoney"]["amount"]="-100"
+    r["TotalAmt"]=16
+    r["Line"][0]["Amount"]=-100
+    r["Line"][0]["SalesItemLineDetail"]["UnitPrice"]=-100
+    assert a.audit_shopify_invoice_link(q,[r])["status"]=="BLOCKED_NONPOSITIVE_PILOT_SALE"
 
 
 def test_duplicate_explicit_shopify_references_block_even_if_first_matches():
