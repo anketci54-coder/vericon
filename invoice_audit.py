@@ -783,6 +783,14 @@ def normalize_refund_credit_api(order: dict, raw_credits: list[dict], invoice: d
     if len(linked_order_ids) != 1 or linked_order_ids[0] not in (order_ref, order_ref.split("/")[-1]):
         return {**base, "status": "BLOCKED_INVOICE_CUSTOMER_OR_REFERENCE"}
     try:
+        invoice_tax = number((invoice.get("TxnTaxDetail") or {}).get("TotalTax"))
+        order_tax_set = (order.get("totalTaxSet") or {}).get("shopMoney") or {}
+        order_tax = number(order_tax_set.get("amount"))
+        order_currency = ((order.get("totalPriceSet") or {}).get("shopMoney") or {}).get("currencyCode")
+        if not order_currency or order_tax_set.get("currencyCode") != order_currency:
+            return {**base, "status": "BLOCKED_REFUND_TAX_CURRENCY_UNKNOWN"}
+        if invoice_tax != 0 or order_tax != 0:
+            return {**base, "status": "NOT_CHECKED_TAXABLE_REFUND_POLICY"}
         refunds = []
         for row in raw_refunds:
             amount = ((row.get("totalRefundedSet") or {}).get("shopMoney") or {})
@@ -827,6 +835,31 @@ def normalize_refund_credit_api(order: dict, raw_credits: list[dict], invoice: d
         result = audit_refund_credit_links(order, refunds, credits)
         result["qbo_credit_memo_count"] = len(raw_credits)
         result["qbo_explicit_ref_count"] = len(credits)
+        if result.get("verified") is not True:
+            return result
+        for row in raw_credits:
+            fields = row.get("CustomField") or []
+            linked_refs = [str(field.get("StringValue") or "").strip() for field in fields
+                           if isinstance(field, dict) and str(field.get("Name") or "").strip().lower()
+                           in ("shopify refund id", "shopify_refund_id")]
+            if not linked_refs:
+                continue
+            refund_ref = linked_refs[0]
+            if refund_ref.isdigit():
+                refund_ref = "gid://shopify/Refund/" + refund_ref
+            if refund_ref not in known_refund_ids:
+                continue
+            credit_tax = number((row.get("TxnTaxDetail") or {}).get("TotalTax"))
+            if credit_tax != 0:
+                return {**base, "status": "REVIEW_CREDIT_MEMO_UNEXPECTED_TAX",
+                        "qbo_credit_memo_count": len(raw_credits)}
+            lines = row.get("Line")
+            if not isinstance(lines, list):
+                return {**base, "status": "BLOCKED_CREDIT_MEMO_TAX_LINES_UNKNOWN"}
+            item_lines = [line for line in lines if line.get("DetailType") == "SalesItemLineDetail"]
+            if not item_lines or any((line.get("SalesItemLineDetail") or {}).get("TaxCodeRef", {}).get("value") != "NON" for line in item_lines):
+                return {**base, "status": "REVIEW_CREDIT_MEMO_TAX_CODE",
+                        "qbo_credit_memo_count": len(raw_credits)}
         return result
     except (TypeError, ValueError, AttributeError, KeyError):
         return base

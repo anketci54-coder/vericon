@@ -599,14 +599,18 @@ def test_raw_refund_credit_api_adapter_requires_explicit_reference():
     from copy import deepcopy
     order={"id":"gid://shopify/Order/123","test":True,
            "totalPriceSet":{"shopMoney":{"amount":"216","currencyCode":"TRY"}},
+           "totalTaxSet":{"shopMoney":{"amount":"0","currencyCode":"TRY"}},
            "refunds":[{"id":"gid://shopify/Refund/567","order":{"id":"gid://shopify/Order/123"},
              "totalRefundedSet":{"shopMoney":{"amount":"100","currencyCode":"TRY"}},
              "transactions":{"pageInfo":{"hasNextPage":False},"nodes":[{"id":"gid://shopify/OrderTransaction/900",
                   "kind":"REFUND","status":"SUCCESS","test":True,
                   "amountSet":{"shopMoney":{"amount":"100","currencyCode":"TRY"}}}]}}]}
-    invoice={"CustomerRef":{"value":"customer_1"},
+    invoice={"TxnTaxDetail":{"TotalTax":0},"CustomerRef":{"value":"customer_1"},
              "CustomField":[{"Name":"Shopify Order ID","StringValue":"123"}]}
     credit={"Id":"73","TotalAmt":100,"CurrencyRef":{"value":"TRY"},
+            "TxnTaxDetail":{"TotalTax":0},
+            "Line":[{"DetailType":"SalesItemLineDetail",
+                     "SalesItemLineDetail":{"TaxCodeRef":{"value":"NON"}}}],
             "CustomerRef":{"value":"customer_1"},
             "CustomField":[{"Name":"Shopify Refund ID","StringValue":"567"}]}
     result=a.normalize_refund_credit_api(order,[credit],invoice)
@@ -631,6 +635,12 @@ def test_raw_refund_credit_api_adapter_requires_explicit_reference():
     assert mismatch["status"]=="BLOCKED_CREDIT_MEMO_CUSTOMER_MISMATCH"
     assert mismatch["verified"] is False
     assert a.normalize_refund_credit_api(order,[credit])["status"]=="BLOCKED_MISSING_LINKED_INVOICE"
+    taxed=deepcopy(credit);taxed["TxnTaxDetail"]["TotalTax"]=8
+    assert a.normalize_refund_credit_api(order,[taxed],invoice)["status"]=="REVIEW_CREDIT_MEMO_UNEXPECTED_TAX"
+    wrong_code=deepcopy(credit);wrong_code["Line"][0]["SalesItemLineDetail"]["TaxCodeRef"]["value"]="TAX"
+    assert a.normalize_refund_credit_api(order,[wrong_code],invoice)["status"]=="REVIEW_CREDIT_MEMO_TAX_CODE"
+    missing_tax=deepcopy(credit);missing_tax.pop("TxnTaxDetail")
+    assert a.normalize_refund_credit_api(order,[missing_tax],invoice)["verified"] is False
     wrong_invoice=deepcopy(invoice);wrong_invoice["CustomField"][0]["StringValue"]="different-order"
     assert a.normalize_refund_credit_api(order,[credit],wrong_invoice)["status"]=="BLOCKED_INVOICE_CUSTOMER_OR_REFERENCE"
 
