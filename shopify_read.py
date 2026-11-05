@@ -26,7 +26,20 @@ CONFIG_FILE = PRIVATE / "shopify_setup.json"
 STORE = "hudys3-p0.myshopify.com"
 API_VERSION = "2026-10"
 PILOT_ORDER_QUERY = '''query { orders(first: 2, query: "name:#1001") {
-  nodes { id name totalPriceSet { shopMoney { amount currencyCode } } }
+  nodes {
+    id name
+    subtotalPriceSet { shopMoney { amount currencyCode } }
+    totalTaxSet { shopMoney { amount currencyCode } }
+    totalPriceSet { shopMoney { amount currencyCode } }
+    lineItems(first: 5) { nodes {
+      sku quantity
+      originalUnitPriceSet { shopMoney { amount currencyCode } }
+      discountedTotalSet { shopMoney { amount currencyCode } }
+    } }
+    shippingLines(first: 5) { nodes {
+      title discountedPriceSet { shopMoney { amount currencyCode } }
+    } }
+  }
 } }'''
 REQUIRED_SCOPES = frozenset(("read_products", "read_inventory", "read_locations"))
 SKU_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")

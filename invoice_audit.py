@@ -9,6 +9,8 @@ Missing/unsupported information is BLOCKED, never a fabricated discrepancy.
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from collections import Counter
 
@@ -562,7 +564,89 @@ def audit_shopify_invoice_link(order: dict, invoices: list[dict]) -> dict:
             return {**base, "status": "REVIEW_LINKED_TOTAL_MISMATCH"}
     except ValueError:
         return {**base, "status": "BLOCKED_LINKED_AMOUNT_UNKNOWN"}
-    return {**base, "status": "REFERENCE_AND_TOTAL_MATCH_LINE_ITEMS_NOT_VERIFIED"}
+    if "lineItems" not in order or "shippingLines" not in order:
+        return {**base, "status": "REFERENCE_AND_TOTAL_MATCH_LINE_ITEMS_NOT_VERIFIED"}
+    return _audit_pilot_line_items(order, inv, base)
+
+
+def _audit_pilot_line_items(order: dict, inv: dict, base: dict) -> dict:
+    """Exact two-line pilot reconciliation, not a generic shipping mapping."""
+    currency = (inv.get("CurrencyRef") or {}).get("value")
+    def money(obj: dict) -> Decimal:
+        value = ((obj or {}).get("shopMoney") or {})
+        if value.get("currencyCode") != currency:
+            raise ValueError("Currency mismatch")
+        return number(value.get("amount"))
+    try:
+        products = ((order.get("lineItems") or {}).get("nodes"))
+        shipping = ((order.get("shippingLines") or {}).get("nodes"))
+        if not isinstance(products, list) or not isinstance(shipping, list):
+            return {**base, "status": "BLOCKED_MISSING_ORDER_LINES"}
+        if len(products) != 1 or len(shipping) != 1:
+            return {**base, "status": "BLOCKED_UNSUPPORTED_ORDER_LINES"}
+        p, freight = products[0], shipping[0]
+        if p.get("sku") != "VERICON-TEST-001" or freight.get("title") != "Standart":
+            return {**base, "status": "BLOCKED_UNRECOGNIZED_PILOT_ITEM"}
+        qty = number(p.get("quantity"))
+        unit = money(p.get("originalUnitPriceSet"))
+        net = money(p.get("discountedTotalSet"))
+        delivery = money(freight.get("discountedPriceSet"))
+        subtotal = money(order.get("subtotalPriceSet"))
+        tax = money(order.get("totalTaxSet"))
+        total = money(order.get("totalPriceSet"))
+        if qty != 1 or qty * unit != net or net != subtotal or net + delivery + tax != total:
+            return {**base, "status": "REVIEW_SHOPIFY_COMPONENTS"}
+        lines = [line for line in (inv.get("Line") or []) if line.get("DetailType") == "SalesItemLineDetail"]
+        unsupported = [line for line in (inv.get("Line") or []) if line.get("DetailType") not in
+                       ("SalesItemLineDetail", "SubTotalLineDetail")]
+        if len(lines) != 2 or unsupported:
+            return {**base, "status": "BLOCKED_QBO_UNSUPPORTED_LINES"}
+        actual = {}
+        for line in lines:
+            detail = line.get("SalesItemLineDetail") or {}
+            sku = (detail.get("ItemRef") or {}).get("name")
+            if not sku or sku in actual:
+                return {**base, "status": "BLOCKED_QBO_DUPLICATE_OR_UNKNOWN_ITEMS"}
+            actual[sku] = (number(detail.get("Qty")), number(detail.get("UnitPrice")),
+                           number(line.get("Amount")), (detail.get("TaxCodeRef") or {}).get("value"))
+        expected = {"VERICON-TEST-001": (qty, unit, net, "NON"),
+                    "SHIPPING-STANDARD": (Decimal(1), delivery, delivery, "NON")}
+        if actual != expected:
+            return {**base, "status": "REVIEW_ORDER_INVOICE_LINE_MISMATCH"}
+        recorded_tax = number((inv.get("TxnTaxDetail") or {}).get("TotalTax"))
+        if tax != 0 or recorded_tax != tax:
+            return {**base, "status": "REVIEW_ORDER_INVOICE_TAX_MISMATCH"}
+        if subtotal + delivery + tax != number(inv.get("TotalAmt")):
+            return {**base, "status": "REVIEW_ORDER_INVOICE_COMPONENT_TOTAL"}
+    except (ValueError, TypeError, AttributeError):
+        return {**base, "status": "BLOCKED_INCOMPLETE_ORDER_INVOICE_EVIDENCE"}
+    return {**base, "status": "PILOT_ORDER_INVOICE_VERIFIED", "verified": True,
+            "invoice_id": str(inv.get("Id")), "line_count": len(lines),
+            "currency": currency, "total": str(total),
+            "scope": "controlled_shopify_qbo_sandbox_pilot_only"}
+
+
+def read_try_pilot_invoice() -> dict:
+    """Read the single TRY pilot invoice using a separate sandbox token vault."""
+    from qbo_oauth import Config
+    vault = Path(__file__).resolve().parent / "private" / "qbo_try_32e0"
+    setup = json.loads((vault / "qbo_setup.json").read_text(encoding="utf-8"))
+    if setup.get("VERICON_QBO_EXPECTED_REALM") != "9341458641399133":
+        raise ValueError("Unexpected TRY sandbox company")
+    config = Config(client_id=setup["VERICON_QBO_CLIENT_ID"],
+                    client_secret=setup["VERICON_QBO_CLIENT_SECRET"],
+                    redirect_uri=setup["VERICON_QBO_REDIRECT_URI"],
+                    private_dir=vault, expected_realm="9341458641399133")
+    token, realm = get_access_token(config)
+    response = requests.get(f"{SANDBOX_API}/v3/company/{realm}/invoice/145",
+                            params={"minorversion": "75", "include": "enhancedAllCustomFields"},
+                            headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                            timeout=20)
+    response.raise_for_status()
+    invoice = (response.json() or {}).get("Invoice")
+    if not invoice or invoice.get("Id") != "145" or invoice.get("DocNumber") != "1038":
+        raise ValueError("TRY pilot invoice missing or unexpected")
+    return invoice
 
 
 def audit_all(invoices: list[dict], payments: list[dict] | None = None,
@@ -600,6 +684,17 @@ def audit_all(invoices: list[dict], payments: list[dict] | None = None,
             "supplier_po_bills": audit_supplier_po_bills(purchase_orders, bills)
                                  if purchase_orders is not None and bills is not None
                                  else {"status": "NOT_CHECKED"}}
+
+
+if __name__ == "__main__" and sys.argv[1:] == ["--pilot-link"]:
+    try:
+        from shopify_read import read_shopify_test_order
+        print(json.dumps(audit_shopify_invoice_link(read_shopify_test_order(),
+                                                   [read_try_pilot_invoice()]), ensure_ascii=False))
+    except (ValueError, PermissionError, requests.RequestException, KeyError, OSError):
+        print(json.dumps({"status": "BLOCKED_PILOT_API_READ", "verified": False}))
+        raise SystemExit(2) from None
+    raise SystemExit(0)
 
 
 if __name__ == "__main__":

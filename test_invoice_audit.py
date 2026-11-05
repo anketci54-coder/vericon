@@ -58,7 +58,7 @@ def test_guard_invoice_reader_only_uses_get_and_oauth_read():
     api_calls=[(n.func.value.id,n.func.attr) for n in ast.walk(tree)
                if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute)
                and isinstance(n.func.value,ast.Name) and n.func.value.id=="requests"]
-    assert api_calls == [("requests","get")]
+    assert api_calls == [("requests","get"), ("requests","get")]
 
 
 def test_reader_blocks_incomplete_counts_and_duplicate_records(monkeypatch):
@@ -464,6 +464,40 @@ def test_linked_invoice_same_currency_total_still_not_fully_verified():
     result=a.audit_shopify_invoice_link(order,[inv])
     assert result["status"]=="REFERENCE_AND_TOTAL_MATCH_LINE_ITEMS_NOT_VERIFIED"
     assert result["verified"] is False
+
+
+def test_pilot_order_line_checks_fail_closed_on_bad_data():
+    from copy import deepcopy
+    order={"id":"gid://shopify/Order/123", "name":"#1001",
+           "subtotalPriceSet":{"shopMoney":{"amount":"100", "currencyCode":"TRY"}},
+           "totalTaxSet":{"shopMoney":{"amount":"0", "currencyCode":"TRY"}},
+           "totalPriceSet":{"shopMoney":{"amount":"216", "currencyCode":"TRY"}},
+           "lineItems":{"nodes":[{"sku":"VERICON-TEST-001","quantity":1,
+             "originalUnitPriceSet":{"shopMoney":{"amount":"100", "currencyCode":"TRY"}},
+             "discountedTotalSet":{"shopMoney":{"amount":"100", "currencyCode":"TRY"}}}]},
+           "shippingLines":{"nodes":[{"title":"Standart",
+             "discountedPriceSet":{"shopMoney":{"amount":"116", "currencyCode":"TRY"}}}]}}
+    inv={"Id":"145","DocNumber":"1038","CurrencyRef":{"value":"TRY"},
+         "TotalAmt":216,"TxnTaxDetail":{"TotalTax":0},
+         "CustomField":[{"Name":"Shopify Order ID","StringValue":"123"}],
+         "Line":[{"DetailType":"SalesItemLineDetail","Amount":100,
+                   "SalesItemLineDetail":{"ItemRef":{"name":"VERICON-TEST-001"},
+                                           "Qty":1,"UnitPrice":100,"TaxCodeRef":{"value":"NON"}}},
+                 {"DetailType":"SalesItemLineDetail","Amount":116,
+                   "SalesItemLineDetail":{"ItemRef":{"name":"SHIPPING-STANDARD"},
+                                           "Qty":1,"UnitPrice":116,"TaxCodeRef":{"value":"NON"}}}]}
+    good=a.audit_shopify_invoice_link(order,[inv])
+    assert good["status"]=="PILOT_ORDER_INVOICE_VERIFIED" and good["verified"] is True
+    q=deepcopy(inv);q["Line"][0]["SalesItemLineDetail"]["Qty"]=2
+    assert a.audit_shopify_invoice_link(order,[q])["verified"] is False
+    q=deepcopy(inv);q["Line"][1]["Amount"]=117
+    assert a.audit_shopify_invoice_link(order,[q])["verified"] is False
+    q=deepcopy(inv);q["TxnTaxDetail"]["TotalTax"]=17.28
+    assert a.audit_shopify_invoice_link(order,[q])["verified"] is False
+    q=deepcopy(inv);q["Line"].append(deepcopy(q["Line"][0]))
+    assert a.audit_shopify_invoice_link(order,[q])["verified"] is False
+    q=deepcopy(order);q["shippingLines"]["nodes"][0]["title"]="Unknown"
+    assert a.audit_shopify_invoice_link(q,[inv])["verified"] is False
 
 
 def test_duplicate_explicit_shopify_references_block_even_if_first_matches():
