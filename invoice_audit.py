@@ -758,7 +758,7 @@ def audit_refund_credit_links(order: dict, refunds: list[dict], credits: list[di
         return base
 
 
-def normalize_refund_credit_api(order: dict, raw_credits: list[dict]) -> dict:
+def normalize_refund_credit_api(order: dict, raw_credits: list[dict], invoice: dict | None = None) -> dict:
     """Adapt actual Shopify Refund and QBO CreditMemo read responses, fail closed."""
     base = {"status": "BLOCKED_REFUND_API_MAPPING", "verified": False,
             "bank_settlement_verified": False, "real_cash_claimed": False}
@@ -770,6 +770,18 @@ def normalize_refund_credit_api(order: dict, raw_credits: list[dict]) -> dict:
     if not raw_refunds:
         return {**base, "status": "NO_SHOPIFY_REFUNDS", "shopify_refund_count": 0,
                 "qbo_credit_memo_count": len(raw_credits)}
+    if not isinstance(invoice, dict):
+        return {**base, "status": "BLOCKED_MISSING_LINKED_INVOICE"}
+    expected_customer = str((invoice.get("CustomerRef") or {}).get("value") or "")
+    order_ref = str(order.get("id") or "")
+    fields = invoice.get("CustomField")
+    if not expected_customer or not isinstance(fields, list):
+        return {**base, "status": "BLOCKED_INVOICE_CUSTOMER_OR_REFERENCE"}
+    linked_order_ids = [str(f.get("StringValue") or "").strip() for f in fields
+                        if isinstance(f, dict) and str(f.get("Name") or "").strip().lower()
+                        in ("shopify order id", "shopify_order_id")]
+    if len(linked_order_ids) != 1 or linked_order_ids[0] not in (order_ref, order_ref.split("/")[-1]):
+        return {**base, "status": "BLOCKED_INVOICE_CUSTOMER_OR_REFERENCE"}
     try:
         refunds = []
         for row in raw_refunds:
@@ -806,6 +818,9 @@ def normalize_refund_credit_api(order: dict, raw_credits: list[dict]) -> dict:
                 ref = "gid://shopify/Refund/" + ref
             if ref not in known_refund_ids:
                 continue
+            credit_customer = str((row.get("CustomerRef") or {}).get("value") or "")
+            if credit_customer != expected_customer:
+                return {**base, "status": "BLOCKED_CREDIT_MEMO_CUSTOMER_MISMATCH"}
             credits.append({"id": row.get("Id"), "shopify_refund_id": ref,
                  "currency": (row.get("CurrencyRef") or {}).get("value"),
                  "amount": row.get("TotalAmt")})
@@ -921,7 +936,7 @@ if __name__ == "__main__" and sys.argv[1:] == ["--pilot-refunds"]:
         from shopify_read import read_shopify_test_order
         order = read_shopify_test_order()
         credits = read_try_pilot_credit_memos()
-        print(json.dumps(normalize_refund_credit_api(order, credits), ensure_ascii=False))
+        print(json.dumps(normalize_refund_credit_api(order, credits, read_try_pilot_invoice()), ensure_ascii=False))
     except (ValueError, PermissionError, requests.RequestException, KeyError, OSError):
         print(json.dumps({"status":"BLOCKED_REFUND_API_READ", "verified":False}))
         raise SystemExit(2) from None

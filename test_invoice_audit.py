@@ -572,6 +572,7 @@ def test_refund_credit_reconciliation_guards():
 
 
 def test_raw_refund_credit_api_adapter_requires_explicit_reference():
+    from copy import deepcopy
     order={"id":"gid://shopify/Order/123","test":True,
            "totalPriceSet":{"shopMoney":{"amount":"216","currencyCode":"TRY"}},
            "refunds":[{"id":"gid://shopify/Refund/567","order":{"id":"gid://shopify/Order/123"},
@@ -579,26 +580,35 @@ def test_raw_refund_credit_api_adapter_requires_explicit_reference():
              "transactions":{"pageInfo":{"hasNextPage":False},"nodes":[{"id":"gid://shopify/OrderTransaction/900",
                   "kind":"REFUND","status":"SUCCESS","test":True,
                   "amountSet":{"shopMoney":{"amount":"100","currencyCode":"TRY"}}}]}}]}
+    invoice={"CustomerRef":{"value":"customer_1"},
+             "CustomField":[{"Name":"Shopify Order ID","StringValue":"123"}]}
     credit={"Id":"73","TotalAmt":100,"CurrencyRef":{"value":"TRY"},
+            "CustomerRef":{"value":"customer_1"},
             "CustomField":[{"Name":"Shopify Refund ID","StringValue":"567"}]}
-    result=a.normalize_refund_credit_api(order,[credit])
+    result=a.normalize_refund_credit_api(order,[credit],invoice)
     assert result["status"]=="TEST_REFUND_CREDIT_RECORDS_MATCH"
     assert result["verified"] is True and result["bank_settlement_verified"] is False
     missing={**credit,"CustomField":[]}
-    result=a.normalize_refund_credit_api(order,[missing])
-    assert result["status"]=="BLOCKED_MISSING_CREDIT_MEMO" and result["verified"] is False
-    result=a.normalize_refund_credit_api({**order,"refunds":[]},[missing])
+    assert a.normalize_refund_credit_api(order,[missing],invoice)["status"]=="BLOCKED_MISSING_CREDIT_MEMO"
+    result=a.normalize_refund_credit_api({**order,"refunds":[]},[missing],invoice)
     assert result["status"]=="NO_SHOPIFY_REFUNDS" and result["verified"] is False
     assert result["qbo_credit_memo_count"]==1
     bad={**credit,"CurrencyRef":{"value":"USD"}}
-    assert a.normalize_refund_credit_api(order,[bad])["status"]=="BLOCKED_CREDIT_AMOUNT_CURRENCY"
+    assert a.normalize_refund_credit_api(order,[bad],invoice)["status"]=="BLOCKED_CREDIT_AMOUNT_CURRENCY"
     ambiguous={**credit,"CustomField":credit["CustomField"]*2}
-    assert a.normalize_refund_credit_api(order,[ambiguous])["status"]=="BLOCKED_AMBIGUOUS_CREDIT_REFUND_FIELD"
+    assert a.normalize_refund_credit_api(order,[ambiguous],invoice)["status"]=="BLOCKED_AMBIGUOUS_CREDIT_REFUND_FIELD"
     unrelated={**credit,"CustomField":[{"Name":"Shopify Refund ID","StringValue":"999"}]}
-    assert a.normalize_refund_credit_api(order,[unrelated])["status"]=="BLOCKED_MISSING_CREDIT_MEMO"
+    assert a.normalize_refund_credit_api(order,[unrelated],invoice)["status"]=="BLOCKED_MISSING_CREDIT_MEMO"
     incomplete={**order,"refunds":[{**order["refunds"][0],"transactions":{
         "pageInfo":{"hasNextPage":True},"nodes":order["refunds"][0]["transactions"]["nodes"]}}]}
-    assert a.normalize_refund_credit_api(incomplete,[credit])["status"]=="BLOCKED_REFUND_TRANSACTION_PAGINATION"
+    assert a.normalize_refund_credit_api(incomplete,[credit],invoice)["status"]=="BLOCKED_REFUND_TRANSACTION_PAGINATION"
+    other_customer=deepcopy(credit);other_customer["CustomerRef"]["value"]="customer_2"
+    mismatch=a.normalize_refund_credit_api(order,[other_customer],invoice)
+    assert mismatch["status"]=="BLOCKED_CREDIT_MEMO_CUSTOMER_MISMATCH"
+    assert mismatch["verified"] is False
+    assert a.normalize_refund_credit_api(order,[credit])["status"]=="BLOCKED_MISSING_LINKED_INVOICE"
+    wrong_invoice=deepcopy(invoice);wrong_invoice["CustomField"][0]["StringValue"]="different-order"
+    assert a.normalize_refund_credit_api(order,[credit],wrong_invoice)["status"]=="BLOCKED_INVOICE_CUSTOMER_OR_REFERENCE"
 
 
 def test_duplicate_explicit_shopify_references_block_even_if_first_matches():
