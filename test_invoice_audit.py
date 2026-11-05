@@ -533,6 +533,44 @@ def test_pilot_payment_is_not_real_cash_or_bank_settlement():
     assert a.audit_pilot_payment_accounting(order,inv,{"verified":False})["status"]=="BLOCKED_ORDER_INVOICE_LINK"
 
 
+def test_refund_credit_reconciliation_guards():
+    from copy import deepcopy
+    order={"id":"gid://shopify/Order/123", "test":True,
+           "totalPriceSet":{"shopMoney":{"amount":"216","currencyCode":"TRY"}}}
+    def refund(ref="gid://shopify/Refund/1",amount="100"):
+        return {"id":ref,"order_id":order["id"],"amount":{"value":amount,"currency":"TRY"},
+                "transactions":[{"id":ref+"/tx", "kind":"REFUND","status":"SUCCESS",
+                                 "test":True,"currency":"TRY","amount":amount}]}
+    def credit(ref="gid://shopify/Refund/1",amount="100",ident="C1"):
+        return {"id":ident,"shopify_refund_id":ref,"currency":"TRY","amount":amount}
+    good=a.audit_refund_credit_links(order,[refund()],[credit()])
+    assert good["verified"] is True and good["status"]=="TEST_REFUND_CREDIT_RECORDS_MATCH"
+    assert good["bank_settlement_verified"] is False and good["real_cash_claimed"] is False
+    cases=[([refund()],[],"BLOCKED_MISSING_CREDIT_MEMO"),
+           ([refund(),refund()], [credit()],"BLOCKED_DUPLICATE_OR_INVALID_REFUND_ID"),
+           ([refund("gid://shopify/Refund/1","217")],[credit(amount="217")],"REVIEW_REFUNDS_EXCEED_ORDER"),
+           ([refund()],[credit(amount="99")],"REVIEW_REFUND_CREDIT_AMOUNT_MISMATCH"),
+           ([refund()],[credit(),credit(ident="C2")],"BLOCKED_UNLINKED_OR_DUPLICATE_REFUND_CREDIT"),
+           ([refund()],[credit("gid://shopify/Refund/2")],"BLOCKED_UNLINKED_OR_DUPLICATE_REFUND_CREDIT")]
+    for rr,cc,status in cases:
+        result=a.audit_refund_credit_links(order,rr,cc)
+        assert result["status"]==status and result["verified"] is False
+    r=refund();r["transactions"][0]["status"]="PENDING"
+    assert a.audit_refund_credit_links(order,[r],[credit()])["status"]=="BLOCKED_REFUND_TRANSACTION_NOT_SUCCESSFUL"
+    assert a.audit_refund_credit_links(order,[],[])["status"]=="NO_REFUNDS_RECORDED"
+    live=deepcopy(order);live["test"]=False
+    assert a.audit_refund_credit_links(live,[refund()],[credit()])["status"]=="NOT_CHECKED_REAL_REFUND_SETTLEMENT"
+    r2=refund("gid://shopify/Refund/2","50")
+    two=a.audit_refund_credit_links(order,[refund(),r2], [credit(),credit(r2["id"],"50","C2")])
+    assert two["verified"] is True and two["total"]=="150"
+    shared=deepcopy(r2)
+    shared["transactions"][0]["id"]=refund()["transactions"][0]["id"]
+    duplicate_tx=a.audit_refund_credit_links(order,[refund(),shared],
+                                             [credit(),credit(r2["id"],"50","C2")])
+    assert duplicate_tx["status"]=="BLOCKED_DUPLICATE_REFUND_TRANSACTION"
+    assert duplicate_tx["verified"] is False
+
+
 def test_duplicate_explicit_shopify_references_block_even_if_first_matches():
     order={"id":"gid://shopify/Order/123", "name":"#1001",
            "totalPriceSet":{"shopMoney":{"amount":"216", "currencyCode":"TRY"}}}

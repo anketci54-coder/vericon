@@ -676,6 +676,88 @@ def audit_pilot_payment_accounting(order: dict, invoice: dict, link: dict) -> di
         return base
 
 
+def audit_refund_credit_links(order: dict, refunds: list[dict], credits: list[dict]) -> dict:
+    """Offline refund/credit reconciliation; never claims bank settlement.
+
+    Normalized refunds require a successful REFUND transaction. Credit memos
+    must explicitly reference the Shopify refund ID; equal amounts alone are
+    not evidence of a link. This is an offline contract, not an API mapper.
+    """
+    base = {"status": "BLOCKED_REFUND_EVIDENCE", "verified": False,
+            "bank_settlement_verified": False, "real_cash_claimed": False}
+    try:
+        order_id = str(order.get("id") or "")
+        total_set = ((order.get("totalPriceSet") or {}).get("shopMoney") or {})
+        currency = total_set.get("currencyCode")
+        order_total = number(total_set.get("amount"))
+        if not order_id.startswith("gid://shopify/Order/") or not currency or order_total <= 0:
+            return {**base, "status": "BLOCKED_INVALID_REFUND_ORDER"}
+        if not isinstance(refunds, list) or not isinstance(credits, list):
+            return base
+        if not refunds and not credits:
+            return {**base, "status": "NO_REFUNDS_RECORDED"}
+        if order.get("test") is not True:
+            return {**base, "status": "NOT_CHECKED_REAL_REFUND_SETTLEMENT"}
+        refund_index = {}
+        all_transaction_ids = set()
+        for refund in refunds:
+            rid = str(refund.get("id") or "")
+            if not rid.startswith("gid://shopify/Refund/") or rid in refund_index:
+                return {**base, "status": "BLOCKED_DUPLICATE_OR_INVALID_REFUND_ID"}
+            if refund.get("order_id") != order_id:
+                return {**base, "status": "BLOCKED_REFUND_ORDER_LINK"}
+            amount = refund.get("amount") or {}
+            value = number(amount.get("value"))
+            if amount.get("currency") != currency or value <= 0:
+                return {**base, "status": "BLOCKED_REFUND_AMOUNT_CURRENCY"}
+            transactions = refund.get("transactions")
+            if not isinstance(transactions, list) or not transactions:
+                return {**base, "status": "BLOCKED_REFUND_TRANSACTION_MISSING"}
+            successful = Decimal(0)
+            for txn in transactions:
+                txn_id = str(txn.get("id") or "")
+                if not txn_id or txn_id in all_transaction_ids:
+                    return {**base, "status": "BLOCKED_DUPLICATE_REFUND_TRANSACTION"}
+                all_transaction_ids.add(txn_id)
+                if txn.get("kind") != "REFUND" or txn.get("status") != "SUCCESS" or txn.get("test") is not True:
+                    return {**base, "status": "BLOCKED_REFUND_TRANSACTION_NOT_SUCCESSFUL"}
+                if txn.get("currency") != currency:
+                    return {**base, "status": "BLOCKED_REFUND_TRANSACTION_CURRENCY"}
+                tx_amount = number(txn.get("amount"))
+                if tx_amount <= 0:
+                    return {**base, "status": "BLOCKED_REFUND_TRANSACTION_AMOUNT"}
+                successful += tx_amount
+            if successful != value:
+                return {**base, "status": "REVIEW_REFUND_TRANSACTION_TOTAL"}
+            refund_index[rid] = value
+        if sum(refund_index.values(), Decimal(0)) > order_total:
+            return {**base, "status": "REVIEW_REFUNDS_EXCEED_ORDER"}
+        credit_index = {}
+        credit_ids = set()
+        for credit in credits:
+            credit_id = str(credit.get("id") or "")
+            refund_id = str(credit.get("shopify_refund_id") or "")
+            if not credit_id or credit_id in credit_ids:
+                return {**base, "status": "BLOCKED_DUPLICATE_CREDIT_MEMO"}
+            credit_ids.add(credit_id)
+            if refund_id not in refund_index or refund_id in credit_index:
+                return {**base, "status": "BLOCKED_UNLINKED_OR_DUPLICATE_REFUND_CREDIT"}
+            amount = number(credit.get("amount"))
+            if credit.get("currency") != currency or amount <= 0:
+                return {**base, "status": "BLOCKED_CREDIT_AMOUNT_CURRENCY"}
+            credit_index[refund_id] = amount
+        if set(credit_index) != set(refund_index):
+            return {**base, "status": "BLOCKED_MISSING_CREDIT_MEMO"}
+        if any(credit_index[rid] != value for rid, value in refund_index.items()):
+            return {**base, "status": "REVIEW_REFUND_CREDIT_AMOUNT_MISMATCH"}
+        return {**base, "status": "TEST_REFUND_CREDIT_RECORDS_MATCH", "verified": True,
+                "refund_count": len(refund_index), "currency": currency,
+                "total": str(sum(refund_index.values(), Decimal(0))),
+                "scope": "offline_normalized_test_only"}
+    except (ValueError, TypeError, AttributeError, KeyError):
+        return base
+
+
 def read_try_pilot_invoice() -> dict:
     """Read the single TRY pilot invoice using a separate sandbox token vault."""
     from qbo_oauth import Config
