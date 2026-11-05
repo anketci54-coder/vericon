@@ -1118,6 +1118,42 @@ def audit_all(invoices: list[dict], payments: list[dict] | None = None,
                                  else {"status": "NOT_CHECKED"}}
 
 
+def pilot_summary_report(order: dict, invoice: dict, credits: list[dict], payment: dict) -> dict:
+    """Summarize existing checks without converting a review into a pass."""
+    order_link = audit_shopify_invoice_link(order, [invoice])
+    refund_link = normalize_refund_credit_api(order, credits, invoice)
+    refund_ids = {str(row.get("id") or "").split("/")[-1] for row in (order.get("refunds") or [])}
+    linked = [c for c in credits if any(
+        f.get("Name") == "Shopify Refund ID" and str(f.get("StringValue")) in refund_ids
+        for f in (c.get("CustomField") or []))]
+    application = (audit_pilot_credit_application(invoice, linked[0], payment)
+                   if len(linked) == 1 else {"status": "BLOCKED_LINKED_CREDIT_AMBIGUITY", "verified": False})
+    fingerprint = pilot_evidence_fingerprint(order, invoice, credits, payment)
+    history = compare_pilot_baseline(fingerprint)
+    verified = (order_link.get("verified") is True and refund_link.get("verified") is True
+                and application.get("verified") is True and history.get("status") == "BASELINE_UNCHANGED")
+    return {"scope": "sandbox_pilot_only", "order": order.get("name"),
+            "invoice": invoice.get("DocNumber"), "currency": (invoice.get("CurrencyRef") or {}).get("value"),
+            "invoice_total": invoice.get("TotalAmt"), "open_balance": invoice.get("Balance"),
+            "order_invoice": order_link.get("status"), "refund_credit": refund_link.get("status"),
+            "credit_application": application.get("status"), "history": history.get("status"),
+            "overall": "PILOT_VERIFIED" if verified else "REVIEW_OR_INCOMPLETE",
+            "cash_received_verified": False, "bank_settlement_verified": False}
+
+
+if __name__ == "__main__" and sys.argv[1:] == ["--pilot-report"]:
+    try:
+        from shopify_read import read_shopify_test_order
+        invoice = read_try_pilot_invoice()
+        report = pilot_summary_report(read_shopify_test_order(), invoice,
+                                      read_try_pilot_credit_memos(), read_try_pilot_credit_payment(invoice))
+        print(json.dumps(report, ensure_ascii=False))
+    except (ValueError, PermissionError, requests.RequestException, KeyError, OSError, TypeError):
+        print(json.dumps({"status": "BLOCKED_PILOT_REPORT_API_READ", "verified": False}))
+        raise SystemExit(2) from None
+    raise SystemExit(0)
+
+
 if __name__ == "__main__" and sys.argv[1:] == ["--pilot-refunds"]:
     try:
         from shopify_read import read_shopify_test_order

@@ -695,6 +695,24 @@ def test_private_pilot_baseline_is_immutable_and_fails_closed(tmp_path):
     assert a.compare_pilot_baseline(original,target)["status"] == "BLOCKED_UNSAFE_BASELINE_FILE"
 
 
+def test_pilot_summary_does_not_hide_tax_review(monkeypatch):
+    monkeypatch.setattr(a, "audit_shopify_invoice_link", lambda order, invoices:
+                        {"status": "PILOT_ORDER_INVOICE_VERIFIED", "verified": True})
+    monkeypatch.setattr(a, "normalize_refund_credit_api", lambda order, credits, invoice:
+                        {"status": "REVIEW_CREDIT_MEMO_TAX_CODE", "verified": False})
+    monkeypatch.setattr(a, "pilot_evidence_fingerprint", lambda *args: "a" * 64)
+    monkeypatch.setattr(a, "compare_pilot_baseline", lambda value:
+                        {"status": "BASELINE_UNCHANGED", "verified": False})
+    order={"name":"#1001","refunds":[]}
+    invoice={"DocNumber":"1038","CurrencyRef":{"value":"TRY"},"TotalAmt":216,"Balance":116}
+    report=a.pilot_summary_report(order,invoice,[],{})
+    assert report["order_invoice"]=="PILOT_ORDER_INVOICE_VERIFIED"
+    assert report["refund_credit"]=="REVIEW_CREDIT_MEMO_TAX_CODE"
+    assert report["overall"]=="REVIEW_OR_INCOMPLETE"
+    assert report["cash_received_verified"] is False
+    assert report["bank_settlement_verified"] is False
+
+
 def test_duplicate_explicit_shopify_references_block_even_if_first_matches():
     order={"id":"gid://shopify/Order/123", "name":"#1001",
            "totalPriceSet":{"shopMoney":{"amount":"216", "currencyCode":"TRY"}}}
