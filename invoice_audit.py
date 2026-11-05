@@ -9,6 +9,7 @@ Missing/unsupported information is BLOCKED, never a fabricated discrepancy.
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
 from pathlib import Path
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -1006,6 +1007,48 @@ def read_try_pilot_credit_payment(invoice: dict) -> dict:
     return payment
 
 
+def pilot_evidence_fingerprint(order: dict, invoice: dict, credits: list[dict], payment: dict) -> str:
+    """Fingerprint financial evidence only; never store customer or token data."""
+    def line_projection(line: dict) -> dict:
+        detail = line.get("SalesItemLineDetail") or {}
+        return {"type": line.get("DetailType"), "amount": line.get("Amount"),
+                "item": (detail.get("ItemRef") or {}).get("name"),
+                "qty": detail.get("Qty"), "unit_price": detail.get("UnitPrice"),
+                "tax_code": (detail.get("TaxCodeRef") or {}).get("value"),
+                "linked": line.get("LinkedTxn")}
+    data = {
+        "order": {"id": order.get("id"), "total": order.get("totalPriceSet"),
+                  "subtotal": order.get("subtotalPriceSet"), "tax": order.get("totalTaxSet"),
+                  "line_items": order.get("lineItems"), "shipping": order.get("shippingLines"),
+                  "refunds": order.get("refunds")},
+        "invoice": {"id": invoice.get("Id"), "total": invoice.get("TotalAmt"),
+                    "balance": invoice.get("Balance"), "currency": invoice.get("CurrencyRef"),
+                    "tax": invoice.get("TxnTaxDetail"), "lines": [line_projection(x) for x in invoice.get("Line", [])],
+                    "links": invoice.get("LinkedTxn"), "fields": invoice.get("CustomField")},
+        "credits": [{"id": c.get("Id"), "total": c.get("TotalAmt"), "balance": c.get("Balance"),
+                     "currency": (c.get("CurrencyRef") or {}).get("value"),
+                     "tax": c.get("TxnTaxDetail"), "lines": [line_projection(x) for x in c.get("Line", [])],
+                     "fields": c.get("CustomField")} for c in credits],
+        "payment": {"id": payment.get("Id"), "total": payment.get("TotalAmt"),
+                    "unapplied": payment.get("UnappliedAmt"), "currency": (payment.get("CurrencyRef") or {}).get("value"),
+                    "lines": [line_projection(x) for x in payment.get("Line", [])]},
+    }
+    encoded = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def audit_pilot_evidence_change(previous: str, current: str, checks: dict) -> dict:
+    """A changed observation invalidates an earlier verification until rechecked."""
+    if not isinstance(previous, str) or len(previous) != 64 or not isinstance(current, str) or len(current) != 64:
+        return {"status": "BLOCKED_MISSING_EVIDENCE_BASELINE", "verified": False}
+    if previous != current:
+        return {"status": "REVIEW_EVIDENCE_CHANGED_RECHECK_REQUIRED", "verified": False}
+    if (checks.get("order_link") is not True or checks.get("refund_link") is not True or
+            checks.get("credit_application") is not True or checks.get("tax_classification") is not True):
+        return {"status": "REVIEW_CURRENT_CHECKS_INCOMPLETE", "verified": False}
+    return {"status": "CURRENT_EVIDENCE_CONSISTENT", "verified": True}
+
+
 def audit_all(invoices: list[dict], payments: list[dict] | None = None,
               credit_memos: list[dict] | None = None,
               purchase_orders: list[dict] | None = None,
@@ -1060,6 +1103,13 @@ if __name__ == "__main__" and sys.argv[1:] == ["--pilot-refunds"]:
                     invoice, linked[0], read_try_pilot_credit_payment(invoice))
             else:
                 result["credit_application"] = {"status": "BLOCKED_LINKED_CREDIT_AMBIGUITY", "verified": False}
+        payment = read_try_pilot_credit_payment(invoice)
+        result["evidence_fingerprint"] = pilot_evidence_fingerprint(order, invoice, credits, payment)
+        result["full_current_verification"] = bool(
+            result.get("verified") is True and
+            (result.get("credit_application") or {}).get("verified") is True)
+        if result.get("status") == "REVIEW_CREDIT_MEMO_TAX_CODE":
+            result["full_current_verification"] = False
         print(json.dumps(result, ensure_ascii=False))
     except (ValueError, PermissionError, requests.RequestException, KeyError, OSError):
         print(json.dumps({"status":"BLOCKED_REFUND_API_READ", "verified":False}))

@@ -645,6 +645,33 @@ def test_raw_refund_credit_api_adapter_requires_explicit_reference():
     assert a.normalize_refund_credit_api(order,[credit],wrong_invoice)["status"]=="BLOCKED_INVOICE_CUSTOMER_OR_REFERENCE"
 
 
+def test_later_mutations_invalidate_previous_financial_evidence():
+    from copy import deepcopy
+    order={"id":"gid://shopify/Order/123","totalPriceSet":{"shopMoney":{"amount":"216","currencyCode":"TRY"}},
+           "refunds":[{"id":"gid://shopify/Refund/1","totalRefundedSet":{"shopMoney":{"amount":"100","currencyCode":"TRY"}}}]}
+    invoice={"Id":"145","TotalAmt":216,"Balance":116,"CurrencyRef":{"value":"TRY"},
+             "TxnTaxDetail":{"TotalTax":0},"Line":[],"LinkedTxn":[{"TxnId":"148","TxnType":"Payment"}]}
+    credit={"Id":"146","TotalAmt":100,"Balance":0,"CurrencyRef":{"value":"TRY"},
+            "TxnTaxDetail":{"TotalTax":0},"Line":[{"DetailType":"SalesItemLineDetail",
+             "SalesItemLineDetail":{"ItemRef":{"name":"VERICON-TEST-001"},"TaxCodeRef":{"value":"NON"}}}]}
+    payment={"Id":"148","TotalAmt":0,"UnappliedAmt":0,"CurrencyRef":{"value":"TRY"},"Line":[]}
+    previous=a.pilot_evidence_fingerprint(order,invoice,[credit],payment)
+    checks={"order_link":True,"refund_link":True,"credit_application":True,"tax_classification":True}
+    assert a.audit_pilot_evidence_change(previous,previous,checks)["verified"] is True
+    for change in ("tax_code","credit_tax","credit_amount","invoice_balance","refund_amount","payment_amount"):
+        o,i,c,p=deepcopy(order),deepcopy(invoice),deepcopy(credit),deepcopy(payment)
+        if change=="tax_code":c["Line"][0]["SalesItemLineDetail"]["TaxCodeRef"]["value"]="TAX"
+        elif change=="credit_tax":c["TxnTaxDetail"]["TotalTax"]=8
+        elif change=="credit_amount":c["TotalAmt"]=108
+        elif change=="invoice_balance":i["Balance"]=108
+        elif change=="refund_amount":o["refunds"][0]["totalRefundedSet"]["shopMoney"]["amount"]="90"
+        elif change=="payment_amount":p["TotalAmt"]=100
+        current=a.pilot_evidence_fingerprint(o,i,[c],p)
+        assert a.audit_pilot_evidence_change(previous,current,checks)["status"]=="REVIEW_EVIDENCE_CHANGED_RECHECK_REQUIRED"
+    assert a.audit_pilot_evidence_change(previous,previous,{**checks,"tax_classification":False})["verified"] is False
+    assert a.audit_pilot_evidence_change("",previous,checks)["verified"] is False
+
+
 def test_duplicate_explicit_shopify_references_block_even_if_first_matches():
     order={"id":"gid://shopify/Order/123", "name":"#1001",
            "totalPriceSet":{"shopMoney":{"amount":"216", "currencyCode":"TRY"}}}
