@@ -1210,10 +1210,12 @@ if __name__ == "__main__" and sys.argv[1:] == ["--pilot-refunds"]:
         invoice = read_try_pilot_invoice()
         result = normalize_refund_credit_api(order, credits, invoice)
         if result.get("verified") is True:
+            refund_ids = {str(row.get("id") or "").split("/")[-1]
+                          for row in (order.get("refunds") or [])}
             linked = [c for c in credits if any(
-                f.get("Name") == "Shopify Refund ID" and
-                str(f.get("StringValue")) == "1118350999854"
-                for f in c.get("CustomField", []))]
+                str(f.get("Name") or "").strip().lower() == "shopify refund id" and
+                str(f.get("StringValue") or "").strip().split("/")[-1] in refund_ids
+                for f in (c.get("CustomField") or []))]
             if len(linked) == 1:
                 result["credit_application"] = audit_pilot_credit_application(
                     invoice, linked[0], read_try_pilot_credit_payment(invoice))
