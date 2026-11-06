@@ -1,6 +1,8 @@
 # VERICON
 
-**Guncel durum: 2026-11-03.** Bu bir **Sandbox prototipidir**, satisa hazir SaaS degildir.
+**Guncel karar ve tek yol haritasi: [`TODO.md`](TODO.md), 2026-11-06 V1.0.** Ilk hedef ABD Shopify + QuickBooks Online kullanan firmalar icin salt-okunur, kanitli Duplicate / Missing Transaction / Evidence Report denetimi. Yeni ozellikler kapsam denetimi ve gercek Sandbox kaniti tamamlanana kadar donduruldu. Asagidaki tarihli bulgular tarihsel kayittir; eski 'siradaki is' ifadeleri guncel karar degildir.
+
+**Tarihsel durum: 2026-11-03.** Bu bir **Sandbox prototipidir**, satisa hazir SaaS degildir.
 
 ## Urun hedefi
 - **Modul A / Fatura Hata Avcisi:** fatura, siparis ve teslimat tutar/miktar uyusmazliklarini kanitlariyla bulmak.

@@ -1,4 +1,42 @@
-# VERICON - Tek guncel is listesi (2026-11-04)
+# VERICON - Ana Yol Haritasi (2026-11-06, V1.0)
+
+Bu dosya VERICON'un TEK guncel plan ve karar kaynagidir. Asagidaki "Tarihsel kayit" bolumu eski asamalarin kanitidir; oradaki eski "siradaki" komutlari aktif is degildir.
+
+## Urun karari ve kapsam dondurma
+- Ilk hedef: ABD Shopify + QuickBooks Online kullanan KOBI'lere, mevcut entegrasyonlarini DEGISTIRMEDEN, salt-okunur ve kanitli muhasebe uyusmazligi kontrolu. VERICON yeni ERP, senkronizasyon motoru veya otomatik muhasebe yazicisi DEGIL.
+- Ilk ticari cekirdek: (1) Duplicate Detector (cift satis/fatura/iade kayitlarini bagimsiz kimlik ve kanitla tespit), (2) Missing Transaction Detector (yalniz DESTEKLENEN ve kanitlanmis muhasebe akisinda eksik kayit), (3) Evidence Report (siparis/fatura/kimlik, tutar, gerekce, inceleme ve kaynak delil). Esit tutar tek basina duplicate kaniti DEGIL.
+- Ilk desteklenecek is akisi: Shopify siparisinin QuickBooks'ta acik referansla ayri faturaya baglandigi akis. Toplu journal, payout bazli toplu kayit, sales receipt veya desteklenmeyen vergi/sepet sekli otomatik 'eksik fatura' degildir; UNKNOWN/UNSUPPORTED/REVIEW. Muhasebe yontemi kanitlanmadan fark veya kayip uretme.
+- TRY yalniz mevcut pilotun para birimi. Uygulama ulke/para birimini sabitlemeyecek; USD ilk ticari hedef. Para birimi farki kur/vergi politikasi kanitlanmadan BLOCK, otomatik FX veya ulke vergi motoru YOK.
+- 'Dondurma': calisan VPS/API/ozel veri durdurulmaz ya da silinmez. Yeni mimari, servis, panel, ajan, genis moduller durur. Yalniz kanitlanmis ihtiyaca yonelik en kucuk degisiklik yapilir. Rollback git commit ile sinirlidir; harici muhasebe degisikligini geri almaz.
+- Kontrol sirasi: olc -> kok neden kaniti -> dar degisiklik -> diff -> offline test -> gercek Sandbox API davranisi -> VPS/GitHub SHA esitle -> siradaki kapi. Bir asama gecmeden sonrakini acma.
+
+## Dogrulanmis mevcut temel (2026-11-06)
+- Referans git commit: `51072d216ed68e0e728e8f161f7df679e04dcc9a` (yol haritasi kaydi disinda calisan kod donduruldu).
+- Shopify ve QBO Sandbox OAuth baglantilari; Shopify #1001 -> QBO TRY fatura #1038, 216 TRY; 100 TRY iade/kredi mahsup, kalan 116 TRY; kayitlarda mahsup farki 0. Banka tahsilati ve gecmis kanit degisikligi TAM olarak dogrulanmadi.
+- Coklu siparis/iade ve TRY/USD/EUR/GBP sentetik testler; 1000 senaryoluk 5-siparis/11-iade simülasyonu raporlandi. Bunlar gercek coklu API islemi veya musteride dogrulanmis ticari fayda DEGIL. 2026-11-06 tarihli 130 pytest testi gecti; test gecmesi urun dogrulugu degil.
+- README.md ve asagidaki tarihsel kayitlar eski durumlar icerebilir; guncel is sirasi YALNIZ bu bolumde.
+
+## Sira ve gecis kapilari (tek seferde yalniz bir acik is)
+- [ ] **1. Mevcut kodun kapsam matrisi [SIMDI]:** Runtime'da kullanilan fatura/odeme/iade okuma ve denetim yollarini belirle. Duplicate, missing, raporun neyi gercekten kanitladigini ve neyi yalniz simule ettigini siniflandir. Kod degistirme. KAPI: desteklenen/UNKNOWN/UNSUPPORTED ornekleri ve yanlis alarm riski kayitli.
+- [ ] **2. ABD muhasebe akisi siniflandirmasi:** Ayri fatura, sales receipt, toplu kayit ve payout bazli akislari kaynak kanitiyla ayir. DESTEKLENMEYEN akisi eksik fatura veya finansal kayip diye gostermeme. KAPI: ayni veride sessiz yanlis alarm yok.
+- [ ] **3. Duplicate Detector:** Mevcut kayitlarin referans/kimlik bazli tekrar kontrolunu olc, sonra gerekiyorsa dar ekleme. KAPI: farkli islemler ayni tutarda olsa bile duplicate sayilmiyor; gercek tekrar kanitla bulunuyor.
+- [ ] **4. Missing Transaction Detector:** Yalniz dogrulanmis ayri fatura akisinda beklenen ama bulunmayan kaydi isaretle; senkronizasyon gecikmesi veya toplu muhasebe bilinmiyorsa REVIEW/UNSUPPORTED. KAPI: belirsizlik yanlis alarma donusmuyor.
+- [ ] **5. Evidence Report:** Tek sonuc icinde siparis/fatura/kaynak ID, para birimi, dogrulanmis fark, neden, kanit yetersizligi ve inceleme gereksinimi. KAPI: insan muhasebeci referansla dogrulayabiliyor.
+- [ ] **6. Gercekci coklu Sandbox E2E:** ABD/USD senaryolarinda birden fazla bagimsiz siparis-fatura-iade kaydinin API okumasiyla kanitlanmasi; kaynakta yazma veya yeni test kaydi icin ONCE ayri onay. KAPI: gercek API'de beklenen sonuc, yanlis alarm ve tekrar kayitlar olculdu.
+- [ ] **7. Payout Difference Analyzer [KOSULLU]:** Yalniz ucret/kesinti/net odeme verilerine erisim ve musteri degeri kanitlanirsa baslat. Banka settlement bilinmiyorsa 'tahsil edildi' deme.
+- [ ] **8. Ticari guvenlik:** Musteri bazli OAuth, veri izolasyonu, asgari yetki ve sir saklama; dogrulanmadan gercek musteri verisi YOK.
+- [ ] **9. Tek panel:** Ancak rapor dogruysa; yeni ERP ya da gereksiz dashboard degil.
+- [ ] **10. ABD pilot:** 5-10 isletme/muhasebeciyle kullanilabilirlik, dogru alarm, yanlis alarm, zaman kazanimi ve odeme istegi olc.
+- [ ] **11. Abonelik:** Pilot talebiyle fiyatlandir; $19-$29/ay sadece TEST EDILECEK HIPOTEZ, fiyat karari degil.
+- [ ] **12. Diger ulkeler [ERTELENDI]:** EUR/GBP, yerel vergi ve kur akislari ancak ulke/tenant bazli kanitla dogrulanir.
+
+## Kapsam disi / simdilik YAPMA
+- Otomatik muhasebe veya stok yazma, ERP/senkronizasyon motoru, tum ulkeler icin vergi veya FX, eksiksiz stok yonetimi, ihtiyac kaniti olmayan AI ajanlari, yeni servis/branch/framework/rehber dosyasi.
+- Pazar arastirmasi hipotezleri: ABD'de duplicate, missing sync, payout farki sikayetleri goruldu; yayginlik ve odeme istegi henuz temsilî veriyle kanitlanmadi. A2X/Synder/Webgility gibi rakipler bazi sorunlari zaten cozuyor. Farkimiz salt-okunur bagimsiz kanit denetimi olabilir, garanti edilmis rekabet ustunlugu degil.
+
+---
+
+## Tarihsel kayit (2026-11-04 ve oncesi; AKTIF PLAN DEGIL)
 
 ## Simdiki karar
 - [x] Shopify ve QuickBooks Sandbox VPS baglantisi, OAuth token yenilemesi, tek test SKU sorgusu ve eski saatlik 13:00/14:00 EET tetiklemeleri dogrulandi. Kontrol farki: 10 - 7 = 3. Gercek musteri hatasi DEGIL. Degeri olmayan saatlik test timer/servisi temizlendi; sadece tek seferlik CLI kaldi.
