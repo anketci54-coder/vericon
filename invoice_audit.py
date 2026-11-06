@@ -554,6 +554,76 @@ def audit_order_invoice_batch(orders: list[dict], invoices: list[dict]) -> dict:
             "results": results, "bank_settlement_verified": False}
 
 
+def audit_order_financial_batch(orders: list[dict], invoices: list[dict],
+                                credits: list[dict], payments: list[dict]) -> dict:
+    """Route each test order to its own invoice, refund, credit and offset."""
+    initial = audit_order_invoice_batch(orders, invoices)
+    if initial.get("status") == "BLOCKED_BATCH_INPUT":
+        return {"status": "BLOCKED_FINANCIAL_BATCH_INPUT", "verified": False}
+    if not isinstance(credits, list) or not isinstance(payments, list):
+        return {"status": "BLOCKED_FINANCIAL_BATCH_INPUT", "verified": False}
+    if len(credits) > MAX_INVOICES or len(payments) > MAX_INVOICES:
+        return {"status": "BLOCKED_FINANCIAL_BATCH_LIMIT", "verified": False}
+    payment_ids = [str(p.get("Id") or "") for p in payments if isinstance(p, dict)]
+    credit_ids = [str(c.get("Id") or "") for c in credits if isinstance(c, dict)]
+    if (len(payment_ids) != len(payments) or len(credit_ids) != len(credits)
+            or not all(payment_ids + credit_ids)
+            or len(set(payment_ids)) != len(payment_ids)
+            or len(set(credit_ids)) != len(credit_ids)):
+        return {"status": "BLOCKED_FINANCIAL_BATCH_DUPLICATE", "verified": False}
+    indexed_payments = {str(p["Id"]): p for p in payments}
+    checked = []
+    claimed_payments = set()
+    for order, link in zip(orders, initial["results"]):
+        result = {"order": order.get("name"), "order_invoice": link.get("status"),
+                  "verified": False, "cash_received_verified": False}
+        if link.get("verified") is not True:
+            result["status"] = "BLOCKED_ORDER_INVOICE_LINK"
+            checked.append(result)
+            continue
+        invoice = next(inv for inv in invoices if str(inv.get("Id")) == link["invoice_id"])
+        result["test_payment"] = audit_pilot_payment_accounting(order, invoice, link)["status"]
+        refunds = order.get("refunds")
+        if not isinstance(refunds, list) or len(refunds) != 1:
+            result["status"] = "NOT_CHECKED_REFUND_COUNT_UNSUPPORTED"
+            checked.append(result)
+            continue
+        refund_check = normalize_refund_credit_api(order, credits, invoice)
+        result["refund_credit"] = refund_check["status"]
+        if refund_check.get("verified") is not True:
+            result["status"] = "BLOCKED_REFUND_CREDIT_LINK"
+            checked.append(result)
+            continue
+        refund_id = str(refunds[0].get("id") or "").split("/")[-1]
+        matched = [c for c in credits if any(
+            str(f.get("Name") or "").strip().lower() in ("shopify refund id", "shopify_refund_id")
+            and str(f.get("StringValue") or "").strip().split("/")[-1] == refund_id
+            for f in (c.get("CustomField") or []) if isinstance(f, dict))]
+        links = invoice.get("LinkedTxn")
+        if (len(matched) != 1 or not isinstance(links, list) or len(links) != 1
+                or links[0].get("TxnType") != "Payment"):
+            result["status"] = "BLOCKED_CREDIT_APPLICATION_LINK"
+            checked.append(result)
+            continue
+        payment_id = str(links[0].get("TxnId") or "")
+        if payment_id in claimed_payments or payment_id not in indexed_payments:
+            result["status"] = "BLOCKED_CROSS_ORDER_PAYMENT_LINK"
+            checked.append(result)
+            continue
+        claimed_payments.add(payment_id)
+        offset = audit_pilot_credit_application(invoice, matched[0], indexed_payments[payment_id])
+        result["credit_application"] = offset["status"]
+        result["verified"] = offset.get("verified") is True
+        result["status"] = ("ORDER_REFUND_OFFSET_VERIFIED" if result["verified"]
+                            else "BLOCKED_CREDIT_APPLICATION_EVIDENCE")
+        checked.append(result)
+    verified = all(row["verified"] for row in checked)
+    return {"status": "FINANCIAL_BATCH_VERIFIED" if verified else "REVIEW_FINANCIAL_BATCH_INCOMPLETE",
+            "verified": verified, "orders_checked": len(orders),
+            "orders_verified": sum(row["verified"] for row in checked),
+            "results": checked, "bank_settlement_verified": False}
+
+
 def audit_shopify_invoice_link(order: dict, invoices: list[dict]) -> dict:
     """Fail closed: a matching document number alone is not an order link."""
     name = str(order.get("name") or "")
@@ -1279,7 +1349,18 @@ if __name__ == "__main__" and sys.argv[1:] == ["--pilot-batch"]:
             print(json.dumps({"status": "NO_TEST_ORDERS", "verified": False}))
         else:
             invoices = read_try_pilot_invoices()
-            result = audit_order_invoice_batch(orders, invoices)
+            credits = read_try_pilot_credit_memos()
+            payments = []
+            for order in orders:
+                try:
+                    invoice = select_invoice_by_shopify_order(order, invoices)
+                except ValueError:
+                    continue
+                links = invoice.get("LinkedTxn")
+                if (isinstance(links, list) and len(links) == 1
+                        and links[0].get("TxnType") == "Payment"):
+                    payments.append(read_try_pilot_credit_payment(invoice))
+            result = audit_order_financial_batch(orders, invoices, credits, payments)
             print(json.dumps(result, ensure_ascii=False))
     except (ValueError, PermissionError, requests.RequestException, KeyError, OSError, TypeError):
         print(json.dumps({"status": "BLOCKED_PILOT_BATCH_API_READ", "verified": False}))
