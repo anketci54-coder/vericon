@@ -480,6 +480,29 @@ def test_multiple_orders_require_distinct_explicit_invoice_links(monkeypatch):
     assert doc_only["orders_verified"] == 0 and doc_only["verified"] is False
 
 
+def test_duplicate_invoice_references_require_explicit_shared_source():
+    first = {"Id": "11", "DocNumber": "101", "TotalAmt": 100,
+             "CustomField": [{"Name": "Shopify Order ID", "StringValue": "123"}]}
+    same_amount_different_source = {"Id": "12", "DocNumber": "102", "TotalAmt": 100,
+             "CustomField": [{"Name": "Shopify Order ID", "StringValue": "124"}]}
+    distinct = a.audit_duplicate_invoice_references([first, same_amount_different_source])
+    assert distinct["status"] == "NO_SHARED_ORDER_REFERENCES"
+    assert distinct["candidate_groups"] == 0 and distinct["duplicate_sale_proven"] is False
+    shared = {"Id": "13", "DocNumber": "103", "TotalAmt": 70,
+              "CustomField": [{"Name": "Shopify Order ID",
+                               "StringValue": "gid://shopify/Order/123"}]}
+    result = a.audit_duplicate_invoice_references([first, same_amount_different_source, shared])
+    assert result["status"] == "REVIEW_DUPLICATE_REFERENCE_CANDIDATES"
+    assert result["candidate_groups"] == 1 and result["verified"] is False
+    assert result["candidates"][0]["qbo_invoice_ids"] == ["11", "13"]
+    assert result["duplicate_sale_proven"] is False
+    assert a.audit_duplicate_invoice_references([first, first])["status"] == "BLOCKED_DUPLICATE_REFERENCE_EVIDENCE"
+    malformed = {"Id": "14", "CustomField": [{"Name": "Shopify Order ID", "StringValue": "not-an-id"}]}
+    assert a.audit_duplicate_invoice_references([first, malformed])["status"] == "BLOCKED_DUPLICATE_REFERENCE_EVIDENCE"
+    no_ref = {"Id": "15", "DocNumber": "101", "TotalAmt": 100, "CustomField": []}
+    assert a.audit_duplicate_invoice_references([first, no_ref])["candidate_groups"] == 0
+
+
 @pytest.mark.parametrize("currencies", [("TRY", "USD"), ("EUR", "GBP")])
 def test_financial_batch_separates_refunds_and_credit_offsets(monkeypatch, currencies):
     from copy import deepcopy

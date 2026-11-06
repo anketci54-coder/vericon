@@ -532,6 +532,48 @@ def audit_payment_links(invoices: list[dict], payments: list[dict], credit_memos
         return base
 
 
+def audit_duplicate_invoice_references(invoices: list[dict]) -> dict:
+    """Find shared explicit Shopify order references; never infer a duplicate sale."""
+    blocked = {"status": "BLOCKED_DUPLICATE_REFERENCE_EVIDENCE", "verified": False,
+               "duplicate_sale_proven": False}
+    if not isinstance(invoices, list) or len(invoices) > MAX_INVOICES:
+        return blocked
+    index = {}
+    ids = set()
+    for invoice in invoices:
+        if not isinstance(invoice, dict):
+            return blocked
+        ident = str(invoice.get("Id") or "")
+        fields = invoice.get("CustomField")
+        if not ident or ident in ids or not isinstance(fields, list):
+            return blocked
+        ids.add(ident)
+        refs = [str(field.get("StringValue") or "").strip()
+                for field in fields if isinstance(field, dict)
+                and str(field.get("Name") or "").strip().lower()
+                in ("shopify order id", "shopify_order_id")]
+        if len(refs) > 1:
+            return blocked
+        if not refs:
+            continue
+        ref = refs[0]
+        if ref.startswith("gid://shopify/Order/"):
+            ref = ref.split("/")[-1]
+        if not ref.isdigit() or int(ref) <= 0:
+            return blocked
+        index.setdefault(ref, []).append(ident)
+    candidates = [{"shopify_order_id": "gid://shopify/Order/" + ref,
+                   "qbo_invoice_ids": invoice_ids, "invoice_count": len(invoice_ids),
+                   "status": "REVIEW_SHARED_SOURCE_REFERENCE"}
+                  for ref, invoice_ids in sorted(index.items()) if len(invoice_ids) > 1]
+    return {"status": "REVIEW_DUPLICATE_REFERENCE_CANDIDATES" if candidates
+            else "NO_SHARED_ORDER_REFERENCES", "verified": False,
+            "reference_scan_complete": True, "duplicate_sale_proven": False,
+            "invoices_checked": len(invoices),
+            "invoices_with_order_reference": sum(map(len, index.values())),
+            "candidate_groups": len(candidates), "candidates": candidates}
+
+
 def audit_order_invoice_batch(orders: list[dict], invoices: list[dict]) -> dict:
     """Bounded cross-system batch; never treat an unlinked document as matched."""
     blocked = {"status": "BLOCKED_BATCH_INPUT", "verified": False}
@@ -1485,7 +1527,9 @@ if __name__ == "__main__" and sys.argv[1:] == ["--pilot-batch"]:
                     for ref in links:
                         payments.append(read_try_pilot_credit_payment({"LinkedTxn": [ref]}))
             result = audit_order_financial_batch(orders, invoices, credits, payments)
-            print(json.dumps(financial_discrepancy_report(result, orders, invoices), ensure_ascii=False))
+            report = financial_discrepancy_report(result, orders, invoices)
+            report["duplicate_reference_scan"] = audit_duplicate_invoice_references(invoices)
+            print(json.dumps(report, ensure_ascii=False))
     except (ValueError, PermissionError, requests.RequestException, KeyError, OSError, TypeError):
         print(json.dumps({"status": "BLOCKED_PILOT_BATCH_API_READ", "verified": False}))
         raise SystemExit(2) from None
