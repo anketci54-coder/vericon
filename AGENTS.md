@@ -8,7 +8,7 @@
 6. Token, client secret, .env, gercek veriler, fatura ve musteri bilgilerini depoya koyma, loglarda paylasma. Gerekiyorsa mevcut gizli depolama cozumunu kontrollu belirle.
 7. Iki AI ayni dosyada paralel degisiklik yapmaz. Degisikliklerin diff'i, test sonucu ve uygulama davranisi ayri dogrulanir.
 8. Yeni framework, refactor, servis, konteyner, dokuman, branch veya ek API ancak kanitli ihtiyac varsa acilir.
-9. Projeyi diger VPS uygulamalarindan izole tut. BINBOT, DEXBOT, SMRS ve Senal Plastik servislerine dokunma.
+9. Projeyi diger VPS uygulamalarindan izole tut. SMRS ve Senal Plastik servislerine dokunma.
 10. 'Hazir' veya 'basarili' sadece uctan uca kanitli sonuc icin kullanilir. Halen herhangi bir musteri sonucu dogrulanmadi.
 
 11. Dis sistemde urun, stok, item, fatura, siparis olusturma/guncelleme/silme islemleri KAPALI. QBO REST istegi sadece GET `/query`; POST yalniz Intuit OAuth token endpointine. Shopify POST yalnizca OAuth token ve `query` GraphQL; `mutation` kullanma. Eger gercek is ihtiyaci varsa ayri onay karari almadan yazma yolu acma.
