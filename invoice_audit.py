@@ -1130,13 +1130,15 @@ def pilot_summary_report(order: dict, invoice: dict, credits: list[dict], paymen
                    if len(linked) == 1 else {"status": "BLOCKED_LINKED_CREDIT_AMBIGUITY", "verified": False})
     fingerprint = pilot_evidence_fingerprint(order, invoice, credits, payment)
     history = compare_pilot_baseline(fingerprint)
-    verified = (order_link.get("verified") is True and refund_link.get("verified") is True
-                and application.get("verified") is True and history.get("status") == "BASELINE_UNCHANGED")
+    current_verified = (order_link.get("verified") is True and refund_link.get("verified") is True
+                        and application.get("verified") is True)
+    verified = current_verified and history.get("status") == "BASELINE_UNCHANGED"
     return {"scope": "sandbox_pilot_only", "order": order.get("name"),
             "invoice": invoice.get("DocNumber"), "currency": (invoice.get("CurrencyRef") or {}).get("value"),
             "invoice_total": invoice.get("TotalAmt"), "open_balance": invoice.get("Balance"),
             "order_invoice": order_link.get("status"), "refund_credit": refund_link.get("status"),
             "credit_application": application.get("status"), "history": history.get("status"),
+            "current_records_verified": current_verified,
             "overall": "PILOT_VERIFIED" if verified else "REVIEW_OR_INCOMPLETE",
             "cash_received_verified": False, "bank_settlement_verified": False}
 

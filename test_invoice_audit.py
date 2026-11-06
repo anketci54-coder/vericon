@@ -713,6 +713,26 @@ def test_pilot_summary_does_not_hide_tax_review(monkeypatch):
     assert report["bank_settlement_verified"] is False
 
 
+def test_pilot_summary_separates_current_validity_from_changed_history(monkeypatch):
+    monkeypatch.setattr(a, "audit_shopify_invoice_link", lambda *args:
+                        {"status": "PILOT_ORDER_INVOICE_VERIFIED", "verified": True})
+    monkeypatch.setattr(a, "normalize_refund_credit_api", lambda *args:
+                        {"status": "TEST_REFUND_CREDIT_RECORDS_MATCH", "verified": True})
+    monkeypatch.setattr(a, "audit_pilot_credit_application", lambda *args:
+                        {"status": "PILOT_CREDIT_APPLICATION_VERIFIED", "verified": True})
+    monkeypatch.setattr(a, "pilot_evidence_fingerprint", lambda *args: "a" * 64)
+    monkeypatch.setattr(a, "compare_pilot_baseline", lambda *args:
+                        {"status": "REVIEW_EVIDENCE_CHANGED_RECHECK_REQUIRED", "verified": False})
+    order={"name":"#1001", "refunds":[{"id":"gid://shopify/Refund/1"}]}
+    invoice={"DocNumber":"1038", "CurrencyRef":{"value":"TRY"}, "TotalAmt":216, "Balance":116}
+    credits=[{"CustomField":[{"Name":"Shopify Refund ID", "StringValue":"1"}]}]
+    report=a.pilot_summary_report(order, invoice, credits, {})
+    assert report["current_records_verified"] is True
+    assert report["history"] == "REVIEW_EVIDENCE_CHANGED_RECHECK_REQUIRED"
+    assert report["overall"] == "REVIEW_OR_INCOMPLETE"
+    assert report["bank_settlement_verified"] is False
+
+
 def test_duplicate_explicit_shopify_references_block_even_if_first_matches():
     order={"id":"gid://shopify/Order/123", "name":"#1001",
            "totalPriceSet":{"shopMoney":{"amount":"216", "currencyCode":"TRY"}}}
