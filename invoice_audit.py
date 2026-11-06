@@ -1218,10 +1218,12 @@ def pilot_summary_report(order: dict, invoice: dict, credits: list[dict], paymen
     """Summarize existing checks without converting a review into a pass."""
     order_link = audit_shopify_invoice_link(order, [invoice])
     refund_link = normalize_refund_credit_api(order, credits, invoice)
-    refund_ids = {str(row.get("id") or "").split("/")[-1] for row in (order.get("refunds") or [])}
+    refund_ids = {str(row.get("id") or "").split("/")[-1]
+                  for row in (order.get("refunds") or [])}
     linked = [c for c in credits if any(
-        f.get("Name") == "Shopify Refund ID" and str(f.get("StringValue")) in refund_ids
-        for f in (c.get("CustomField") or []))]
+        str(f.get("Name") or "").strip().lower() in ("shopify refund id", "shopify_refund_id")
+        and str(f.get("StringValue") or "").strip().split("/")[-1] in refund_ids
+        for f in (c.get("CustomField") or []) if isinstance(f, dict))]
     application = (audit_pilot_credit_application(invoice, linked[0], payment)
                    if len(linked) == 1 else {"status": "BLOCKED_LINKED_CREDIT_AMBIGUITY", "verified": False})
     fingerprint = pilot_evidence_fingerprint(order, invoice, credits, payment)

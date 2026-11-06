@@ -730,6 +730,18 @@ def test_pilot_summary_does_not_hide_tax_review(monkeypatch):
     assert report["bank_settlement_verified"] is False
 
 
+def test_pilot_summary_full_refund_gid(monkeypatch):
+    monkeypatch.setattr(a, "audit_shopify_invoice_link", lambda *args: {"verified": True})
+    monkeypatch.setattr(a, "normalize_refund_credit_api", lambda *args: {"verified": True})
+    monkeypatch.setattr(a, "audit_pilot_credit_application", lambda *args: {"verified": True})
+    monkeypatch.setattr(a, "pilot_evidence_fingerprint", lambda *args: "a" * 64)
+    monkeypatch.setattr(a, "compare_pilot_baseline", lambda *args: {"status": "BASELINE_UNCHANGED"})
+    order={"refunds": [{"id": "gid://shopify/Refund/987"}]}
+    credits=[{"CustomField": [{"Name": "Shopify Refund ID", "StringValue": "gid://shopify/Refund/987"}]}]
+    report=a.pilot_summary_report(order, {}, credits, {})
+    assert report["current_records_verified"] is True
+
+
 def test_pilot_summary_separates_current_validity_from_changed_history(monkeypatch):
     monkeypatch.setattr(a, "audit_shopify_invoice_link", lambda *args:
                         {"status": "PILOT_ORDER_INVOICE_VERIFIED", "verified": True})
