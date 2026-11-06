@@ -1073,12 +1073,43 @@ def compare_pilot_baseline(current: str, path: Path | None = None) -> dict:
             return {"status": "BASELINE_RECORDED_NOT_VERIFIED", "verified": False}
     if target.is_symlink() or not target.is_file() or stat.S_IMODE(target.stat().st_mode) != 0o600:
         return {"status": "BLOCKED_UNSAFE_BASELINE_FILE", "verified": False}
-    previous = target.read_text(encoding="ascii").strip()
-    if re.fullmatch(r"[0-9a-f]{64}", previous) is None:
+    rows = target.read_text(encoding="ascii").splitlines()
+    valid = (len(rows) in (1, 2) and
+             re.fullmatch(r"[0-9a-f]{64}", rows[0]) is not None and
+             (len(rows) == 1 or re.fullmatch(r"APPROVED_TAX_CORRECTION [0-9a-f]{64}", rows[1]) is not None))
+    if not valid:
         return {"status": "BLOCKED_INVALID_STORED_BASELINE", "verified": False}
-    if previous != current:
+    approved = rows[-1].split(" ")[-1]
+    if approved != current:
         return {"status": "REVIEW_EVIDENCE_CHANGED_RECHECK_REQUIRED", "verified": False}
-    return {"status": "BASELINE_UNCHANGED", "verified": False}
+    return {"status": "BASELINE_UNCHANGED", "verified": False,
+            "historical_correction_recorded": len(rows) == 2}
+
+
+def accept_pilot_tax_correction(current: str, checks_verified: bool,
+                                path: Path | None = None) -> dict:
+    """One explicit, read-only-audited correction; preserve the first fingerprint."""
+    if checks_verified is not True:
+        return {"status": "BLOCKED_UNVERIFIED_CORRECTION", "verified": False}
+    target = path or (Path(__file__).resolve().parent / "private" / "pilot_evidence_baseline.sha256")
+    status = compare_pilot_baseline(current, target)
+    if status["status"] != "REVIEW_EVIDENCE_CHANGED_RECHECK_REQUIRED":
+        return {"status": "BLOCKED_NO_NEW_CORRECTION_TO_ACCEPT", "verified": False}
+    import fcntl
+    fd = os.open(target, os.O_RDWR | os.O_NOFOLLOW)
+    try:
+        with os.fdopen(fd, "r+", encoding="ascii") as file:
+            fcntl.flock(file.fileno(), fcntl.LOCK_EX)
+            rows = file.read().splitlines()
+            if len(rows) != 1 or re.fullmatch(r"[0-9a-f]{64}", rows[0]) is None:
+                return {"status": "BLOCKED_CORRECTION_HISTORY_CHANGED", "verified": False}
+            file.seek(0, os.SEEK_END)
+            file.write("APPROVED_TAX_CORRECTION " + current + "\n")
+            file.flush()
+            os.fsync(file.fileno())
+    except OSError:
+        raise
+    return {"status": "APPROVED_CORRECTION_RECORDED", "verified": False}
 
 
 def audit_all(invoices: list[dict], payments: list[dict] | None = None,

@@ -733,6 +733,23 @@ def test_pilot_summary_separates_current_validity_from_changed_history(monkeypat
     assert report["bank_settlement_verified"] is False
 
 
+def test_approved_tax_correction_preserves_first_evidence(tmp_path):
+    import os
+    os.chmod(tmp_path, 0o700)
+    target = tmp_path / "pilot.sha256"
+    original, corrected, third = "a" * 64, "b" * 64, "c" * 64
+    assert a.compare_pilot_baseline(original, target)["status"] == "BASELINE_RECORDED_NOT_VERIFIED"
+    assert a.accept_pilot_tax_correction(corrected, False, target)["status"] == "BLOCKED_UNVERIFIED_CORRECTION"
+    assert a.compare_pilot_baseline(corrected, target)["status"] == "REVIEW_EVIDENCE_CHANGED_RECHECK_REQUIRED"
+    assert a.accept_pilot_tax_correction(corrected, True, target)["status"] == "APPROVED_CORRECTION_RECORDED"
+    assert target.read_text().splitlines() == [original, "APPROVED_TAX_CORRECTION " + corrected]
+    assert a.compare_pilot_baseline(corrected, target)["status"] == "BASELINE_UNCHANGED"
+    assert a.compare_pilot_baseline(third, target)["status"] == "REVIEW_EVIDENCE_CHANGED_RECHECK_REQUIRED"
+    assert a.accept_pilot_tax_correction(third, True, target)["status"] == "BLOCKED_CORRECTION_HISTORY_CHANGED"
+    assert a.accept_pilot_tax_correction(corrected, True, target)["status"] == "BLOCKED_NO_NEW_CORRECTION_TO_ACCEPT"
+    assert target.read_text().splitlines()[0] == original
+
+
 def test_duplicate_explicit_shopify_references_block_even_if_first_matches():
     order={"id":"gid://shopify/Order/123", "name":"#1001",
            "totalPriceSet":{"shopMoney":{"amount":"216", "currencyCode":"TRY"}}}
