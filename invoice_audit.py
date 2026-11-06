@@ -665,12 +665,12 @@ def audit_pilot_payment_accounting(order: dict, invoice: dict, link: dict) -> di
             if money.get("currencyCode") != currency:
                 return {**base, "status": "BLOCKED_PAYMENT_CURRENCY"}
             applied += number(money.get("amount"))
-        if applied != total or order.get("displayFinancialStatus") != "PAID":
+        if applied != total:
             return {**base, "status": "REVIEW_TEST_GATEWAY_PAYMENT_TOTAL"}
         linked = invoice.get("LinkedTxn")
         if not isinstance(linked, list):
             return {**base, "status": "BLOCKED_QBO_PAYMENT_LINKS"}
-        if balance == invoice_total and not linked:
+        if order.get("displayFinancialStatus") == "PAID" and balance == invoice_total and not linked:
             return {**base, "status": "TEST_PAID_QBO_UNPAID_EXPECTED",
                     "shopify_test_payment": str(applied), "qbo_outstanding": str(balance),
                     "currency": currency}

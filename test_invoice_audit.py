@@ -526,16 +526,20 @@ def test_pilot_order_line_checks_fail_closed_on_bad_data():
     assert a.audit_shopify_invoice_link(q,[r])["status"]=="BLOCKED_NONPOSITIVE_PILOT_SALE"
 
 
-def test_pilot_payment_is_not_real_cash_or_bank_settlement():
+@pytest.mark.parametrize("financial_status", ["PAID", "PARTIALLY_REFUNDED", None, "UNKNOWN"])
+def test_pilot_payment_is_not_real_cash_or_bank_settlement(financial_status):
     from copy import deepcopy
-    order={"test":True,"displayFinancialStatus":"PAID",
+    order={"test":True,"displayFinancialStatus":financial_status,
            "totalPriceSet":{"shopMoney":{"amount":"216","currencyCode":"TRY"}},
            "transactions":[{"test":True,"kind":"SALE","status":"SUCCESS",
                             "amountSet":{"shopMoney":{"amount":"216","currencyCode":"TRY"}}}]}
     inv={"TotalAmt":216,"Balance":216,"CurrencyRef":{"value":"TRY"},"LinkedTxn":[]}
     link={"status":"PILOT_ORDER_INVOICE_VERIFIED","verified":True}
     good=a.audit_pilot_payment_accounting(order,inv,link)
-    assert good["status"]=="TEST_PAID_QBO_UNPAID_EXPECTED"
+    expected = ("TEST_PAID_QBO_UNPAID_EXPECTED" if financial_status == "PAID"
+                else "REVIEW_QBO_PAYMENT_RECORDS")
+    assert good["status"]==expected
+    assert good["shopify_test_payment"]=="216" and good["qbo_outstanding"]=="216"
     assert good["settlement_verified"] is False and good["real_cash_claimed"] is False
     wrong=deepcopy(order);wrong["transactions"][0]["amountSet"]["shopMoney"]["amount"]="215"
     assert a.audit_pilot_payment_accounting(wrong,inv,link)["status"]=="REVIEW_TEST_GATEWAY_PAYMENT_TOTAL"
@@ -548,6 +552,36 @@ def test_pilot_payment_is_not_real_cash_or_bank_settlement():
     wrong=deepcopy(inv);wrong["Balance"]=217
     assert a.audit_pilot_payment_accounting(order,wrong,link)["status"]=="BLOCKED_INVALID_PAYMENT_TOTALS"
     assert a.audit_pilot_payment_accounting(order,inv,{"verified":False})["status"]=="BLOCKED_ORDER_INVOICE_LINK"
+
+
+@pytest.mark.parametrize("kind", ["SALE", "CAPTURE"])
+@pytest.mark.parametrize("gross,expected", [
+    ("216.00", "REVIEW_QBO_PAYMENT_RECORDS"),
+    ("215.00", "REVIEW_TEST_GATEWAY_PAYMENT_TOTAL"),
+    ("215.99999999999999999", "REVIEW_TEST_GATEWAY_PAYMENT_TOTAL"),
+])
+@pytest.mark.parametrize("refund_status", ["SUCCESS", "PENDING", None])
+@pytest.mark.parametrize("balance,linked", [
+    (216, []), (116, [{"TxnId": "148", "TxnType": "Payment"}]),
+])
+def test_pilot_partial_refund_keeps_gross_payment_separate(
+        kind, gross, expected, refund_status, balance, linked):
+    order={"test":True,"displayFinancialStatus":"PARTIALLY_REFUNDED",
+           "totalPriceSet":{"shopMoney":{"amount":"216","currencyCode":"TRY"}},
+           "transactions":[{"test":True,"kind":kind,"status":"SUCCESS",
+                            "amountSet":{"shopMoney":{"amount":gross,"currencyCode":"TRY"}}}]}
+    if refund_status is not None:
+        order["transactions"].append({"test":True,"kind":"REFUND","status":refund_status,
+            "amountSet":{"shopMoney":{"amount":"100","currencyCode":"TRY"}}})
+    inv={"TotalAmt":216,"Balance":balance,"CurrencyRef":{"value":"TRY"},"LinkedTxn":linked}
+    link={"status":"PILOT_ORDER_INVOICE_VERIFIED","verified":True}
+    result=a.audit_pilot_payment_accounting(order,inv,link)
+    assert result["status"]==expected
+    assert result["settlement_verified"] is False and result["real_cash_claimed"] is False
+    if expected == "REVIEW_QBO_PAYMENT_RECORDS":
+        assert result["shopify_test_payment"] == gross
+        assert result["qbo_outstanding"] == str(balance)
+        assert result["currency"] == "TRY"
 
 
 def test_credit_application_is_offset_not_cash():
