@@ -453,6 +453,33 @@ def test_supplier_po_bill_shared_reference_does_not_count_matches():
     assert all(row["status"]=="BLOCKED_SHARED_BILL_REFERENCE" for row in result["pairs"])
 
 
+def test_multiple_orders_require_distinct_explicit_invoice_links(monkeypatch):
+    monkeypatch.setattr(a, "_audit_pilot_line_items", lambda order, inv, base:
+                        {**base, "status": "PILOT_ORDER_INVOICE_VERIFIED", "verified": True,
+                         "invoice_id": inv["Id"]})
+    orders=[{"id": f"gid://shopify/Order/{n}", "name": f"#{n}",
+             "totalPriceSet": {"shopMoney": {"amount": "216", "currencyCode": "TRY"}},
+             "lineItems": {}, "shippingLines": {}} for n in (101, 102)]
+    invoices=[{"Id": f"I{n}", "DocNumber": f"{n}", "TotalAmt": 216,
+               "CurrencyRef": {"value": "TRY"},
+               "CustomField": [{"Name": "Shopify Order ID", "StringValue": str(n)}]}
+              for n in (101, 102)]
+    good=a.audit_order_invoice_batch(orders, invoices)
+    assert good["verified"] is True and good["orders_verified"] == 2
+    assert {row["invoice_id"] for row in good["results"]} == {"I101", "I102"}
+    assert good["bank_settlement_verified"] is False
+    missing=a.audit_order_invoice_batch(orders, invoices[:1])
+    assert missing["verified"] is False and missing["orders_verified"] == 1
+    assert missing["results"][1]["status"] == "BLOCKED_NO_VERIFIED_ORDER_REFERENCE"
+    repeated=a.audit_order_invoice_batch(orders + orders[:1], invoices)
+    assert repeated["status"] == "BLOCKED_BATCH_INPUT"
+    same_invoice=a.audit_order_invoice_batch(orders, invoices + invoices[:1])
+    assert same_invoice["status"] == "BLOCKED_BATCH_INPUT"
+    doc_only=a.audit_order_invoice_batch(orders, [
+        {**inv, "CustomField": []} for inv in invoices])
+    assert doc_only["orders_verified"] == 0 and doc_only["verified"] is False
+
+
 def test_shopify_order_number_is_not_a_verified_invoice_reference():
     order={"id":"gid://shopify/Order/123", "name":"#1001",
            "totalPriceSet":{"shopMoney":{"amount":"216", "currencyCode":"TRY"}}}

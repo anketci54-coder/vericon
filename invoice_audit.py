@@ -532,6 +532,28 @@ def audit_payment_links(invoices: list[dict], payments: list[dict], credit_memos
         return base
 
 
+def audit_order_invoice_batch(orders: list[dict], invoices: list[dict]) -> dict:
+    """Bounded cross-system batch; never treat an unlinked document as matched."""
+    blocked = {"status": "BLOCKED_BATCH_INPUT", "verified": False}
+    if not isinstance(orders, list) or not 1 <= len(orders) <= 20:
+        return blocked
+    if not isinstance(invoices, list) or len(invoices) > MAX_INVOICES:
+        return blocked
+    order_ids = [str(o.get("id") or "") for o in orders if isinstance(o, dict)]
+    invoice_ids = [str(inv.get("Id") or "") for inv in invoices if isinstance(inv, dict)]
+    if (len(order_ids) != len(orders) or len(set(order_ids)) != len(order_ids)
+            or any(not ident.startswith("gid://shopify/Order/") for ident in order_ids)
+            or len(invoice_ids) != len(invoices) or any(not ident for ident in invoice_ids)
+            or len(set(invoice_ids)) != len(invoice_ids)):
+        return blocked
+    results = [audit_shopify_invoice_link(order, invoices) for order in orders]
+    verified = all(row.get("verified") is True for row in results)
+    return {"status": "BATCH_ORDER_INVOICE_VERIFIED" if verified else "REVIEW_BATCH_INCOMPLETE",
+            "verified": verified, "orders_checked": len(orders),
+            "orders_verified": sum(row.get("verified") is True for row in results),
+            "results": results, "bank_settlement_verified": False}
+
+
 def audit_shopify_invoice_link(order: dict, invoices: list[dict]) -> dict:
     """Fail closed: a matching document number alone is not an order link."""
     name = str(order.get("name") or "")
