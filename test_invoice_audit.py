@@ -480,42 +480,50 @@ def test_multiple_orders_require_distinct_explicit_invoice_links(monkeypatch):
     assert doc_only["orders_verified"] == 0 and doc_only["verified"] is False
 
 
-def test_financial_batch_separates_refunds_and_credit_offsets(monkeypatch):
+@pytest.mark.parametrize("currencies", [("TRY", "USD"), ("EUR", "GBP")])
+def test_financial_batch_separates_refunds_and_credit_offsets(monkeypatch, currencies):
     from copy import deepcopy
     monkeypatch.setattr(a, "_audit_pilot_line_items", lambda order, inv, base:
                         {**base, "status": "PILOT_ORDER_INVOICE_VERIFIED",
                          "verified": True, "invoice_id": inv["Id"]})
     orders, invoices, credits, payments = [], [], [], []
-    for n, amount in [(101, 40), (102, 60)]:
+    for (n, amount), currency in zip([(101, 40), (102, 60)], currencies):
         order_id=f"gid://shopify/Order/{n}"
         rid=f"gid://shopify/Refund/{n}"
         orders.append({"id":order_id,"name":f"#{n}","test":True,
             "displayFinancialStatus":"PARTIALLY_REFUNDED",
-            "totalPriceSet":{"shopMoney":{"amount":"216","currencyCode":"TRY"}},
-            "totalTaxSet":{"shopMoney":{"amount":"0","currencyCode":"TRY"}},
+            "totalPriceSet":{"shopMoney":{"amount":"216","currencyCode":currency}},
+            "totalTaxSet":{"shopMoney":{"amount":"0","currencyCode":currency}},
             "transactions":[{"kind":"SALE","status":"SUCCESS","test":True,
-                             "amountSet":{"shopMoney":{"amount":"216","currencyCode":"TRY"}}}],
+                             "amountSet":{"shopMoney":{"amount":"216","currencyCode":currency}}}],
             "lineItems":{},"shippingLines":{},
             "refunds":[{"id":rid,"order":{"id":order_id},
-                "totalRefundedSet":{"shopMoney":{"amount":str(amount),"currencyCode":"TRY"}},
+                "totalRefundedSet":{"shopMoney":{"amount":str(amount),"currencyCode":currency}},
                 "transactions":{"pageInfo":{"hasNextPage":False},"nodes":[{
                     "id":f"gid://shopify/OrderTransaction/{n}","kind":"REFUND","status":"SUCCESS","test":True,
-                    "amountSet":{"shopMoney":{"amount":str(amount),"currencyCode":"TRY"}}}]}}]})
+                    "amountSet":{"shopMoney":{"amount":str(amount),"currencyCode":currency}}}]}}]})
         invoices.append({"Id":f"I{n}","DocNumber":f"{n}","TotalAmt":216,"Balance":216-amount,
-            "CurrencyRef":{"value":"TRY"},"CustomerRef":{"value":f"C{n}"},
+            "CurrencyRef":{"value":currency},"CustomerRef":{"value":f"C{n}"},
             "CustomField":[{"Name":"Shopify Order ID","StringValue":str(n)}],
             "TxnTaxDetail":{"TotalTax":0},"LinkedTxn":[{"TxnId":f"P{n}","TxnType":"Payment"}]})
         credits.append({"Id":f"CM{n}","TotalAmt":amount,"Balance":0,
-            "CurrencyRef":{"value":"TRY"},"CustomerRef":{"value":f"C{n}"},
+            "CurrencyRef":{"value":currency},"CustomerRef":{"value":f"C{n}"},
             "TxnTaxDetail":{"TotalTax":0},"CustomField":[{"Name":"Shopify Refund ID","StringValue":str(n)}],
             "Line":[{"DetailType":"SalesItemLineDetail","SalesItemLineDetail":{"TaxCodeRef":{"value":"NON"}}}]})
         payments.append({"Id":f"P{n}","TotalAmt":0,"UnappliedAmt":0,
-            "CurrencyRef":{"value":"TRY"},"CustomerRef":{"value":f"C{n}"},
+            "CurrencyRef":{"value":currency},"CustomerRef":{"value":f"C{n}"},
             "Line":[{"Amount":amount,"LinkedTxn":[{"TxnId":f"I{n}","TxnType":"Invoice"}]},
                     {"Amount":amount,"LinkedTxn":[{"TxnId":f"CM{n}","TxnType":"CreditMemo"}]}]})
     good=a.audit_order_financial_batch(orders,invoices,credits,payments)
     assert good["status"] == "FINANCIAL_BATCH_VERIFIED"
     assert good["orders_verified"] == 2 and good["bank_settlement_verified"] is False
+    currency_mismatch=deepcopy(invoices)
+    currency_mismatch[1]["CurrencyRef"]["value"]=currencies[0]
+    mismatch=a.audit_order_financial_batch(orders,currency_mismatch,credits,payments)
+    assert mismatch["verified"] is False and mismatch["orders_verified"] == 1
+    credit_mismatch=deepcopy(credits)
+    credit_mismatch[1]["CurrencyRef"]["value"]=currencies[0]
+    assert a.audit_order_financial_batch(orders,invoices,credit_mismatch,payments)["verified"] is False
     wrong=deepcopy(payments);wrong[1]["Line"][1]["LinkedTxn"][0]["TxnId"]="CM101"
     bad=a.audit_order_financial_batch(orders,invoices,credits,wrong)
     assert bad["verified"] is False and bad["orders_verified"] == 1
