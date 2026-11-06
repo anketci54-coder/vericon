@@ -173,7 +173,7 @@ def test_controlled_comparison_one_location(cred, monkeypatch, records):
     })
     res = s.check_both("VERICON-TEST-001")
     assert res["delta_shopify_minus_qbo"] == "3"
-    assert res["status"] == "TEST_DIFFERENCE"
+    assert res["status"] == "REVIEW_STOCK_BASIS_UNVERIFIED"
     assert res["read_gap_seconds"] <= 30
     assert res["catalog_price_check"]["status"] == "BLOCKED_PRICE_CURRENCY_MISMATCH"
     assert res["catalog_price_check"]["shopify_catalog_currency"] == "TRY"

@@ -45,9 +45,8 @@ def compare(data):
         "qbo_qty_on_hand": str(stock_qbo),
         "qbo_quantity_basis": "QtyOnHand",
         "delta_shopify_minus_qbo": str(delta),
-        "status": "TEST_DIFFERENCE" if is_test and delta else
-                  "TEST_MATCH" if is_test else
-                  "REVIEW_SNAPSHOT_AND_LOCATION" if delta else "MATCH_NEEDS_SNAPSHOT_VALIDATION",
+        "status": "REVIEW_STOCK_BASIS_UNVERIFIED" if delta else
+                  "TEST_MATCH" if is_test else "MATCH_NEEDS_SNAPSHOT_VALIDATION",
         "data_origin": "provided_api_outputs_no_live_qbo_connection",
         "note": "Not proof of financial loss. Align stock meaning, location, and snapshot times."
     }
