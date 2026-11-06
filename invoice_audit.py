@@ -619,7 +619,9 @@ def audit_multi_credit_applications(invoice: dict, credits: list[dict],
         total = number(invoice.get("TotalAmt"))
         balance = number(invoice.get("Balance"))
         if total <= 0 or balance < 0 or total_applied > total or total - total_applied != balance:
-            return {**base, "status": "REVIEW_MULTI_INVOICE_BALANCE"}
+            return {**base, "status": "REVIEW_MULTI_INVOICE_BALANCE",
+                    "difference_amount": str(total - total_applied - balance),
+                    "expected_balance": str(total - total_applied), "currency": currency}
         return {**base, "status": "MULTI_CREDIT_APPLICATION_VERIFIED", "verified": True,
                 "applied": str(total_applied), "remaining": str(balance),
                 "offset_count": len(payment_ids), "currency": currency}
@@ -689,15 +691,59 @@ def audit_order_financial_batch(orders: list[dict], invoices: list[dict],
         offset = audit_multi_credit_applications(
             invoice, matched, [indexed_payments[pid] for pid in payment_ids])
         result["credit_application"] = offset["status"]
+        if offset.get("status") == "REVIEW_MULTI_INVOICE_BALANCE":
+            result["difference_amount"] = offset.get("difference_amount")
+            result["expected_balance"] = offset.get("expected_balance")
         result["verified"] = offset.get("verified") is True
         result["status"] = ("ORDER_REFUND_OFFSET_VERIFIED" if result["verified"]
-                            else "BLOCKED_CREDIT_APPLICATION_EVIDENCE")
+                            else offset["status"])
         checked.append(result)
     verified = all(row["verified"] for row in checked)
     return {"status": "FINANCIAL_BATCH_VERIFIED" if verified else "REVIEW_FINANCIAL_BATCH_INCOMPLETE",
             "verified": verified, "orders_checked": len(orders),
             "orders_verified": sum(row["verified"] for row in checked),
             "results": checked, "bank_settlement_verified": False}
+
+
+def financial_discrepancy_report(batch: dict, orders: list[dict], invoices: list[dict]) -> dict:
+    """Explain bounded batch results; unknown differences are never fabricated."""
+    rows = batch.get("results")
+    if not isinstance(rows, list) or len(rows) != len(orders):
+        return {"status": batch.get("status", "BLOCKED_REPORT_EVIDENCE"),
+                "verified": False, "orders_checked": 0, "orders_verified": 0,
+                "orders_to_review": len(orders), "rows": [],
+                "reason": "BLOCKED_BATCH_EVIDENCE", "bank_settlement_verified": False}
+    report = []
+    for order, audit in zip(orders, rows):
+        invoice = None
+        if audit.get("order_invoice") == "PILOT_ORDER_INVOICE_VERIFIED":
+            try:
+                invoice = select_invoice_by_shopify_order(order, invoices)
+            except ValueError:
+                pass
+        verified = audit.get("verified") is True
+        report.append({
+            "shopify_order": order.get("name"),
+            "invoice": invoice.get("DocNumber") if invoice else None,
+            "currency": (invoice.get("CurrencyRef") or {}).get("value") if invoice else None,
+            "invoice_total": str(invoice.get("TotalAmt")) if invoice else None,
+            "invoice_balance": str(invoice.get("Balance")) if invoice else None,
+            "difference_amount": "0" if verified else audit.get("difference_amount"),
+            "difference_basis": ("verified_credit_offsets" if verified else
+                                 "expected_minus_recorded_invoice_balance" if
+                                 audit.get("difference_amount") is not None else "insufficient_evidence"),
+            "reason": audit.get("status"),
+            "review_required": not verified,
+            "evidence": {"order_invoice": audit.get("order_invoice"),
+                         "test_payment": audit.get("test_payment"),
+                         "refund_credit": audit.get("refund_credit"),
+                         "credit_application": audit.get("credit_application")},
+            "bank_settlement_verified": False,
+        })
+    return {"status": batch.get("status"), "verified": batch.get("verified") is True,
+            "orders_checked": len(report), "orders_verified": sum(not r["review_required"] for r in report),
+            "orders_to_review": sum(r["review_required"] for r in report),
+            "rows": report, "bank_settlement_verified": False}
 
 
 def audit_shopify_invoice_link(order: dict, invoices: list[dict]) -> dict:
@@ -1439,7 +1485,7 @@ if __name__ == "__main__" and sys.argv[1:] == ["--pilot-batch"]:
                     for ref in links:
                         payments.append(read_try_pilot_credit_payment({"LinkedTxn": [ref]}))
             result = audit_order_financial_batch(orders, invoices, credits, payments)
-            print(json.dumps(result, ensure_ascii=False))
+            print(json.dumps(financial_discrepancy_report(result, orders, invoices), ensure_ascii=False))
     except (ValueError, PermissionError, requests.RequestException, KeyError, OSError, TypeError):
         print(json.dumps({"status": "BLOCKED_PILOT_BATCH_API_READ", "verified": False}))
         raise SystemExit(2) from None

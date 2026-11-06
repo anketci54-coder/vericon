@@ -523,6 +523,9 @@ def test_financial_batch_separates_refunds_and_credit_offsets(monkeypatch):
     assert missing["verified"] is False and missing["orders_verified"] == 1
     duplicate=a.audit_order_financial_batch(orders,invoices,credits,payments+[payments[0]])
     assert duplicate["status"] == "BLOCKED_FINANCIAL_BATCH_DUPLICATE"
+    duplicate_report=a.financial_discrepancy_report(duplicate,orders,invoices)
+    assert duplicate_report["status"] == "BLOCKED_FINANCIAL_BATCH_DUPLICATE"
+    assert duplicate_report["verified"] is False and duplicate_report["rows"] == []
     more=deepcopy(orders);more[1]["refunds"].append(deepcopy(more[1]["refunds"][0]))
     assert a.audit_order_financial_batch(more,invoices,credits,payments)["verified"] is False
     multi_orders=deepcopy(orders)
@@ -559,6 +562,19 @@ def test_financial_batch_separates_refunds_and_credit_offsets(monkeypatch):
     wrong_credit[-1]["Line"][1]["LinkedTxn"][0]["TxnId"]="CM101"
     assert a.audit_order_financial_batch(multi_orders,multi_invoices,multi_credits,wrong_credit)["verified"] is False
     assert a.audit_order_financial_batch(multi_orders,multi_invoices,multi_credits,multi_payments[:-1])["verified"] is False
+    good_report=a.financial_discrepancy_report(full,multi_orders,multi_invoices)
+    assert good_report["orders_checked"] == 2 and good_report["orders_to_review"] == 0
+    assert all(row["difference_amount"] == "0" and not row["review_required"] for row in good_report["rows"])
+    wrong_result=a.audit_order_financial_batch(multi_orders,wrong_balance,multi_credits,multi_payments)
+    wrong_report=a.financial_discrepancy_report(wrong_result,multi_orders,wrong_balance)
+    assert wrong_report["orders_to_review"] == 1
+    assert wrong_report["rows"][0]["reason"] == "REVIEW_MULTI_INVOICE_BALANCE"
+    assert wrong_report["rows"][0]["difference_amount"] == "-1"
+    assert wrong_report["rows"][1]["difference_amount"] == "0"
+    incomplete=a.audit_order_financial_batch(multi_orders,multi_invoices,multi_credits,multi_payments[:-1])
+    missing_report=a.financial_discrepancy_report(incomplete,multi_orders,multi_invoices)
+    assert missing_report["rows"][0]["difference_amount"] is None
+    assert missing_report["rows"][0]["difference_basis"] == "insufficient_evidence"
 
 
 def test_shopify_order_number_is_not_a_verified_invoice_reference():
