@@ -729,7 +729,7 @@ def test_pilot_summary_separates_current_validity_from_changed_history(monkeypat
     report=a.pilot_summary_report(order, invoice, credits, {})
     assert report["current_records_verified"] is True
     assert report["history"] == "REVIEW_EVIDENCE_CHANGED_RECHECK_REQUIRED"
-    assert report["overall"] == "REVIEW_OR_INCOMPLETE"
+    assert report["overall"] == "CURRENT_VERIFIED_HISTORICAL_CHANGE"
     assert report["bank_settlement_verified"] is False
 
 

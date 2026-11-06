@@ -1170,7 +1170,10 @@ def pilot_summary_report(order: dict, invoice: dict, credits: list[dict], paymen
             "order_invoice": order_link.get("status"), "refund_credit": refund_link.get("status"),
             "credit_application": application.get("status"), "history": history.get("status"),
             "current_records_verified": current_verified,
-            "overall": "PILOT_VERIFIED" if verified else "REVIEW_OR_INCOMPLETE",
+            "overall": ("PILOT_VERIFIED" if verified else
+                        "CURRENT_VERIFIED_HISTORICAL_CHANGE" if current_verified and
+                        history.get("status") == "REVIEW_EVIDENCE_CHANGED_RECHECK_REQUIRED" else
+                        "REVIEW_OR_INCOMPLETE"),
             "cash_received_verified": False, "bank_settlement_verified": False}
 
 
