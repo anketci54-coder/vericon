@@ -278,12 +278,40 @@ def test_shopify_source_has_no_graphql_mutation_calls():
             if isinstance(call.func.value, ast.Name) and call.func.value.id == "requests":
                 outbound.add((fn.name, call.func.attr))
     assert outbound == {("get_access_token", "post"), ("read_stock", "post"),
-                        ("read_shopify_test_order", "post")}
+                        ("read_shopify_test_order", "post"),
+                        ("read_shopify_test_orders", "post")}
     assert s.STOCK_QUERY.lstrip().startswith("query ")
     assert "mutation" not in s.STOCK_QUERY.lower()
     assert s.PILOT_ORDER_QUERY.lstrip().startswith("query ")
     assert "mutation" not in s.PILOT_ORDER_QUERY.lower()
     assert "customer" not in s.PILOT_ORDER_QUERY.lower()
+
+
+def test_bounded_test_order_batch_blocks_pagination_and_non_test(monkeypatch):
+    monkeypatch.setattr(FakeResponse, "raise_for_status", lambda self: None, raising=False)
+    monkeypatch.setattr(s, "load_setup", lambda: object())
+    monkeypatch.setattr(s, "get_access_token", lambda _: "FAKE")
+    base={"data":{"orders":{"pageInfo":{"hasNextPage":False},
+            "nodes":[{"id":"gid://shopify/Order/123","name":"#1001","test":True}]}}}
+    payload=[base]
+    def request(*args, **kwargs):
+        assert kwargs["json"]["query"] == s.BATCH_ORDER_QUERY
+        assert "mutation" not in kwargs["json"]["query"].lower()
+        return FakeResponse(body=payload[0])
+    monkeypatch.setattr(s.requests,"post",request)
+    assert len(s.read_shopify_test_orders()) == 1
+    payload[0]={"data":{"orders":{"pageInfo":{"hasNextPage":True},
+                                    "nodes":base["data"]["orders"]["nodes"]}}}
+    with pytest.raises(ValueError,match="pagination"):
+        s.read_shopify_test_orders()
+    payload[0]={"data":{"orders":{"pageInfo":{"hasNextPage":False},
+                                    "nodes":[{"id":"gid://shopify/Order/123","test":False}]}}}
+    with pytest.raises(ValueError,match="non-test"):
+        s.read_shopify_test_orders()
+    payload[0]={"data":{"orders":{"pageInfo":{"hasNextPage":False},
+                                    "nodes":base["data"]["orders"]["nodes"] * 2}}}
+    with pytest.raises(ValueError,match="Duplicate"):
+        s.read_shopify_test_orders()
 
 
 def test_price_guards_currency_draft_and_unverified_policy():

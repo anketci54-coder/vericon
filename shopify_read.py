@@ -48,6 +48,9 @@ PILOT_ORDER_QUERY = '''query { orders(first: 2, query: "name:#1001") {
     } }
   }
 } }'''
+BATCH_ORDER_QUERY = PILOT_ORDER_QUERY.replace(
+    'orders(first: 2, query: "name:#1001") {',
+    'orders(first: 5, sortKey: CREATED_AT, reverse: true) { pageInfo { hasNextPage }')
 REQUIRED_SCOPES = frozenset(("read_products", "read_inventory", "read_locations"))
 SKU_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
 
@@ -294,6 +297,32 @@ def check_many(skus: list[str]) -> dict:
     return {"status": "TEST_BATCH_PARTIAL_BLOCKED" if blocked else "TEST_BATCH_COMPLETE",
             "requested": len(skus), "checked": len(skus) - blocked, "blocked": blocked,
             "results": results}
+
+
+def read_shopify_test_orders() -> list[dict]:
+    """Read at most five recent test orders; block an incomplete result window."""
+    token = get_access_token(load_setup())
+    response = requests.post(
+        f"https://{STORE}/admin/api/{API_VERSION}/graphql.json",
+        json={"query": BATCH_ORDER_QUERY},
+        headers={"X-Shopify-Access-Token": token}, timeout=20)
+    response.raise_for_status()
+    body = response.json()
+    if body.get("errors"):
+        raise ValueError("Shopify order batch query denied")
+    conn = (body.get("data") or {}).get("orders")
+    if not isinstance(conn, dict) or not isinstance(conn.get("nodes"), list):
+        raise ValueError("Shopify order batch incomplete")
+    if (conn.get("pageInfo") or {}).get("hasNextPage") is not False:
+        raise ValueError("Shopify order batch pagination not verified")
+    nodes = conn["nodes"]
+    if len(nodes) > 5 or any(not isinstance(o, dict) or o.get("test") is not True
+                             for o in nodes):
+        raise ValueError("Unverified or non-test Shopify orders")
+    ids = [str(o.get("id") or "") for o in nodes]
+    if any(not x.startswith("gid://shopify/Order/") for x in ids) or len(set(ids)) != len(ids):
+        raise ValueError("Duplicate or invalid Shopify orders")
+    return nodes
 
 
 def read_shopify_test_order() -> dict:

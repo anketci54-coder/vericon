@@ -973,8 +973,8 @@ def select_invoice_by_shopify_order(order: dict, invoices: list[dict]) -> dict:
     return matches[0]
 
 
-def read_try_pilot_invoice(order: dict | None = None) -> dict:
-    """Read bounded TRY sandbox invoices and resolve by explicit Shopify order ID."""
+def read_try_pilot_invoices() -> list[dict]:
+    """Read bounded TRY sandbox invoice details with explicit order references."""
     from qbo_oauth import Config
     vault = Path(__file__).resolve().parent / "private" / "qbo_try_32e0"
     setup = json.loads((vault / "qbo_setup.json").read_text(encoding="utf-8"))
@@ -985,9 +985,6 @@ def read_try_pilot_invoice(order: dict | None = None) -> dict:
                     redirect_uri=setup["VERICON_QBO_REDIRECT_URI"],
                     private_dir=vault, expected_realm="9341458641399133")
     token, realm = get_access_token(config)
-    if order is None:
-        from shopify_read import read_shopify_test_order
-        order = read_shopify_test_order()
     base_url = f"{SANDBOX_API}/v3/company/{realm}"
     headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
     count = _get_json(base_url + "/query", "SELECT COUNT(*) FROM Invoice", headers).get("totalCount")
@@ -1014,7 +1011,15 @@ def read_try_pilot_invoice(order: dict | None = None) -> dict:
         return invoice
     with ThreadPoolExecutor(max_workers=4) as executor:
         detailed = list(executor.map(get_detail, ids))
-    return select_invoice_by_shopify_order(order, detailed)
+    return detailed
+
+
+def read_try_pilot_invoice(order: dict | None = None) -> dict:
+    """Keep the existing pilot call; resolve invoice by explicit Shopify ID."""
+    if order is None:
+        from shopify_read import read_shopify_test_order
+        order = read_shopify_test_order()
+    return select_invoice_by_shopify_order(order, read_try_pilot_invoices())
 
 
 def read_try_pilot_credit_memos() -> list[dict]:
@@ -1264,6 +1269,22 @@ def pilot_summary_report(order: dict, invoice: dict, credits: list[dict], paymen
                         history.get("status") == "REVIEW_EVIDENCE_CHANGED_RECHECK_REQUIRED" else
                         "REVIEW_OR_INCOMPLETE"),
             "cash_received_verified": False, "bank_settlement_verified": False}
+
+
+if __name__ == "__main__" and sys.argv[1:] == ["--pilot-batch"]:
+    try:
+        from shopify_read import read_shopify_test_orders
+        orders = read_shopify_test_orders()
+        if not orders:
+            print(json.dumps({"status": "NO_TEST_ORDERS", "verified": False}))
+        else:
+            invoices = read_try_pilot_invoices()
+            result = audit_order_invoice_batch(orders, invoices)
+            print(json.dumps(result, ensure_ascii=False))
+    except (ValueError, PermissionError, requests.RequestException, KeyError, OSError, TypeError):
+        print(json.dumps({"status": "BLOCKED_PILOT_BATCH_API_READ", "verified": False}))
+        raise SystemExit(2) from None
+    raise SystemExit(0)
 
 
 if __name__ == "__main__" and sys.argv[1:] == ["--pilot-report"]:
