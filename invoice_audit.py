@@ -554,6 +554,79 @@ def audit_order_invoice_batch(orders: list[dict], invoices: list[dict]) -> dict:
             "results": results, "bank_settlement_verified": False}
 
 
+def audit_multi_credit_applications(invoice: dict, credits: list[dict],
+                                    payments: list[dict]) -> dict:
+    """Validate distinct zero-cash credit offsets and the aggregate invoice balance."""
+    base = {"status": "BLOCKED_MULTI_CREDIT_APPLICATION", "verified": False,
+            "cash_received_verified": False, "bank_settlement_verified": False}
+    try:
+        invoice_id = str(invoice.get("Id") or "")
+        customer = str((invoice.get("CustomerRef") or {}).get("value") or "")
+        currency = (invoice.get("CurrencyRef") or {}).get("value")
+        refs = invoice.get("LinkedTxn")
+        if (not invoice_id or not customer or not currency or not isinstance(refs, list)
+                or not isinstance(credits, list) or not isinstance(payments, list)
+                or not 1 <= len(credits) == len(payments) == len(refs) <= 20):
+            return base
+        payment_ids = [str(x.get("TxnId") or "") for x in refs
+                       if isinstance(x, dict) and x.get("TxnType") == "Payment"]
+        if len(payment_ids) != len(refs) or len(set(payment_ids)) != len(refs):
+            return {**base, "status": "BLOCKED_MULTI_PAYMENT_INVOICE_LINK"}
+        by_payment = {str(p.get("Id") or ""): p for p in payments}
+        by_credit = {str(c.get("Id") or ""): c for c in credits}
+        if (len(by_payment) != len(payments) or len(by_credit) != len(credits)
+                or not all(by_payment) or not all(by_credit)
+                or set(payment_ids) != set(by_payment)):
+            return {**base, "status": "BLOCKED_MULTI_OFFSET_ENDPOINTS"}
+        applied_credits = set()
+        total_applied = Decimal(0)
+        for pid in payment_ids:
+            payment = by_payment[pid]
+            if (str((payment.get("CustomerRef") or {}).get("value") or "") != customer
+                    or (payment.get("CurrencyRef") or {}).get("value") != currency
+                    or number(payment.get("TotalAmt")) != 0
+                    or number(payment.get("UnappliedAmt")) != 0):
+                return {**base, "status": "BLOCKED_MULTI_OFFSET_ACCOUNTING"}
+            lines = payment.get("Line")
+            if not isinstance(lines, list) or len(lines) != 2:
+                return {**base, "status": "BLOCKED_MULTI_OFFSET_LINES"}
+            allocations = {}
+            for line in lines:
+                links = line.get("LinkedTxn")
+                if not isinstance(links, list) or len(links) != 1 or not isinstance(links[0], dict):
+                    return {**base, "status": "BLOCKED_MULTI_OFFSET_LINES"}
+                kind = links[0].get("TxnType")
+                if kind not in ("Invoice", "CreditMemo") or kind in allocations:
+                    return {**base, "status": "BLOCKED_MULTI_OFFSET_LINES"}
+                allocations[kind] = (str(links[0].get("TxnId") or ""), number(line.get("Amount")))
+            if set(allocations) != {"Invoice", "CreditMemo"}:
+                return {**base, "status": "BLOCKED_MULTI_OFFSET_LINES"}
+            linked_invoice, amount = allocations["Invoice"]
+            credit_id, applied = allocations["CreditMemo"]
+            if (linked_invoice != invoice_id or credit_id not in by_credit
+                    or credit_id in applied_credits or amount <= 0 or amount != applied):
+                return {**base, "status": "BLOCKED_MULTI_OFFSET_LINK"}
+            credit = by_credit[credit_id]
+            if (str((credit.get("CustomerRef") or {}).get("value") or "") != customer
+                    or (credit.get("CurrencyRef") or {}).get("value") != currency
+                    or number(credit.get("TotalAmt")) != amount
+                    or number(credit.get("Balance")) != 0):
+                return {**base, "status": "BLOCKED_MULTI_CREDIT_AMOUNT"}
+            applied_credits.add(credit_id)
+            total_applied += amount
+        if applied_credits != set(by_credit):
+            return {**base, "status": "BLOCKED_MULTI_UNAPPLIED_CREDIT"}
+        total = number(invoice.get("TotalAmt"))
+        balance = number(invoice.get("Balance"))
+        if total <= 0 or balance < 0 or total_applied > total or total - total_applied != balance:
+            return {**base, "status": "REVIEW_MULTI_INVOICE_BALANCE"}
+        return {**base, "status": "MULTI_CREDIT_APPLICATION_VERIFIED", "verified": True,
+                "applied": str(total_applied), "remaining": str(balance),
+                "offset_count": len(payment_ids), "currency": currency}
+    except (ValueError, TypeError, AttributeError, KeyError):
+        return base
+
+
 def audit_order_financial_batch(orders: list[dict], invoices: list[dict],
                                 credits: list[dict], payments: list[dict]) -> dict:
     """Route each test order to its own invoice, refund, credit and offset."""
@@ -584,7 +657,7 @@ def audit_order_financial_batch(orders: list[dict], invoices: list[dict],
         invoice = next(inv for inv in invoices if str(inv.get("Id")) == link["invoice_id"])
         result["test_payment"] = audit_pilot_payment_accounting(order, invoice, link)["status"]
         refunds = order.get("refunds")
-        if not isinstance(refunds, list) or len(refunds) != 1:
+        if not isinstance(refunds, list) or not 1 <= len(refunds) <= 20:
             result["status"] = "NOT_CHECKED_REFUND_COUNT_UNSUPPORTED"
             checked.append(result)
             continue
@@ -594,24 +667,27 @@ def audit_order_financial_batch(orders: list[dict], invoices: list[dict],
             result["status"] = "BLOCKED_REFUND_CREDIT_LINK"
             checked.append(result)
             continue
-        refund_id = str(refunds[0].get("id") or "").split("/")[-1]
+        refund_ids = {str(refund.get("id") or "").split("/")[-1] for refund in refunds}
         matched = [c for c in credits if any(
             str(f.get("Name") or "").strip().lower() in ("shopify refund id", "shopify_refund_id")
-            and str(f.get("StringValue") or "").strip().split("/")[-1] == refund_id
+            and str(f.get("StringValue") or "").strip().split("/")[-1] in refund_ids
             for f in (c.get("CustomField") or []) if isinstance(f, dict))]
         links = invoice.get("LinkedTxn")
-        if (len(matched) != 1 or not isinstance(links, list) or len(links) != 1
-                or links[0].get("TxnType") != "Payment"):
+        if (len(matched) != len(refunds) or not isinstance(links, list)
+                or len(links) != len(refunds) or any(not isinstance(x, dict)
+                or x.get("TxnType") != "Payment" for x in links)):
             result["status"] = "BLOCKED_CREDIT_APPLICATION_LINK"
             checked.append(result)
             continue
-        payment_id = str(links[0].get("TxnId") or "")
-        if payment_id in claimed_payments or payment_id not in indexed_payments:
+        payment_ids = [str(x.get("TxnId") or "") for x in links]
+        if (len(set(payment_ids)) != len(payment_ids)
+                or any(pid in claimed_payments or pid not in indexed_payments for pid in payment_ids)):
             result["status"] = "BLOCKED_CROSS_ORDER_PAYMENT_LINK"
             checked.append(result)
             continue
-        claimed_payments.add(payment_id)
-        offset = audit_pilot_credit_application(invoice, matched[0], indexed_payments[payment_id])
+        claimed_payments.update(payment_ids)
+        offset = audit_multi_credit_applications(
+            invoice, matched, [indexed_payments[pid] for pid in payment_ids])
         result["credit_application"] = offset["status"]
         result["verified"] = offset.get("verified") is True
         result["status"] = ("ORDER_REFUND_OFFSET_VERIFIED" if result["verified"]
@@ -1357,9 +1433,11 @@ if __name__ == "__main__" and sys.argv[1:] == ["--pilot-batch"]:
                 except ValueError:
                     continue
                 links = invoice.get("LinkedTxn")
-                if (isinstance(links, list) and len(links) == 1
-                        and links[0].get("TxnType") == "Payment"):
-                    payments.append(read_try_pilot_credit_payment(invoice))
+                if (isinstance(links, list) and 1 <= len(links) <= 20
+                        and all(isinstance(ref, dict) and ref.get("TxnType") == "Payment"
+                                for ref in links)):
+                    for ref in links:
+                        payments.append(read_try_pilot_credit_payment({"LinkedTxn": [ref]}))
             result = audit_order_financial_batch(orders, invoices, credits, payments)
             print(json.dumps(result, ensure_ascii=False))
     except (ValueError, PermissionError, requests.RequestException, KeyError, OSError, TypeError):

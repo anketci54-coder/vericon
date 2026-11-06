@@ -525,6 +525,40 @@ def test_financial_batch_separates_refunds_and_credit_offsets(monkeypatch):
     assert duplicate["status"] == "BLOCKED_FINANCIAL_BATCH_DUPLICATE"
     more=deepcopy(orders);more[1]["refunds"].append(deepcopy(more[1]["refunds"][0]))
     assert a.audit_order_financial_batch(more,invoices,credits,payments)["verified"] is False
+    multi_orders=deepcopy(orders)
+    multi_invoices=deepcopy(invoices)
+    multi_credits=deepcopy(credits)
+    multi_payments=deepcopy(payments)
+    second_refund=deepcopy(multi_orders[0]["refunds"][0])
+    second_refund["id"]="gid://shopify/Refund/201"
+    second_refund["totalRefundedSet"]["shopMoney"]["amount"]="30"
+    second_refund["transactions"]["nodes"][0]["id"]="gid://shopify/OrderTransaction/201"
+    second_refund["transactions"]["nodes"][0]["amountSet"]["shopMoney"]["amount"]="30"
+    multi_orders[0]["refunds"].append(second_refund)
+    multi_invoices[0]["Balance"]=146
+    multi_invoices[0]["LinkedTxn"].append({"TxnId":"P201","TxnType":"Payment"})
+    new_credit=deepcopy(multi_credits[0])
+    new_credit["Id"]="CM201"
+    new_credit["TotalAmt"]=30
+    new_credit["CustomField"][0]["StringValue"]="201"
+    multi_credits.append(new_credit)
+    new_payment=deepcopy(multi_payments[0])
+    new_payment["Id"]="P201"
+    for line in new_payment["Line"]:
+        line["Amount"]=30
+    new_payment["Line"][1]["LinkedTxn"][0]["TxnId"]="CM201"
+    multi_payments.append(new_payment)
+    full=a.audit_order_financial_batch(multi_orders,multi_invoices,multi_credits,multi_payments)
+    assert full["status"] == "FINANCIAL_BATCH_VERIFIED" and full["orders_verified"] == 2
+    assert full["results"][0]["credit_application"] == "MULTI_CREDIT_APPLICATION_VERIFIED"
+    assert full["results"][0]["verified"] is True
+    wrong_balance=deepcopy(multi_invoices)
+    wrong_balance[0]["Balance"]=147
+    assert a.audit_order_financial_batch(multi_orders,wrong_balance,multi_credits,multi_payments)["verified"] is False
+    wrong_credit=deepcopy(multi_payments)
+    wrong_credit[-1]["Line"][1]["LinkedTxn"][0]["TxnId"]="CM101"
+    assert a.audit_order_financial_batch(multi_orders,multi_invoices,multi_credits,wrong_credit)["verified"] is False
+    assert a.audit_order_financial_batch(multi_orders,multi_invoices,multi_credits,multi_payments[:-1])["verified"] is False
 
 
 def test_shopify_order_number_is_not_a_verified_invoice_reference():
