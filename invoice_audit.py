@@ -1091,6 +1091,18 @@ def accept_pilot_tax_correction(current: str, checks_verified: bool,
     """One explicit, read-only-audited correction; preserve the first fingerprint."""
     if checks_verified is not True:
         return {"status": "BLOCKED_UNVERIFIED_CORRECTION", "verified": False}
+    if path is None:
+        from shopify_read import read_shopify_test_order
+        order = read_shopify_test_order()
+        invoice = read_try_pilot_invoice()
+        credits = read_try_pilot_credit_memos()
+        payment = read_try_pilot_credit_payment(invoice)
+        report = pilot_summary_report(order, invoice, credits, payment)
+        fresh = pilot_evidence_fingerprint(order, invoice, credits, payment)
+        if (report.get("current_records_verified") is not True or
+                report.get("history") != "REVIEW_EVIDENCE_CHANGED_RECHECK_REQUIRED" or
+                current != fresh):
+            return {"status": "BLOCKED_UNVERIFIED_LIVE_CORRECTION", "verified": False}
     target = path or (Path(__file__).resolve().parent / "private" / "pilot_evidence_baseline.sha256")
     status = compare_pilot_baseline(current, target)
     if status["status"] != "REVIEW_EVIDENCE_CHANGED_RECHECK_REQUIRED":

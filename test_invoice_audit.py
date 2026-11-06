@@ -750,6 +750,23 @@ def test_approved_tax_correction_preserves_first_evidence(tmp_path):
     assert target.read_text().splitlines()[0] == original
 
 
+def test_live_correction_requires_fresh_matching_financial_evidence(monkeypatch):
+    import shopify_read
+    monkeypatch.setattr(shopify_read, "read_shopify_test_order", lambda: {"id": "O"})
+    monkeypatch.setattr(a, "read_try_pilot_invoice", lambda: {"Id": "145"})
+    monkeypatch.setattr(a, "read_try_pilot_credit_memos", lambda: [])
+    monkeypatch.setattr(a, "read_try_pilot_credit_payment", lambda inv: {"Id": "148"})
+    monkeypatch.setattr(a, "pilot_summary_report", lambda *args: {
+        "current_records_verified": True,
+        "history": "REVIEW_EVIDENCE_CHANGED_RECHECK_REQUIRED"})
+    monkeypatch.setattr(a, "pilot_evidence_fingerprint", lambda *args: "b" * 64)
+    assert a.accept_pilot_tax_correction("a" * 64, True)["status"] == "BLOCKED_UNVERIFIED_LIVE_CORRECTION"
+    monkeypatch.setattr(a, "pilot_summary_report", lambda *args: {
+        "current_records_verified": False,
+        "history": "REVIEW_EVIDENCE_CHANGED_RECHECK_REQUIRED"})
+    assert a.accept_pilot_tax_correction("b" * 64, True)["status"] == "BLOCKED_UNVERIFIED_LIVE_CORRECTION"
+
+
 def test_duplicate_explicit_shopify_references_block_even_if_first_matches():
     order={"id":"gid://shopify/Order/123", "name":"#1001",
            "totalPriceSet":{"shopMoney":{"amount":"216", "currencyCode":"TRY"}}}
