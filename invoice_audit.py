@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 import os
 import re
 import stat
@@ -919,8 +920,39 @@ def audit_pilot_credit_application(invoice: dict, credit: dict, payment: dict) -
         return base
 
 
-def read_try_pilot_invoice() -> dict:
-    """Read the single TRY pilot invoice using a separate sandbox token vault."""
+def select_invoice_by_shopify_order(order: dict, invoices: list[dict]) -> dict:
+    """Require exactly one explicit Shopify order ID in QBO enhanced custom fields."""
+    order_id = str(order.get("id") or "")
+    if not order_id.startswith("gid://shopify/Order/") or not order_id.split("/")[-1].isdigit():
+        raise ValueError("Invalid Shopify order ID")
+    if not isinstance(invoices, list) or len(invoices) > MAX_INVOICES:
+        raise ValueError("Unbounded invoice candidates")
+    matches = []
+    seen = set()
+    for invoice in invoices:
+        if not isinstance(invoice, dict):
+            raise ValueError("Invalid invoice candidate")
+        ident = str(invoice.get("Id") or "")
+        if not ident or ident in seen:
+            raise ValueError("Duplicate or missing invoice ID")
+        seen.add(ident)
+        fields = invoice.get("CustomField")
+        if not isinstance(fields, list):
+            raise ValueError("Invoice custom fields missing")
+        refs = [str(field.get("StringValue") or "").strip() for field in fields
+                if isinstance(field, dict) and str(field.get("Name") or "").strip().lower()
+                in ("shopify order id", "shopify_order_id")]
+        if len(refs) > 1:
+            raise ValueError("Ambiguous invoice order reference")
+        if refs and refs[0] in (order_id, order_id.split("/")[-1]):
+            matches.append(invoice)
+    if len(matches) != 1:
+        raise ValueError("Missing or duplicate linked Shopify invoice")
+    return matches[0]
+
+
+def read_try_pilot_invoice(order: dict | None = None) -> dict:
+    """Read bounded TRY sandbox invoices and resolve by explicit Shopify order ID."""
     from qbo_oauth import Config
     vault = Path(__file__).resolve().parent / "private" / "qbo_try_32e0"
     setup = json.loads((vault / "qbo_setup.json").read_text(encoding="utf-8"))
@@ -931,15 +963,36 @@ def read_try_pilot_invoice() -> dict:
                     redirect_uri=setup["VERICON_QBO_REDIRECT_URI"],
                     private_dir=vault, expected_realm="9341458641399133")
     token, realm = get_access_token(config)
-    response = requests.get(f"{SANDBOX_API}/v3/company/{realm}/invoice/145",
-                            params={"minorversion": "75", "include": "enhancedAllCustomFields"},
-                            headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
-                            timeout=20)
-    response.raise_for_status()
-    invoice = (response.json() or {}).get("Invoice")
-    if not invoice or invoice.get("Id") != "145" or invoice.get("DocNumber") != "1038":
-        raise ValueError("TRY pilot invoice missing or unexpected")
-    return invoice
+    if order is None:
+        from shopify_read import read_shopify_test_order
+        order = read_shopify_test_order()
+    base_url = f"{SANDBOX_API}/v3/company/{realm}"
+    headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
+    count = _get_json(base_url + "/query", "SELECT COUNT(*) FROM Invoice", headers).get("totalCount")
+    if type(count) is not int or count < 0 or count > MAX_INVOICES:
+        raise ValueError("TRY sandbox invoice count unknown or above limit")
+    if not count:
+        raise ValueError("TRY sandbox has no invoices")
+    rows = _get_json(base_url + "/query",
+                     f"SELECT * FROM Invoice STARTPOSITION 1 MAXRESULTS {count}", headers).get("Invoice")
+    if not isinstance(rows, list) or len(rows) != count:
+        raise ValueError("TRY sandbox invoice list incomplete")
+    ids = [str(row.get("Id") or "") for row in rows if isinstance(row, dict)]
+    if len(ids) != count or any(not ident.isdigit() for ident in ids) or len(set(ids)) != count:
+        raise ValueError("TRY sandbox invoice IDs missing or duplicate")
+    def get_detail(ident: str) -> dict:
+        response = requests.get(f"{base_url}/invoice/{ident}",
+                                params={"minorversion": "75", "include": "enhancedAllCustomFields"},
+                                headers=headers, timeout=20)
+        response.raise_for_status()
+        body = response.json()
+        invoice = body.get("Invoice") if not body.get("Fault") else None
+        if not isinstance(invoice, dict) or str(invoice.get("Id")) != ident:
+            raise ValueError("TRY sandbox invoice detail incomplete")
+        return invoice
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        detailed = list(executor.map(get_detail, ids))
+    return select_invoice_by_shopify_order(order, detailed)
 
 
 def read_try_pilot_credit_memos() -> list[dict]:

@@ -53,6 +53,23 @@ def test_batch_summary_does_not_claim_full_invoice_or_customer_error():
     assert result["financial_loss_claimed"] is False
 
 
+def test_shopify_order_invoice_selection_requires_unique_explicit_reference():
+    order={"id":"gid://shopify/Order/19002655932718"}
+    invoices=[{"Id":"1","DocNumber":"1038","CustomField":[]},
+              {"Id":"145","DocNumber":"9999","CustomField":[
+                  {"Name":"Shopify Order ID","StringValue":"19002655932718"}]}]
+    selected=a.select_invoice_by_shopify_order(order,invoices)
+    assert selected["Id"] == "145"
+    with pytest.raises(ValueError, match="duplicate linked"):
+        a.select_invoice_by_shopify_order(order,invoices+[{
+            "Id":"146","CustomField":[{"Name":"Shopify Order ID",
+                                             "StringValue":"19002655932718"}]}])
+    with pytest.raises(ValueError, match="Missing or duplicate"):
+        a.select_invoice_by_shopify_order(order,invoices[:1])
+    with pytest.raises(ValueError, match="Duplicate or missing"):
+        a.select_invoice_by_shopify_order(order,invoices+[invoices[1]])
+
+
 def test_guard_invoice_reader_only_uses_get_and_oauth_read():
     tree=ast.parse(Path(a.__file__).read_text(encoding="utf-8"))
     api_calls=[(n.func.value.id,n.func.attr) for n in ast.walk(tree)
