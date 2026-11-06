@@ -596,6 +596,41 @@ def audit_order_invoice_batch(orders: list[dict], invoices: list[dict]) -> dict:
             "results": results, "bank_settlement_verified": False}
 
 
+def audit_missing_invoice_candidates(orders: list[dict], invoices: list[dict],
+                                     policy: dict | None = None) -> dict:
+    """Only propose missing invoices after external accounting-workflow evidence.
+
+    This function never proves a lost sale, and its policy is not inferred from
+    an existing matching invoice. Runtime must not fabricate merchant approval.
+    """
+    base = {"status": "BLOCKED_ACCOUNTING_METHOD_UNVERIFIED", "verified": False,
+            "missing_sale_proven": False, "candidate_count": 0, "candidates": []}
+    checked = audit_order_invoice_batch(orders, invoices)
+    if checked.get("status") == "BLOCKED_BATCH_INPUT":
+        return {**base, "status": "BLOCKED_INCOMPLETE_ORDER_INVOICE_SNAPSHOT"}
+    if not isinstance(policy, dict) or not all((
+        policy.get("accounting_method") == "one_invoice_per_shopify_order",
+        policy.get("verification_source") == "merchant_workflow_approval",
+        policy.get("order_to_invoice_reference") == "shopify_order_id_custom_field",
+        policy.get("invoice_snapshot_complete") is True,
+        policy.get("sync_window_elapsed") is True,
+    )):
+        return base
+    candidates = []
+    for order, link in zip(orders, checked["results"]):
+        if order.get("test") is not True:
+            return {**base, "status": "BLOCKED_NONTEST_ORDER_SCOPE"}
+        status = link.get("status")
+        if status == "BLOCKED_NO_VERIFIED_ORDER_REFERENCE":
+            candidates.append({"shopify_order_id": order["id"],
+                               "status": "REVIEW_MISSING_INVOICE_CANDIDATE"})
+        elif link.get("verified") is not True:
+            return {**base, "status": "BLOCKED_AMBIGUOUS_INVOICE_EVIDENCE"}
+    return {**base, "status": "REVIEW_MISSING_INVOICE_CANDIDATES" if candidates
+            else "NO_MISSING_INVOICE_CANDIDATES", "scope": "explicit_policy_test_only",
+            "candidate_count": len(candidates), "candidates": candidates}
+
+
 def audit_multi_credit_applications(invoice: dict, credits: list[dict],
                                     payments: list[dict]) -> dict:
     """Validate distinct zero-cash credit offsets and the aggregate invoice balance."""
@@ -1529,6 +1564,7 @@ if __name__ == "__main__" and sys.argv[1:] == ["--pilot-batch"]:
             result = audit_order_financial_batch(orders, invoices, credits, payments)
             report = financial_discrepancy_report(result, orders, invoices)
             report["duplicate_reference_scan"] = audit_duplicate_invoice_references(invoices)
+            report["missing_invoice_scan"] = audit_missing_invoice_candidates(orders, invoices)
             print(json.dumps(report, ensure_ascii=False))
     except (ValueError, PermissionError, requests.RequestException, KeyError, OSError, TypeError):
         print(json.dumps({"status": "BLOCKED_PILOT_BATCH_API_READ", "verified": False}))

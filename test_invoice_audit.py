@@ -480,6 +480,35 @@ def test_multiple_orders_require_distinct_explicit_invoice_links(monkeypatch):
     assert doc_only["orders_verified"] == 0 and doc_only["verified"] is False
 
 
+def test_missing_invoice_needs_explicit_workflow_evidence():
+    order = {"id": "gid://shopify/Order/123", "name": "#123", "test": True,
+             "totalPriceSet": {"shopMoney": {"amount": "100", "currencyCode": "USD"}}}
+    policy = {"accounting_method": "one_invoice_per_shopify_order",
+              "verification_source": "merchant_workflow_approval",
+              "order_to_invoice_reference": "shopify_order_id_custom_field",
+              "invoice_snapshot_complete": True, "sync_window_elapsed": True}
+    unknown = a.audit_missing_invoice_candidates([order], [])
+    assert unknown["status"] == "BLOCKED_ACCOUNTING_METHOD_UNVERIFIED"
+    assert unknown["candidate_count"] == 0 and unknown["missing_sale_proven"] is False
+    for key in policy:
+        incomplete = dict(policy)
+        del incomplete[key]
+        assert a.audit_missing_invoice_candidates([order], [], incomplete)["candidate_count"] == 0
+    candidate = a.audit_missing_invoice_candidates([order], [], policy)
+    assert candidate["status"] == "REVIEW_MISSING_INVOICE_CANDIDATES"
+    assert candidate["candidate_count"] == 1 and candidate["missing_sale_proven"] is False
+    invoice = {"Id": "11", "DocNumber": "200", "TotalAmt": 100,
+               "CurrencyRef": {"value": "USD"},
+               "CustomField": [{"Name": "Shopify Order ID", "StringValue": "123"}]}
+    # An incomplete line-item check cannot be promoted to a confirmed match.
+    ambiguous = a.audit_missing_invoice_candidates([order], [invoice], policy)
+    assert ambiguous["status"] == "BLOCKED_AMBIGUOUS_INVOICE_EVIDENCE"
+    fake = dict(invoice)
+    fake["Id"] = "12"
+    assert a.audit_missing_invoice_candidates([order], [invoice, fake], policy)["status"] == "BLOCKED_AMBIGUOUS_INVOICE_EVIDENCE"
+    assert a.audit_missing_invoice_candidates([dict(order, test=False)], [], policy)["status"] == "BLOCKED_NONTEST_ORDER_SCOPE"
+
+
 def test_duplicate_invoice_references_require_explicit_shared_source():
     first = {"Id": "11", "DocNumber": "101", "TotalAmt": 100,
              "CustomField": [{"Name": "Shopify Order ID", "StringValue": "123"}]}
