@@ -1028,3 +1028,13 @@ def test_duplicate_explicit_shopify_references_block_even_if_first_matches():
     result=a.audit_shopify_invoice_link(order,[inv,{**inv,"DocNumber":"2003"}])
     assert result["status"]=="BLOCKED_MULTIPLE_LINKED_INVOICES"
     assert result["verified"] is False
+    tagged={"Id":"15", "PrivateNote":"Controlled test | VERICON_SHOPIFY_ORDER_ID=123",
+            "CustomField":[], "TotalAmt":216, "CurrencyRef":{"value":"TRY"}}
+    assert a.select_invoice_by_shopify_order(order,[tagged])["Id"]=="15"
+    assert a.audit_shopify_invoice_link(order,[tagged])["status"]=="REFERENCE_AND_TOTAL_MATCH_LINE_ITEMS_NOT_VERIFIED"
+    assert a.audit_duplicate_invoice_references([tagged,{**tagged,"Id":"16"}])["candidate_groups"]==1
+    for invalid in ("Controlled test | VERICON_SHOPIFY_ORDER_ID=12 | VERICON_SHOPIFY_ORDER_ID=123",
+                    "Controlled test | VERICON_SHOPIFY_ORDER_ID=abc"):
+        assert a.audit_shopify_invoice_link(order,[{**tagged,"PrivateNote":invalid}])["status"]=="BLOCKED_INVALID_QBO_ORDER_REFERENCE"
+    conflicting={**tagged,"CustomField":[{"Name":"Shopify Order ID","StringValue":"999"}]}
+    assert a.audit_shopify_invoice_link(order,[conflicting])["status"]=="BLOCKED_INVALID_QBO_ORDER_REFERENCE"

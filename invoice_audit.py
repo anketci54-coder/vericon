@@ -532,6 +532,30 @@ def audit_payment_links(invoices: list[dict], payments: list[dict], credit_memos
         return base
 
 
+def _invoice_shopify_order_ref(invoice: dict) -> str | None:
+    """One explicit order ID from QBO custom field or persisted VERICON note."""
+    fields = invoice.get("CustomField") or []
+    if not isinstance(fields, list):
+        raise ValueError("Invalid invoice custom fields")
+    refs = [str(field.get("StringValue") or "").strip()
+            for field in fields if isinstance(field, dict)
+            and str(field.get("Name") or "").strip().lower()
+            in ("shopify order id", "shopify_order_id")]
+    note = invoice.get("PrivateNote") or ""
+    if not isinstance(note, str):
+        raise ValueError("Invalid invoice note")
+    markers = re.findall(r"(?:^|\s\|\s)VERICON_SHOPIFY_ORDER_ID=([^|\s]+)", note)
+    if len(refs) > 1 or len(markers) > 1:
+        raise ValueError("Ambiguous invoice source references")
+    values = [v.split("/")[-1] if v.startswith("gid://shopify/Order/") else v
+              for v in refs + markers]
+    if not values:
+        return None
+    if any(not v.isdigit() or int(v) <= 0 for v in values) or len(set(values)) != 1:
+        raise ValueError("Conflicting or invalid invoice order references")
+    return values[0]
+
+
 def audit_duplicate_invoice_references(invoices: list[dict]) -> dict:
     """Find shared explicit Shopify order references; never infer a duplicate sale."""
     blocked = {"status": "BLOCKED_DUPLICATE_REFERENCE_EVIDENCE", "verified": False,
@@ -544,24 +568,15 @@ def audit_duplicate_invoice_references(invoices: list[dict]) -> dict:
         if not isinstance(invoice, dict):
             return blocked
         ident = str(invoice.get("Id") or "")
-        fields = invoice.get("CustomField")
-        if not ident or ident in ids or not isinstance(fields, list):
+        if not ident or ident in ids:
             return blocked
         ids.add(ident)
-        refs = [str(field.get("StringValue") or "").strip()
-                for field in fields if isinstance(field, dict)
-                and str(field.get("Name") or "").strip().lower()
-                in ("shopify order id", "shopify_order_id")]
-        if len(refs) > 1:
+        try:
+            ref = _invoice_shopify_order_ref(invoice)
+        except ValueError:
             return blocked
-        if not refs:
-            continue
-        ref = refs[0]
-        if ref.startswith("gid://shopify/Order/"):
-            ref = ref.split("/")[-1]
-        if not ref.isdigit() or int(ref) <= 0:
-            return blocked
-        index.setdefault(ref, []).append(ident)
+        if ref is not None:
+            index.setdefault(ref, []).append(ident)
     candidates = [{"shopify_order_id": "gid://shopify/Order/" + ref,
                    "qbo_invoice_ids": invoice_ids, "invoice_count": len(invoice_ids),
                    "status": "REVIEW_SHARED_SOURCE_REFERENCE"}
@@ -852,13 +867,11 @@ def audit_shopify_invoice_link(order: dict, invoices: list[dict]) -> dict:
         return {**base, "status": "BLOCKED_MISSING_SHOPIFY_AMOUNT"}
     linked = []
     for inv in invoices:
-        fields = inv.get("CustomField") or []
-        if not isinstance(fields, list):
-            return {**base, "status": "BLOCKED_INVALID_QBO_CUSTOM_FIELDS"}
-        explicit_links = [str(field.get("StringValue") or "").strip() for field in fields
-                          if isinstance(field, dict) and str(field.get("Name") or "").strip().lower()
-                          in ("shopify order id", "shopify_order_id")]
-        if order_gid in explicit_links or order_gid.split("/")[-1] in explicit_links:
+        try:
+            ref = _invoice_shopify_order_ref(inv)
+        except ValueError:
+            return {**base, "status": "BLOCKED_INVALID_QBO_ORDER_REFERENCE"}
+        if ref == order_gid.split("/")[-1]:
             linked.append(inv)
     if not linked:
         return base
@@ -1225,7 +1238,7 @@ def audit_pilot_credit_application(invoice: dict, credit: dict, payment: dict) -
 
 
 def select_invoice_by_shopify_order(order: dict, invoices: list[dict]) -> dict:
-    """Require exactly one explicit Shopify order ID in QBO enhanced custom fields."""
+    """Require one explicit Shopify ID in QBO custom fields or tagged note."""
     order_id = str(order.get("id") or "")
     if not order_id.startswith("gid://shopify/Order/") or not order_id.split("/")[-1].isdigit():
         raise ValueError("Invalid Shopify order ID")
@@ -1240,15 +1253,8 @@ def select_invoice_by_shopify_order(order: dict, invoices: list[dict]) -> dict:
         if not ident or ident in seen:
             raise ValueError("Duplicate or missing invoice ID")
         seen.add(ident)
-        fields = invoice.get("CustomField")
-        if not isinstance(fields, list):
-            raise ValueError("Invoice custom fields missing")
-        refs = [str(field.get("StringValue") or "").strip() for field in fields
-                if isinstance(field, dict) and str(field.get("Name") or "").strip().lower()
-                in ("shopify order id", "shopify_order_id")]
-        if len(refs) > 1:
-            raise ValueError("Ambiguous invoice order reference")
-        if refs and refs[0] in (order_id, order_id.split("/")[-1]):
+        ref = _invoice_shopify_order_ref(invoice)
+        if ref == order_id.split("/")[-1]:
             matches.append(invoice)
     if len(matches) != 1:
         raise ValueError("Missing or duplicate linked Shopify invoice")
