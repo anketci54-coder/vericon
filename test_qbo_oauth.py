@@ -37,6 +37,14 @@ def test_authorization_state_rejects_forgery_and_replay(cfg):
     state = parsed["state"][0]
     with pytest.raises(ValueError, match="mismatch"):
         q.check_state(cfg, "incorrect")
+    wrong_realm = q.Config(cfg.client_id, cfg.client_secret, cfg.redirect_uri,
+                           cfg.private_dir, "54321")
+    wrong_client = q.Config("other-app", cfg.client_secret, cfg.redirect_uri,
+                            cfg.private_dir, cfg.expected_realm)
+    with pytest.raises(ValueError, match="tenant binding"):
+        q.check_state(wrong_realm, state)
+    with pytest.raises(ValueError, match="tenant binding"):
+        q.check_state(wrong_client, state)
     q.check_state(cfg, state)
     with pytest.raises(ValueError, match="Missing"):
         q.check_state(cfg, state)

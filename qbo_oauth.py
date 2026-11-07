@@ -107,11 +107,15 @@ def _state_path(config: Config) -> Path:
 
 
 def create_authorization_url(config: Config) -> str:
+    if not config.expected_realm or not str(config.expected_realm).isdigit():
+        raise ValueError("Expected QuickBooks company ID is required")
     _secure_dir(config)
     state = secrets.token_urlsafe(32)
     _atomic_write(
         _state_path(config),
-        json.dumps({"state": state, "expires_at": int(time.time()) + 600}).encode(),
+        json.dumps({"state": state, "expires_at": int(time.time()) + 600,
+                    "expected_realm": config.expected_realm,
+                    "client_id": config.client_id}).encode(),
     )
     return AUTH_URL + "?" + urlencode(
         {"client_id": config.client_id,
@@ -130,6 +134,10 @@ def check_state(config: Config, supplied: str) -> None:
         raise ValueError("Missing or invalid OAuth state") from None
     if not secrets.compare_digest(str(obj.get("state", "")), str(supplied)):
         raise ValueError("OAuth state mismatch")
+    if (not config.expected_realm or
+            not secrets.compare_digest(str(obj.get("expected_realm", "")), str(config.expected_realm)) or
+            not secrets.compare_digest(str(obj.get("client_id", "")), str(config.client_id))):
+        raise ValueError("OAuth state tenant binding mismatch")
     path.unlink(missing_ok=True)  # prevent replay, even on failed token exchange
     if int(obj.get("expires_at", 0)) < int(time.time()):
         raise ValueError("OAuth state expired")
