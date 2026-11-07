@@ -87,6 +87,11 @@ def test_expired_token_refreshes_and_rotates_refresh_token(cfg, monkeypatch):
 
 def test_read_item_is_read_only_and_sanitized(cfg, monkeypatch):
     q._save_tokens(cfg, {"access_token": "AT_NONREAL", "refresh_token": "RT_NONREAL", "expires_in": 3600}, "12345")
+    unbound = q.Config(cfg.client_id, cfg.client_secret, cfg.redirect_uri, cfg.private_dir, None)
+    with pytest.raises(ValueError, match="Expected QuickBooks company ID"):
+        q.get_access_token(unbound)
+    with pytest.raises(ValueError, match="Expected QuickBooks company ID"):
+        q.read_inventory_item(unbound, "VERICON TEST")
     seen = {}
 
     def get(url, *, params, headers, timeout):

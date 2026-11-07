@@ -184,6 +184,8 @@ def complete_authorization(config: Config, *, state: str, code: str, realm: str)
 
 
 def get_access_token(config: Config, *, force_refresh: bool = False) -> tuple[str, str]:
+    if not config.expected_realm or not str(config.expected_realm).isdigit():
+        raise ValueError("Expected QuickBooks company ID is required")
     _secure_dir(config)
     # Allow one renewal at a time: simultaneous renewals can invalidate rotated tokens.
     lock = config.private_dir / "qbo_refresh.lock"
