@@ -5,6 +5,14 @@ ABD Shopify + QuickBooks Online isletmeleri icin mevcut entegrasyonlari DEGISTIR
 
 Olc -> kanit -> tek dar degisiklik -> diff -> test -> gercek Sandbox davranisi -> VPS/GitHub SHA. Test gecmesi musteri basarisi degildir. Bilinmeyen = BLOCK/REVIEW; gercek para kaybi veya banka tahsilati kanitsiz ilan edilmez. Yeni mimari, servis, otomatik finansal yazma, panel ve yan moduller yok. Onceki ayrintili denetim gunlukleri Git tarihinde sakli; tekrar arastirma yapma.
 
+## Kalici buyuk resim: 3 ana urun ayagi (2026-11-07 karar)
+- **1. VERICON Finance [AKTIF]:** Shopify -> QBO siparis, fatura, tahsilat/odeme kayitlari, iade, mahsup, duplicate/missing ve kanitli fark denetimi. Mevcut yazilimi degistirmeden inceleme; banka tahsilati harici kanit olmadan dogrulanmis sayilmaz.
+- **2. VERICON Profit [SONRA]:** Urun/SKU, stok, alis maliyeti, satis fiyati, komisyon, kargo, iade, reklam gideri ve gercek katki/net karlilik. Gider/kur/vergi/maliyet verisi eksikse kar uydurma; operasyon ve stok farklarini ticari kayip saymadan once dogrula.
+- **3. VERICON Intelligence [SONRA]:** Rakiplerin benzer AYNI urunleri hangi fiyata sundugu (urun eslesme guveni, tarih, kaynak, stok/kargo/vergi ayrimi), talep ve yeni urun firsatlari, fiyat/urun karmasi senaryolari, istatistiksel tahmin ve gercek sonraki sonuc olcumu. Tavsiye ve tahmini kazanci gerceklesmis kazanc gibi sunma. Kaynak verisi edinme hukuku, kapsami, guncelligi ve maliyetini once arastir.
+- **Birlesik deger onerisi:** Finansal hatayi bul + gercek kar marjini anla + yeni firsati delille goster. Müşteri faydasi = kanitlanmis tasarruf/ek kar ayri; saptanmis fark ve potansiyel firsat AYRI. Ornek $69/ay abonelik yalniz fiyat/ROI hipotezidir, getiri garantisi DEGIL. Uc ayak ileride tek panelde, gerekirse ayri paketler; pazara giris ABD Shopify + QuickBooks Online.
+- **Degismez sira:** Aktif Finance 12 asamali asagidaki plani BITMEDEN Profit veya Intelligence kodlamasi BASLATMA. Bu iki ayak unutulmayacak ama simdilik urun karari olarak tutulacak; gerekli veri, birim maliyet, musteri talebi ve dogruluk kaniti sonraki karar kapilaridir. Yeni paralel proje, servis veya yol haritasi acma.
+- **Buyuk hacim ilkesi (tasarim hedefi, uygulanmis degil):** API'den fatura basina tekrar tekrar okumak yerine uygun toplu/artimli veri okuma; sadece degisen kayitlari kontrol; fatura bazli bagimsiz sonuc, tenant izolasyonu. 350 bin fatura/2 milyon satir senaryosu kapasite SINAVI degildir. Kuyruk/worker/Redis/Kafka ancak fatura/s, API kotasi, bellek, gecikme ve maliyet olculup gercek ihtiyac kanitlanirsa secilir. Pytest sayisi her islemde calisan kontrol sayisi DEGIL.
+
 ## Tek is sirasi
 - [x] **1. Kod kapsam olcumu:** Shopify/QBO okuma ve denetim yollari incelendi. Kanitlanmis sinirlar belirlendi.
 - [x] **2. ABD muhasebe kapsami:** Yalniz ayri Invoice eslestirmesi v1 kapsaminda. Musterinin gercek muhasebe politikasinin onayi halen GEREKLI.
