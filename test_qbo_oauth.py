@@ -128,6 +128,10 @@ def test_sandbox_loopback_redirect_is_supported(monkeypatch, tmp_path):
     monkeypatch.setenv("VERICON_QBO_CLIENT_SECRET", "fake-secret")
     monkeypatch.setenv("VERICON_QBO_REDIRECT_URI", "http://localhost:8782/oauth/quickbooks/callback")
     monkeypatch.setenv("VERICON_QBO_PRIVATE_DIR", str(tmp_path / "private"))
+    monkeypatch.delenv("VERICON_QBO_EXPECTED_REALM", raising=False)
+    with pytest.raises(ValueError, match="Expected QuickBooks company ID"):
+        q.Config.from_env()
+    monkeypatch.setenv("VERICON_QBO_EXPECTED_REALM", "12345")
     assert q.Config.from_env().redirect_uri.startswith("http://localhost:8782/")
 
 

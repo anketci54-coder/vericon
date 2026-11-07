@@ -55,12 +55,15 @@ class Config:
             raise ValueError("Invalid OAuth redirect host or parameters")
         if parsed.path != "/oauth/quickbooks/callback":
             raise ValueError("OAuth redirect path must be /oauth/quickbooks/callback")
+        expected_realm = os.environ.get("VERICON_QBO_EXPECTED_REALM", "")
+        if not expected_realm.isdigit():
+            raise ValueError("Expected QuickBooks company ID is required")
         return cls(
             client_id=os.environ[keys[0]],
             client_secret=os.environ[keys[1]],
             redirect_uri=redirect_uri,
             private_dir=Path(os.environ.get("VERICON_QBO_PRIVATE_DIR", str(BASE_DIR / "private"))),
-            expected_realm=os.environ.get("VERICON_QBO_EXPECTED_REALM") or None,
+            expected_realm=expected_realm,
         )
 
 
