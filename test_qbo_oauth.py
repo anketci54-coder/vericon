@@ -60,6 +60,11 @@ def test_oauth_exchanges_code_and_encrypts_tokens(cfg, monkeypatch):
     assert oct((cfg.private_dir / "qbo_tokens.enc").stat().st_mode & 0o777) == "0o600"
     assert q.load_tokens(cfg)["realm"] == "12345"
     assert (cfg.private_dir / "qbo.key").stat().st_mode & 0o077 == 0
+    alias = cfg.private_dir.parent / "other-tenant"
+    alias.symlink_to(cfg.private_dir, target_is_directory=True)
+    other = q.Config(cfg.client_id, cfg.client_secret, cfg.redirect_uri, alias, cfg.expected_realm)
+    with pytest.raises(PermissionError, match="non-symlink"):
+        q.get_access_token(other)
 
 
 def test_wrong_sandbox_realm_blocks_token_exchange(cfg, monkeypatch):

@@ -69,8 +69,8 @@ class Config:
 
 def _secure_dir(config: Config) -> None:
     config.private_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if config.private_dir.stat().st_mode & 0o077:
-        raise PermissionError("Private directory permissions must be 0700")
+    if config.private_dir.is_symlink() or config.private_dir.stat().st_mode & 0o077:
+        raise PermissionError("Private directory must be non-symlink with permissions 0700")
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
