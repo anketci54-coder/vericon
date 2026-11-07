@@ -623,11 +623,17 @@ def test_financial_batch_separates_refunds_and_credit_offsets(monkeypatch, curre
     assert a.audit_order_financial_batch(multi_orders,multi_invoices,multi_credits,wrong_credit)["verified"] is False
     assert a.audit_order_financial_batch(multi_orders,multi_invoices,multi_credits,multi_payments[:-1])["verified"] is False
     good_report=a.financial_discrepancy_report(full,multi_orders,multi_invoices)
-    assert good_report["orders_checked"] == 2 and good_report["orders_to_review"] == 0
-    assert all(row["difference_amount"] == "0" and not row["review_required"] for row in good_report["rows"])
+    assert good_report["orders_checked"] == 2 and good_report["orders_to_review"] == 2
+    assert good_report["verified"] is False and good_report["offsets_verified"] is True
+    assert good_report["status"] == "REVIEW_PAYMENT_UNVERIFIED"
+    assert all(row["difference_amount"] == "0" and row["offset_verified"] is True
+               and row["payment_verified"] is False and row["review_required"]
+               for row in good_report["rows"])
+    assert good_report["rows"][0]["shopify_order_id"] == "gid://shopify/Order/101"
+    assert good_report["rows"][0]["qbo_invoice_id"] == "I101"
     wrong_result=a.audit_order_financial_batch(multi_orders,wrong_balance,multi_credits,multi_payments)
     wrong_report=a.financial_discrepancy_report(wrong_result,multi_orders,wrong_balance)
-    assert wrong_report["orders_to_review"] == 1
+    assert wrong_report["orders_to_review"] == 2
     assert wrong_report["rows"][0]["reason"] == "REVIEW_MULTI_INVOICE_BALANCE"
     assert wrong_report["rows"][0]["difference_amount"] == "-1"
     assert wrong_report["rows"][1]["difference_amount"] == "0"

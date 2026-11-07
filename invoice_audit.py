@@ -798,26 +798,39 @@ def financial_discrepancy_report(batch: dict, orders: list[dict], invoices: list
                 invoice = select_invoice_by_shopify_order(order, invoices)
             except ValueError:
                 pass
-        verified = audit.get("verified") is True
+        offset_verified = audit.get("verified") is True
+        payment_status = audit.get("test_payment") or "NOT_CHECKED_PAYMENT"
+        # Credit offsets are not payment settlement; no verified payment source exists here.
+        payment_verified = False
+        review_required = not offset_verified or not payment_verified
         report.append({
             "shopify_order": order.get("name"),
+            "shopify_order_id": order.get("id"),
             "invoice": invoice.get("DocNumber") if invoice else None,
+            "qbo_invoice_id": str(invoice.get("Id")) if invoice else None,
             "currency": (invoice.get("CurrencyRef") or {}).get("value") if invoice else None,
             "invoice_total": str(invoice.get("TotalAmt")) if invoice else None,
             "invoice_balance": str(invoice.get("Balance")) if invoice else None,
-            "difference_amount": "0" if verified else audit.get("difference_amount"),
-            "difference_basis": ("verified_credit_offsets" if verified else
+            "difference_amount": "0" if offset_verified else audit.get("difference_amount"),
+            "difference_basis": ("verified_credit_offsets" if offset_verified else
                                  "expected_minus_recorded_invoice_balance" if
                                  audit.get("difference_amount") is not None else "insufficient_evidence"),
             "reason": audit.get("status"),
-            "review_required": not verified,
+            "offset_verified": offset_verified,
+            "payment_status": payment_status,
+            "payment_verified": payment_verified,
+            "review_required": review_required,
             "evidence": {"order_invoice": audit.get("order_invoice"),
-                         "test_payment": audit.get("test_payment"),
+                         "test_payment": payment_status,
                          "refund_credit": audit.get("refund_credit"),
                          "credit_application": audit.get("credit_application")},
             "bank_settlement_verified": False,
         })
-    return {"status": batch.get("status"), "verified": batch.get("verified") is True,
+    fully_verified = bool(report) and all(not row["review_required"] for row in report)
+    return {"status": batch.get("status") if fully_verified else
+            "REVIEW_PAYMENT_UNVERIFIED" if batch.get("verified") is True else batch.get("status"),
+            "verified": fully_verified,
+            "offsets_verified": batch.get("verified") is True,
             "orders_checked": len(report), "orders_verified": sum(not r["review_required"] for r in report),
             "orders_to_review": sum(r["review_required"] for r in report),
             "rows": report, "bank_settlement_verified": False}
