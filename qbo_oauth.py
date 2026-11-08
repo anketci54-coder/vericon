@@ -31,6 +31,14 @@ BASE_DIR = Path(__file__).resolve().parent
 app = FastAPI(title="VERICON QBO sandbox connector", docs_url=None, redoc_url=None, openapi_url=None)
 
 
+@app.middleware("http")
+async def reject_unauthenticated_data_routes(request, call_next):
+    # No customer identity provider exists yet. Do not expose future data routes by default.
+    if request.url.path not in ("/health", "/oauth/quickbooks/callback"):
+        return PlainTextResponse("Forbidden", status_code=403)
+    return await call_next(request)
+
+
 @dataclass(frozen=True)
 class Config:
     client_id: str

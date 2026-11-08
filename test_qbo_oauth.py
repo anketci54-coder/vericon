@@ -48,6 +48,19 @@ def test_authorization_state_rejects_forgery_and_replay(cfg):
     q.check_state(cfg, state)
     with pytest.raises(ValueError, match="Missing"):
         q.check_state(cfg, state)
+    # Without authenticated tenant sessions, every future data URL must fail closed.
+    import asyncio
+    from starlette.requests import Request
+    from fastapi.responses import PlainTextResponse
+    async def next_route(_request):
+        return PlainTextResponse("allowed")
+    async def gate(path):
+        request = Request({"type": "http", "method": "GET", "path": path,
+                           "headers": [], "query_string": b""})
+        return (await q.reject_unauthenticated_data_routes(request, next_route)).status_code
+    assert asyncio.run(gate("/api/tenant-b/invoices")) == 403
+    assert asyncio.run(gate("/health")) == 200
+    assert asyncio.run(gate("/oauth/quickbooks/callback")) == 200
 
 
 def test_oauth_exchanges_code_and_encrypts_tokens(cfg, monkeypatch):
