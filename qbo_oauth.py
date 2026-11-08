@@ -172,12 +172,18 @@ def _save_tokens(config: Config, payload: dict, realm: str) -> None:
 
 
 def load_tokens(config: Config) -> dict:
+    if not config.expected_realm or not str(config.expected_realm).isdigit():
+        raise ValueError("Expected QuickBooks company ID is required")
+    _secure_dir(config)
     path = config.private_dir / "qbo_tokens.enc"
     if not path.exists():
         raise ValueError("QuickBooks authorization not completed")
-    if path.stat().st_mode & 0o077:
-        raise PermissionError("Token file permissions must be 0600")
-    return json.loads(Fernet(_key(config)).decrypt(path.read_bytes()))
+    if path.is_symlink() or path.stat().st_mode & 0o077:
+        raise PermissionError("Token file must be non-symlink with permissions 0600")
+    record = json.loads(Fernet(_key(config)).decrypt(path.read_bytes()))
+    if record.get("realm") != config.expected_realm:
+        raise ValueError("Authorized company does not match configured sandbox")
+    return record
 
 
 def complete_authorization(config: Config, *, state: str, code: str, realm: str) -> None:

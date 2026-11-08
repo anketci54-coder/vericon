@@ -67,6 +67,14 @@ def test_oauth_exchanges_code_and_encrypts_tokens(cfg, monkeypatch):
     assert b"AT_NONREAL" not in stored and b"RT_NONREAL" not in stored
     assert oct((cfg.private_dir / "qbo_tokens.enc").stat().st_mode & 0o777) == "0o600"
     assert q.load_tokens(cfg)["realm"] == "12345"
+    wrong_realm = q.Config(cfg.client_id, cfg.client_secret, cfg.redirect_uri,
+                           cfg.private_dir, "54321")
+    unknown_realm = q.Config(cfg.client_id, cfg.client_secret, cfg.redirect_uri,
+                             cfg.private_dir, None)
+    with pytest.raises(ValueError, match="Authorized company"):
+        q.load_tokens(wrong_realm)
+    with pytest.raises(ValueError, match="Expected QuickBooks company ID"):
+        q.load_tokens(unknown_realm)
     assert (cfg.private_dir / "qbo.key").stat().st_mode & 0o077 == 0
     alias = cfg.private_dir.parent / "other-tenant"
     alias.symlink_to(cfg.private_dir, target_is_directory=True)
