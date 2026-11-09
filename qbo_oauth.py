@@ -13,14 +13,16 @@ import re
 import secrets
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode, urlparse
 
 import requests
+import jwt
 from cryptography.fernet import Fernet
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 AUTH_URL = "https://appcenter.intuit.com/connect/oauth2"
@@ -28,13 +30,15 @@ TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 SANDBOX_API = "https://sandbox-quickbooks.api.intuit.com"
 SCOPE = "com.intuit.quickbooks.accounting"
 BASE_DIR = Path(__file__).resolve().parent
+SUPABASE_ISSUER = "https://ftzxcvrrgvlhlxufxccz.supabase.co/auth/v1"
+SUPABASE_JWKS = jwt.PyJWKClient(SUPABASE_ISSUER + "/.well-known/jwks.json", timeout=4)
 app = FastAPI(title="VERICON QBO sandbox connector", docs_url=None, redoc_url=None, openapi_url=None)
 
 
 @app.middleware("http")
 async def reject_unauthenticated_data_routes(request, call_next):
-    # No customer identity provider exists yet. Do not expose future data routes by default.
-    if request.url.path not in ("/health", "/oauth/quickbooks/callback"):
+    # Only a token-validation endpoint is allowed; customer data stays closed.
+    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/auth/me"):
         return PlainTextResponse("Forbidden", status_code=403)
     return await call_next(request)
 
@@ -298,6 +302,32 @@ def read_inventory_item_by_sku(config: Config, sku: str) -> dict:
         raise ValueError("QuickBooks SKU missing or ambiguous")
     result["items"] = matches
     return result
+
+
+def _verified_customer_subject(header: str | None) -> str:
+    """Authenticate Supabase user JWT; do not infer tenant ownership from it."""
+    if not isinstance(header, str) or not header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    token = header[7:]
+    if not token or len(token) > 8192 or any(c.isspace() for c in token):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        key = SUPABASE_JWKS.get_signing_key_from_jwt(token).key
+        claims = jwt.decode(token, key, algorithms=["ES256"],
+                            issuer=SUPABASE_ISSUER, audience="authenticated",
+                            options={"require": ["exp", "iat", "iss", "aud", "sub"]}, leeway=0)
+        subject = str(uuid.UUID(claims["sub"]))
+        if claims.get("role") != "authenticated":
+            raise ValueError("Not a user session")
+        return subject
+    except (jwt.PyJWTError, ValueError, TypeError, KeyError):
+        raise HTTPException(status_code=401, detail="Invalid authentication") from None
+
+
+@app.get("/auth/me")
+def auth_identity(request: Request) -> dict:
+    return {"authenticated": True, "subject": _verified_customer_subject(request.headers.get("authorization")),
+            "tenant_authorized": False}
 
 
 @app.get("/health", response_class=PlainTextResponse)

@@ -29,6 +29,43 @@ def cfg(tmp_path):
     )
 
 
+def test_supabase_auth_me_validates_signature_and_identity(monkeypatch):
+    """Isolated signing key only; no access to a customer tenant or real account."""
+    import uuid
+    from types import SimpleNamespace
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from fastapi import HTTPException
+    from starlette.requests import Request
+    import jwt
+
+    private = ec.generate_private_key(ec.SECP256R1())
+    key = private.public_key()
+    monkeypatch.setattr(q, "SUPABASE_JWKS", SimpleNamespace(
+        get_signing_key_from_jwt=lambda token: SimpleNamespace(key=key)))
+    subject = str(uuid.uuid4())
+    claims = {"sub": subject, "iss": q.SUPABASE_ISSUER, "aud": "authenticated",
+              "role": "authenticated", "iat": int(time.time()) - 30,
+              "exp": int(time.time()) + 3600}
+    def signed(**changes):
+        return jwt.encode({**claims, **changes}, private, algorithm="ES256")
+    assert q._verified_customer_subject("Bearer " + signed()) == subject
+    result = q.auth_identity(Request({"type":"http","method":"GET","path":"/auth/me",
+        "headers":[(b"authorization",("Bearer " + signed()).encode())],"query_string":b""}))
+    assert result == {"authenticated": True,"subject":subject,"tenant_authorized":False}
+    invalid = [None, "Basic xx", "Bearer ", "Bearer invalid", "Bearer " + signed(exp=1),
+               "Bearer " + signed(iss="https://other.supabase.co/auth/v1"),
+               "Bearer " + signed(aud="other"),
+               "Bearer " + signed(role="service_role"),
+               "Bearer " + signed(sub="not-a-uuid"),
+               "Bearer " + signed(iat=int(time.time())+1000),
+               "Bearer " + jwt.encode(claims, ec.generate_private_key(ec.SECP256R1()),
+                                       algorithm="ES256")]
+    for header in invalid:
+        with pytest.raises(HTTPException) as exc:
+            q._verified_customer_subject(header)
+        assert exc.value.status_code == 401
+
+
 def test_authorization_state_rejects_forgery_and_replay(cfg):
     url = q.create_authorization_url(cfg)
     parsed = parse_qs(urlparse(url).query)
