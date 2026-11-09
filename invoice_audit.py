@@ -556,6 +556,27 @@ def _invoice_shopify_order_ref(invoice: dict) -> str | None:
     return values[0]
 
 
+def _credit_shopify_refund_ref(credit: dict) -> str | None:
+    """Resolve one explicit refund ID from legacy fields or persisted QBO note."""
+    fields = credit.get("CustomField") or []
+    note = credit.get("PrivateNote") or ""
+    if not isinstance(fields, list) or not isinstance(note, str):
+        raise ValueError("Invalid credit source fields")
+    refs = [str(field.get("StringValue") or "").strip() for field in fields
+            if isinstance(field, dict) and str(field.get("Name") or "").strip().lower()
+            in ("shopify refund id", "shopify_refund_id")]
+    markers = re.findall(r"(?:^|[;|]\s*)VERICON_SHOPIFY_REFUND_ID=([^;|\s]+)", note)
+    if len(refs) > 1 or len(markers) > 1:
+        raise ValueError("Ambiguous credit refund reference")
+    values = [v.split("/")[-1] if v.startswith("gid://shopify/Refund/") else v
+              for v in refs + markers]
+    if not values:
+        return None
+    if any(not v.isdigit() or int(v) <= 0 for v in values) or len(set(values)) != 1:
+        raise ValueError("Invalid or conflicting credit refund references")
+    return "gid://shopify/Refund/" + values[0]
+
+
 def audit_duplicate_invoice_references(invoices: list[dict]) -> dict:
     """Find shared explicit Shopify order references; never infer a duplicate sale."""
     blocked = {"status": "BLOCKED_DUPLICATE_REFERENCE_EVIDENCE", "verified": False,
@@ -762,10 +783,13 @@ def audit_order_financial_batch(orders: list[dict], invoices: list[dict],
             checked.append(result)
             continue
         refund_ids = {str(refund.get("id") or "").split("/")[-1] for refund in refunds}
-        matched = [c for c in credits if any(
-            str(f.get("Name") or "").strip().lower() in ("shopify refund id", "shopify_refund_id")
-            and str(f.get("StringValue") or "").strip().split("/")[-1] in refund_ids
-            for f in (c.get("CustomField") or []) if isinstance(f, dict))]
+        try:
+            matched = [c for c in credits if _credit_shopify_refund_ref(c) in
+                       {"gid://shopify/Refund/" + rid for rid in refund_ids}]
+        except ValueError:
+            result["status"] = "BLOCKED_INVALID_CREDIT_SOURCE_REFERENCE"
+            checked.append(result)
+            continue
         links = invoice.get("LinkedTxn")
         if (len(matched) != len(refunds) or not isinstance(links, list)
                 or len(links) != len(refunds) or any(not isinstance(x, dict)
@@ -892,7 +916,7 @@ def audit_shopify_invoice_link(order: dict, invoices: list[dict]) -> dict:
 
 
 def _audit_pilot_line_items(order: dict, inv: dict, base: dict) -> dict:
-    """Exact two-line pilot reconciliation, not a generic shipping mapping."""
+    """Exact one-product pilot reconciliation with optional zero/paid shipping."""
     currency = (inv.get("CurrencyRef") or {}).get("value")
     def money(obj: dict) -> Decimal:
         value = ((obj or {}).get("shopMoney") or {})
@@ -916,14 +940,14 @@ def _audit_pilot_line_items(order: dict, inv: dict, base: dict) -> dict:
         subtotal = money(order.get("subtotalPriceSet"))
         tax = money(order.get("totalTaxSet"))
         total = money(order.get("totalPriceSet"))
-        if qty != 1 or unit <= 0 or net <= 0 or delivery < 0 or subtotal <= 0 or total <= 0:
+        if qty <= 0 or qty != qty.to_integral_value() or unit <= 0 or net <= 0 or delivery < 0 or subtotal <= 0 or total <= 0:
             return {**base, "status": "BLOCKED_NONPOSITIVE_PILOT_SALE"}
         if qty * unit != net or net != subtotal or net + delivery + tax != total:
             return {**base, "status": "REVIEW_SHOPIFY_COMPONENTS"}
         lines = [line for line in (inv.get("Line") or []) if line.get("DetailType") == "SalesItemLineDetail"]
         unsupported = [line for line in (inv.get("Line") or []) if line.get("DetailType") not in
                        ("SalesItemLineDetail", "SubTotalLineDetail")]
-        if len(lines) != 2 or unsupported:
+        if len(lines) != (1 if delivery == 0 else 2) or unsupported:
             return {**base, "status": "BLOCKED_QBO_UNSUPPORTED_LINES"}
         actual = {}
         for line in lines:
@@ -933,8 +957,9 @@ def _audit_pilot_line_items(order: dict, inv: dict, base: dict) -> dict:
                 return {**base, "status": "BLOCKED_QBO_DUPLICATE_OR_UNKNOWN_ITEMS"}
             actual[sku] = (number(detail.get("Qty")), number(detail.get("UnitPrice")),
                            number(line.get("Amount")), (detail.get("TaxCodeRef") or {}).get("value"))
-        expected = {"VERICON-TEST-001": (qty, unit, net, "NON"),
-                    "SHIPPING-STANDARD": (Decimal(1), delivery, delivery, "NON")}
+        expected = {"VERICON-TEST-001": (qty, unit, net, "NON")}
+        if delivery > 0:
+            expected["SHIPPING-STANDARD"] = (Decimal(1), delivery, delivery, "NON")
         if actual != expected:
             return {**base, "status": "REVIEW_ORDER_INVOICE_LINE_MISMATCH"}
         recorded_tax = number((inv.get("TxnTaxDetail") or {}).get("TotalTax"))
@@ -1096,13 +1121,11 @@ def normalize_refund_credit_api(order: dict, raw_credits: list[dict], invoice: d
         return {**base, "status": "BLOCKED_MISSING_LINKED_INVOICE"}
     expected_customer = str((invoice.get("CustomerRef") or {}).get("value") or "")
     order_ref = str(order.get("id") or "")
-    fields = invoice.get("CustomField")
-    if not expected_customer or not isinstance(fields, list):
+    try:
+        linked_order_id = _invoice_shopify_order_ref(invoice)
+    except ValueError:
         return {**base, "status": "BLOCKED_INVOICE_CUSTOMER_OR_REFERENCE"}
-    linked_order_ids = [str(f.get("StringValue") or "").strip() for f in fields
-                        if isinstance(f, dict) and str(f.get("Name") or "").strip().lower()
-                        in ("shopify order id", "shopify_order_id")]
-    if len(linked_order_ids) != 1 or linked_order_ids[0] not in (order_ref, order_ref.split("/")[-1]):
+    if not expected_customer or linked_order_id != order_ref.split("/")[-1]:
         return {**base, "status": "BLOCKED_INVOICE_CUSTOMER_OR_REFERENCE"}
     try:
         invoice_tax = number((invoice.get("TxnTaxDetail") or {}).get("TotalTax"))
@@ -1133,19 +1156,12 @@ def normalize_refund_credit_api(order: dict, raw_credits: list[dict], invoice: d
         credits = []
         known_refund_ids = {row["id"] for row in refunds}
         for row in raw_credits:
-            fields = row.get("CustomField")
-            if not isinstance(fields, list):
-                return base
-            refs = [str(f.get("StringValue") or "").strip() for f in fields
-                    if isinstance(f, dict) and str(f.get("Name") or "").strip().lower()
-                    in ("shopify refund id", "shopify_refund_id")]
-            if len(refs) > 1:
+            try:
+                ref = _credit_shopify_refund_ref(row)
+            except ValueError:
                 return {**base, "status": "BLOCKED_AMBIGUOUS_CREDIT_REFUND_FIELD"}
-            if not refs:
+            if ref is None:
                 continue
-            ref = refs[0]
-            if ref.isdigit():
-                ref = "gid://shopify/Refund/" + ref
             if ref not in known_refund_ids:
                 continue
             credit_customer = str((row.get("CustomerRef") or {}).get("value") or "")
@@ -1160,15 +1176,9 @@ def normalize_refund_credit_api(order: dict, raw_credits: list[dict], invoice: d
         if result.get("verified") is not True:
             return result
         for row in raw_credits:
-            fields = row.get("CustomField") or []
-            linked_refs = [str(field.get("StringValue") or "").strip() for field in fields
-                           if isinstance(field, dict) and str(field.get("Name") or "").strip().lower()
-                           in ("shopify refund id", "shopify_refund_id")]
-            if not linked_refs:
+            refund_ref = _credit_shopify_refund_ref(row)
+            if refund_ref is None:
                 continue
-            refund_ref = linked_refs[0]
-            if refund_ref.isdigit():
-                refund_ref = "gid://shopify/Refund/" + refund_ref
             if refund_ref not in known_refund_ids:
                 continue
             credit_tax = number((row.get("TxnTaxDetail") or {}).get("TotalTax"))

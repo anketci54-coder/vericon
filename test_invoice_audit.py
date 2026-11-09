@@ -886,6 +886,52 @@ def test_raw_refund_credit_api_adapter_requires_explicit_reference():
     assert a.normalize_refund_credit_api(order,[credit],wrong_invoice)["status"]=="BLOCKED_INVOICE_CUSTOMER_OR_REFERENCE"
 
 
+def test_refund_private_note_reference_matches_and_conflict_blocks():
+    from copy import deepcopy
+    order={"id":"gid://shopify/Order/123","test":True,
+           "totalPriceSet":{"shopMoney":{"amount":"300","currencyCode":"TRY"}},
+           "totalTaxSet":{"shopMoney":{"amount":"0","currencyCode":"TRY"}},
+           "refunds":[{"id":"gid://shopify/Refund/567","order":{"id":"gid://shopify/Order/123"},
+             "totalRefundedSet":{"shopMoney":{"amount":"100","currencyCode":"TRY"}},
+             "transactions":{"pageInfo":{"hasNextPage":False},"nodes":[{
+                 "id":"gid://shopify/OrderTransaction/900","kind":"REFUND","status":"SUCCESS",
+                 "test":True,"amountSet":{"shopMoney":{"amount":"100","currencyCode":"TRY"}}}]}}]}
+    invoice={"TxnTaxDetail":{"TotalTax":0},"CustomerRef":{"value":"customer_1"},
+             "CustomField":[],"PrivateNote":"VERICON_SHOPIFY_ORDER_ID=123"}
+    credit={"Id":"73","TotalAmt":100,"CurrencyRef":{"value":"TRY"},
+            "TxnTaxDetail":{"TotalTax":0},"CustomerRef":{"value":"customer_1"},
+            "CustomField":[],"PrivateNote":"VERICON_SHOPIFY_REFUND_ID=567; VERICON_SHOPIFY_ORDER_ID=123",
+            "Line":[{"DetailType":"SalesItemLineDetail",
+                     "SalesItemLineDetail":{"TaxCodeRef":{"value":"NON"}}}]}
+    assert a.normalize_refund_credit_api(order,[credit],invoice)["verified"] is True
+    conflict=deepcopy(credit)
+    conflict["CustomField"]=[{"Name":"Shopify Refund ID","StringValue":"999"}]
+    result=a.normalize_refund_credit_api(order,[conflict],invoice)
+    assert result["verified"] is False
+    assert result["status"]=="BLOCKED_AMBIGUOUS_CREDIT_REFUND_FIELD"
+
+
+def test_pilot_three_units_with_zero_shipping_and_wrong_line_rejected():
+    order={"id":"gid://shopify/Order/123","name":"#1004",
+           "subtotalPriceSet":{"shopMoney":{"amount":"300","currencyCode":"TRY"}},
+           "totalTaxSet":{"shopMoney":{"amount":"0","currencyCode":"TRY"}},
+           "totalPriceSet":{"shopMoney":{"amount":"300","currencyCode":"TRY"}},
+           "lineItems":{"nodes":[{"sku":"VERICON-TEST-001","quantity":3,
+                "originalUnitPriceSet":{"shopMoney":{"amount":"100","currencyCode":"TRY"}},
+                "discountedTotalSet":{"shopMoney":{"amount":"300","currencyCode":"TRY"}}}]},
+           "shippingLines":{"nodes":[{"title":"Standart",
+                "discountedPriceSet":{"shopMoney":{"amount":"0","currencyCode":"TRY"}}}]}}
+    inv={"Id":"153","DocNumber":"VC-E2E-1004","CurrencyRef":{"value":"TRY"},
+         "TotalAmt":300,"TxnTaxDetail":{"TotalTax":0},"CustomField":[],
+         "PrivateNote":"VERICON_SHOPIFY_ORDER_ID=123",
+         "Line":[{"DetailType":"SalesItemLineDetail","Amount":300,
+                  "SalesItemLineDetail":{"ItemRef":{"name":"VERICON-TEST-001"},
+                       "Qty":3,"UnitPrice":100,"TaxCodeRef":{"value":"NON"}}}]}
+    assert a.audit_shopify_invoice_link(order,[inv])["status"]=="PILOT_ORDER_INVOICE_VERIFIED"
+    bad={**inv,"Line":[{**inv["Line"][0],"Amount":299}]}
+    assert a.audit_shopify_invoice_link(order,[bad])["verified"] is False
+
+
 def test_later_mutations_invalidate_previous_financial_evidence():
     from copy import deepcopy
     order={"id":"gid://shopify/Order/123","totalPriceSet":{"shopMoney":{"amount":"216","currencyCode":"TRY"}},
