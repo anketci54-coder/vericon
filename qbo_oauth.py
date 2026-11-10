@@ -16,7 +16,7 @@ import secrets
 import tempfile
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode, urlparse
@@ -40,7 +40,7 @@ app = FastAPI(title="VERICON QBO sandbox connector", docs_url=None, redoc_url=No
 @app.middleware("http")
 async def reject_unauthenticated_data_routes(request, call_next):
     # Only a token-validation endpoint is allowed; customer data stays closed.
-    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me", "/shopify/ownership/start", "/shopify/ownership/verify"):
+    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me", "/shopify/ownership/start", "/shopify/ownership/verify", "/tenant/quickbooks/start"):
         return PlainTextResponse("Forbidden", status_code=403)
     return await call_next(request)
 
@@ -423,6 +423,40 @@ def _pilot_qbo_owner(header: str | None, realm: str) -> str:
     return subject
 
 
+def _authorized_tenant_connection(header: str | None) -> dict:
+    """Require an authenticated, RLS-visible, ownership-verified tenant mapping."""
+    subject = _verified_customer_subject(header)
+    key = os.environ.get("VERICON_SUPABASE_PUBLISHABLE_KEY", "")
+    if not key:
+        raise HTTPException(status_code=503, detail="Tenant authorization unavailable")
+    try:
+        response = requests.get(
+            SUPABASE_ISSUER.replace("/auth/v1", "/rest/v1") + "/vericon_pilot_connections",
+            params={"select": "user_id,shop_domain,qbo_realm_id,connection_status,ownership_verified",
+                    "user_id": "eq." + subject},
+            headers={"apikey": key, "Authorization": header}, timeout=8)
+        rows = response.json() if response.status_code == 200 else []
+    except (requests.RequestException, ValueError):
+        rows = []
+    if not isinstance(rows, list) or len(rows) != 1:
+        raise HTTPException(status_code=403, detail="Tenant connection not authorized")
+    row = rows[0]
+    realm = row.get("qbo_realm_id")
+    store = row.get("shop_domain")
+    if (row.get("user_id") != subject or row.get("connection_status") != "pilot_linked"
+            or row.get("ownership_verified") is not True or not isinstance(realm, str)
+            or not realm.isdigit() or not isinstance(store, str)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,61}\.myshopify\.com", store)):
+        raise HTTPException(status_code=403, detail="Tenant connection not authorized")
+    return {"user_id": subject, "realm": realm, "store": store}
+
+
+def _tenant_qbo_config(config: Config, realm: str) -> Config:
+    if not isinstance(realm, str) or not realm.isdigit():
+        raise ValueError("Invalid tenant QuickBooks company")
+    return replace(config, expected_realm=realm)
+
+
 def _shopify_proof_file(config: Config) -> Path:
     return config.private_dir / "shopify_owner_challenge.json"
 
@@ -492,6 +526,25 @@ def quickbooks_start(request: Request) -> dict:
     return {"authorization_url": create_authorization_url(config, user_id=owner)}
 
 
+@app.post("/tenant/quickbooks/start")
+def tenant_quickbooks_start(request: Request) -> dict:
+    connection = _authorized_tenant_connection(request.headers.get("authorization"))
+    config = load_saved_setup()
+    if config.redirect_uri != "https://app.vericon.site/oauth/quickbooks/callback":
+        raise HTTPException(status_code=503, detail="Public callback not configured")
+    # Do not let a second user reuse the legacy pilot's company identity.
+    from shopify_read import STORE
+    if connection["store"] == STORE and connection["realm"] == config.expected_realm:
+        raise HTTPException(status_code=409, detail="Pilot must use its existing connection")
+    from shopify_read import load_tenant_setup
+    try:
+        load_tenant_setup(connection["user_id"], connection["store"])
+    except (ValueError, PermissionError, OSError):
+        raise HTTPException(status_code=403, detail="Tenant Shopify connection not configured") from None
+    tenant_config = _tenant_qbo_config(config, connection["realm"])
+    return {"authorization_url": create_authorization_url(tenant_config, user_id=connection["user_id"])}
+
+
 @app.get("/oauth/quickbooks/callback", response_class=PlainTextResponse)
 def quickbooks_callback(state: str = "", code: str = "", realmId: str = "", error: str = "") -> str:
     if error:
@@ -502,6 +555,13 @@ def quickbooks_callback(state: str = "", code: str = "", realmId: str = "", erro
         if config.redirect_uri == "https://app.vericon.site/oauth/quickbooks/callback":
             record = _callback_state_record(config, state)
             owner = str(uuid.UUID(record["user_id"]))
+            recorded_realm = record.get("expected_realm")
+            if not isinstance(recorded_realm, str) or not recorded_realm.isdigit():
+                raise ValueError("Invalid OAuth state tenant realm")
+            # Existing pilot uses the original config; future tenants get their
+            # own realm-scoped config, with no pilot token fallback.
+            if recorded_realm != config.expected_realm:
+                config = _tenant_qbo_config(config, recorded_realm)
         complete_authorization(config, state=state, code=code, realm=realmId, user_id=owner)
     except (ValueError, KeyError, OSError, PermissionError, requests.RequestException) as exc:
         reason = str(exc)

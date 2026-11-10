@@ -449,3 +449,44 @@ def test_parallel_oauth_states_do_not_overwrite_or_cross_authorize(cfg, monkeypa
     q.check_state(cfg,sb,user_id=b)
     with pytest.raises(ValueError,match="Missing"):
         q._callback_state_record(cfg,sa)
+
+
+def test_second_qbo_company_callback_isolated_from_pilot(cfg, monkeypatch):
+    from dataclasses import replace
+    import uuid
+    first, second = str(uuid.uuid4()), str(uuid.uuid4())
+    pilot = replace(cfg, expected_realm="12345")
+    tenant = q._tenant_qbo_config(pilot, "987654321")
+    monkeypatch.setattr(q, "_exchange", lambda config, params: {
+        "access_token": "TEST_TENANT", "refresh_token": "TEST_REFRESH", "expires_in": 3600})
+    q._save_tokens(pilot, {"access_token": "TEST_PILOT", "refresh_token": "TEST_PILOT_REFRESH"},
+                   "12345", user_id=first)
+    before = (cfg.private_dir / "qbo_tokens.enc").read_bytes()
+    state = parse_qs(urlparse(q.create_authorization_url(tenant, user_id=second)).query)["state"][0]
+    record = q._callback_state_record(pilot, state)
+    assert record["expected_realm"] == "987654321"
+    with pytest.raises(ValueError, match="Wrong QuickBooks sandbox company"):
+        q.complete_authorization(tenant, state=state, code="fake", realm="12345", user_id=second)
+    q.complete_authorization(tenant, state=state, code="fake", realm="987654321", user_id=second)
+    assert q.load_tenant_tokens(tenant, user_id=second)["realm"] == "987654321"
+    with pytest.raises(ValueError, match="not available"):
+        q.load_tenant_tokens(pilot, user_id=second)
+    assert (cfg.private_dir / "qbo_tokens.enc").read_bytes() == before
+
+
+def test_tenant_quickbooks_start_fails_closed_without_shopify_setup(cfg, monkeypatch):
+    from fastapi import HTTPException
+    from starlette.requests import Request
+    from dataclasses import replace
+    import uuid
+    owner = str(uuid.uuid4())
+    monkeypatch.setattr(q, "_authorized_tenant_connection", lambda header: {
+        "user_id": owner, "realm": "987654321", "store": "tenant-b.myshopify.com"})
+    monkeypatch.setattr(q, "load_saved_setup", lambda: replace(
+        cfg, redirect_uri="https://app.vericon.site/oauth/quickbooks/callback"))
+    monkeypatch.setattr("shopify_read.load_tenant_setup", lambda user, store: (_ for _ in ()).throw(ValueError("missing")))
+    req = Request({"type":"http","method":"POST","path":"/tenant/quickbooks/start","headers":[]})
+    with pytest.raises(HTTPException) as exc:
+        q.tenant_quickbooks_start(req)
+    assert exc.value.status_code == 403
+    assert not (cfg.private_dir / "qbo_oauth_states").exists()
