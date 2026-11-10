@@ -13,3 +13,6 @@
 
 11. Dis sistemde urun, stok, item, fatura, siparis olusturma/guncelleme/silme islemleri KAPALI. QBO REST istegi sadece GET `/query`; POST yalniz Intuit OAuth token endpointine. Shopify POST yalnizca OAuth token ve `query` GraphQL; `mutation` kullanma. Eger gercek is ihtiyaci varsa ayri onay karari almadan yazma yolu acma.
 12. Silmeden once runtime referanslarini kanitla; `private/` ve OAuth yetki-kurtarma kodunu koru. GitHub ve VPS ayni SHA olmadan bitmis ilan etme.
+
+13. Ticari urune kadar TEK CANLI CHECKLIST `TODO.md` icindeki `Ticari urune kadar ana checklist` bolumudur. Tamamlanan gorevi ancak test + gercek davranis kaniti sonrasi `[x]` yap. Her tamamlanan dar adimda ilgili TODO/README kaydini guncelle, diff/test/canli kontrol yap, VPS commit + GitHub push ve local/remote SHA eslesmesini raporla. Bir adim bloke ise tik atma; gerekce ve sonraki tek isi yaz.
+14. Canli web dosyalari `/var/www/vericon-app` ve Nginx ayarlari Git disindaysa deployment drift'i ayri belirt; kaynak SHA eslesmesini tum VPS dosyalari eslesiyor diye sunma. Gizli dosyalari ve tokenleri Git'e alma.
