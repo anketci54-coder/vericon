@@ -402,3 +402,19 @@ def test_shopify_proof_wrong_code_does_not_verify(cfg, monkeypatch):
         q.shopify_ownership_verify(req)
     assert exc.value.status_code == 400
     assert not (cfg.private_dir / "shopify_owner_verified.json").exists()
+
+
+def test_tenant_token_files_are_isolated_and_legacy_unchanged(cfg):
+    import uuid
+    first, second = str(uuid.uuid4()), str(uuid.uuid4())
+    payload = {"access_token":"TEST_A","refresh_token":"TEST_RA"}
+    q._save_tokens(cfg,payload,"12345",user_id=first)
+    legacy = (cfg.private_dir / "qbo_tokens.enc").read_bytes()
+    q.save_tenant_tokens(cfg,payload,user_id=first)
+    with pytest.raises(ValueError,match="not available"):
+        q.load_tenant_tokens(cfg,user_id=second)
+    q.save_tenant_tokens(cfg,{"access_token":"TEST_B","refresh_token":"TEST_RB"},user_id=second)
+    assert q.load_tenant_tokens(cfg,user_id=first)["access_token"] == "TEST_A"
+    assert q.load_tenant_tokens(cfg,user_id=second)["access_token"] == "TEST_B"
+    assert (cfg.private_dir / "qbo_tokens.enc").read_bytes() == legacy
+    assert q.load_tokens(cfg)["authorized_user_id"] == first

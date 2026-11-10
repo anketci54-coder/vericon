@@ -46,6 +46,7 @@ Kaynak: `VERICON_Ticari_Urun_Checklist_10_Kasim_2026.pdf` (3 sayfa). Her PDF mad
 - [ ] İki bağımsız müşteriyle veri izolasyonu test edilecek. [TİCARİ ENGEL]
   - 2026-11-10 ÖN ÖLÇÜM: Supabase pilot bağlantı sayısı=1, bağımsız kullanıcı=1, Shopify mağazası=1, QBO realm=1, sahipliği doğrulanan=1, finansal erişimi açık=0. `vericon_pilot_connections` RLS etkin; `authenticated` SELECT politikası `auth.uid()=user_id`. SQL transaction içinde `SET LOCAL ROLE authenticated` ve simüle edilmiş JWT sub ile pilot kullanıcı 1 satır, farklı UUID 0 satır gördü; transaction rollback. Bu yalnızca RLS negatif kontrolüdür, ikinci gerçek kullanıcı/mağaza/realm ile uçtan uca izolasyon testi değildir. Görev AÇIK, müşteri finans verisi kapalı.
 - [ ] Müşteri bazlı token depolama ve yetki iptali/yeniden bağlantı akışları tamamlanacak.
+  - 2026-11-10 KISMİ: QBO yeni tenant tokenlarını kullanıcı UUID + QBO realm ile ayrıştıran şifreli özel dosya saklama ve fail-closed okuma yardımcıları eklendi. İki sahte bağımsız kullanıcıyla token çapraz erişimi negatif test PASS; mevcut `qbo_tokens.enc` pilot yolu değiştirilmedi. Yeni çok-tenant OAuth akışına henüz bağlanmadı, Shopify sabit mağaza ve revocation/refresh eksikleri devam ediyor. Bu nedenle görev [ ] açık.
 - [ ] Gereksiz Shopify yazma izinleri, gizli anahtar yenileme ve oturum güvenliği incelenecek.
 
 ### 4. Çok müşterili SaaS mimarisi

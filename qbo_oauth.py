@@ -179,6 +179,20 @@ def _exchange(config: Config, params: dict[str, str]) -> dict:
     return payload
 
 
+def _tenant_token_path(config: Config, *, user_id: str | None = None) -> Path:
+    """Keep legacy pilot untouched; isolate new user/realm pairs in a private directory."""
+    if user_id is None:
+        return config.private_dir / "qbo_tokens.enc"
+    user_id = str(uuid.UUID(user_id))
+    if not config.expected_realm or not str(config.expected_realm).isdigit():
+        raise ValueError("Expected QuickBooks company ID is required")
+    tenant_dir = config.private_dir / "qbo_tenants"
+    tenant_dir.mkdir(mode=0o700, exist_ok=True)
+    if tenant_dir.is_symlink() or tenant_dir.stat().st_mode & 0o077:
+        raise PermissionError("Tenant directory must be non-symlink with mode 0700")
+    return tenant_dir / (user_id + "_" + config.expected_realm + ".enc")
+
+
 def _save_tokens(config: Config, payload: dict, realm: str, *, user_id: str | None = None) -> None:
     _secure_dir(config)
     record = {
@@ -190,6 +204,29 @@ def _save_tokens(config: Config, payload: dict, realm: str, *, user_id: str | No
     }
     blob = Fernet(_key(config)).encrypt(json.dumps(record).encode())
     _atomic_write(config.private_dir / "qbo_tokens.enc", blob)
+
+
+def save_tenant_tokens(config: Config, payload: dict, *, user_id: str) -> None:
+    """Explicit new-tenant path; never overwrite the legacy pilot token."""
+    _secure_dir(config)
+    user_id = str(uuid.UUID(user_id))
+    record = {"access_token": payload["access_token"], "refresh_token": payload["refresh_token"],
+              "expires_at": time.time() + int(payload.get("expires_in", 3600)),
+              "realm": config.expected_realm, "authorized_user_id": user_id}
+    _atomic_write(_tenant_token_path(config, user_id=user_id),
+                  Fernet(_key(config)).encrypt(json.dumps(record).encode()))
+
+
+def load_tenant_tokens(config: Config, *, user_id: str) -> dict:
+    """Fail closed: never fall back to another tenant's or the legacy pilot token."""
+    user_id = str(uuid.UUID(user_id))
+    path = _tenant_token_path(config, user_id=user_id)
+    if not path.is_file() or path.is_symlink() or path.stat().st_mode & 0o077:
+        raise ValueError("Tenant QuickBooks authorization not available")
+    record = json.loads(Fernet(_key(config)).decrypt(path.read_bytes()))
+    if record.get("authorized_user_id") != user_id or record.get("realm") != config.expected_realm:
+        raise ValueError("Tenant QuickBooks authorization mismatch")
+    return record
 
 
 def load_tokens(config: Config) -> dict:
