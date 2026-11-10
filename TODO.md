@@ -13,60 +13,97 @@ Olc -> kanit -> tek dar degisiklik -> diff -> test -> gercek Sandbox davranisi -
 - **Degismez sira:** Aktif Finance 12 asamali asagidaki plani BITMEDEN Profit veya Intelligence kodlamasi BASLATMA. Bu iki ayak unutulmayacak ama simdilik urun karari olarak tutulacak; gerekli veri, birim maliyet, musteri talebi ve dogruluk kaniti sonraki karar kapilaridir. Yeni paralel proje, servis veya yol haritasi acma.
 - **Buyuk hacim ilkesi (tasarim hedefi, uygulanmis degil):** API'den fatura basina tekrar tekrar okumak yerine uygun toplu/artimli veri okuma; sadece degisen kayitlari kontrol; fatura bazli bagimsiz sonuc, tenant izolasyonu. 350 bin fatura/2 milyon satir senaryosu kapasite SINAVI degildir. Kuyruk/worker/Redis/Kafka ancak fatura/s, API kotasi, bellek, gecikme ve maliyet olculup gercek ihtiyac kanitlanirsa secilir. Pytest sayisi her islemde calisan kontrol sayisi DEGIL.
 
-## Ticari urune kadar ana checklist (2026-11-10, TEK KAYNAK)
-Bu kontrol listesi asagidaki 12 adimli Finance teknik planini DEGISTIRMEZ; ticari kabul kapilarini tamamlar. [x] yalniz olcum + kanit + gercek davranis + ilgili VPS/GitHub SHA kontrolunden sonra isaretlenir. [ ] tamamlanmamis, [!] ticari kullanimi engelleyen acik. Her biten dar adimdan sonra TODO.md ve gerekirse README.md/AGENTS.md mevcut dosyalari guncellenir; test, canli davranis, `git diff --check`, commit, push ve uzak SHA eslesmesi yapilir. `private/`, SMTP/OAuth anahtarlari, tokenler ve gercek musteri verisi Git'e KONMAZ. Canli web dosyalari ve Nginx Git disindaysa 'VPS=GitHub birebir' denmez; kod SHA eslesmesi ayrica, deployment drift ayrica raporlanir.
+## Ticari ürüne kadar ANA CHECKLIST (PDF ile birebir madde kapsamı, 2026-11-10)
 
-### 1. Temel altyapi
-- [x] GitHub/VPS kod deposu, Shopify pilot magazasi ve QBO Sandbox API baglantisi; salt-okunur sorgular.
-- [x] 2026-11-10 kaynak kodu VPS ve GitHub `main` SHA eslesmesi (`b5c5a1f` tarihsel baz).
-- [ ] Canli servisin reboot/restart sonrasi otomatik ayaga kalkmasi ve rollback testi.
-- [ ] Gizli bilgi icermeyen canli web/Nginx deployment dosyalarini surum kontrolune alma ve drift denetimi.
+Kaynak: `VERICON_Ticari_Urun_Checklist_10_Kasim_2026.pdf` (3 sayfa). Her PDF maddesi burada TEK BAĞIMSIZ checkbox. Tarihsel teknik ayrıntılar aşağıdaki Finance 12 aşamalı plan ve Git geçmişinde korunur. `[x]` yalnız kanıtlı iş; `[ ]` açık. Yeni bir iş bitince kanıt + gerçek davranış + test + VPS/GitHub SHA eşleşmesi kontrolünden sonra tikle. Web/Nginx canlı dosyaları Git dışında: deployment drift ayrıca izlenecek.
 
-### 2. Finance denetim cekirdegi
-- [x] Siparis-fatura referans eslesmesi, duplicate adaylari, tutar farki, CreditMemo/mahsup, iki kismi iade icin gercek Sandbox pozitif/negatif ornekler (ayrintilar asagida).
-- [ ] Missing Invoice alarmi icin gercek musteri muhasebe politikasi + tam snapshot/senkron penceresi.
-- [ ] Banka/odeme saglayici tahsilati ile muhasebe mahsuplarini harici kanitla ayirma.
-- [ ] Genis orneklemde yanlis pozitif/negatif ve finansal rapor bagimsiz kabul olcumu.
+### 1. Temel altyapı
+- [x] VERICON projesi, GitHub deposu ve VPS çalışma ortamı oluşturuldu.
+- [x] Shopify test mağazası ve QuickBooks Sandbox bağlandı.
+- [x] API üzerinden gerçek veri okuma ve temel test altyapısı doğrulandı.
+- [x] VPS ile GitHub kaynak kodları eşitlendi.
+- [ ] Canlı servislerin yeniden başlatma sonrası otomatik çalışması doğrulanacak.
+- [ ] Canlı web arayüzü ve Nginx yapılandırması, gizli bilgiler hariç, sürüm kontrolüne alınacak.
 
-### 3. Kimlik ve hesap sahipligi [AKTIF]
-- [x] Supabase e-posta OTP ile gercek oturum, JWT dogrulama; Brevo SMTP pilot gonderim.
-- [x] QBO OAuth Sandbox callback + Supabase kullanici UUID + realm baglama, gercek QBO CompanyInfo HTTP 200.
-- [x] Shopify uygulama kurulum/izin kaniti ve gercek GraphQL magazaya API erisimi.
-- [x] Supabase'de QBO OAuth ve Shopify kurulum kanitlari ayri alanlara yazildi; `ownership_verified=false`, `financial_access_enabled=false`.
-- [!] [ ] **SIRADAKI TEK ADIM:** Shopify yonetici kontrol kanitini oturum acmis VERICON kullanicisina tek kullanimlik, sureli ve replay korumali bagla; gercek API read-back + RLS kaydi ile dogrula. Mevcut `vericon.owner_proof` metafield null; rastgele sahiplik PASS ilan etme.
-- [ ] Iki bagimsiz tenant icin gercek pozitif/negatif veri izolasyonu ve tenant-bazli token depolari.
-- [ ] Yetki iptali, token yenileme, oturum suresi, anahtar rotasyonu ve olay logu testleri.
-- [ ] Shopify `write_orders` ve musteri kisisel veri izinlerini kanitli ihtiyaca gore asgariye indir (pilot baglantiyi otomatik bozma).
+### 2. Finance denetim motoru
+- [x] Shopify siparişleri ve QBO faturaları okunuyor; referans eşleştirmesi yapılıyor.
+- [x] Mükerrer fatura referansı ve yanlış tutar senaryoları tespit edildi.
+- [x] CreditMemo, mahsup ve çoklu kısmi iade senaryoları Sandbox ortamında doğrulandı.
+- [x] Kanıtlanmamış finansal sonuçlar incelemeye yönlendiriliyor.
+- [ ] Eksik fatura tespiti müşteri muhasebe politikasına bağlanacak.
+- [ ] Gerçek tahsilat ile muhasebe mahsupları kesin ayrılacak.
+- [ ] Banka/ödeme sağlayıcısı mutabakatı yapılacak.
+- [ ] Daha geniş örneklemde yanlış alarm ve rapor doğruluğu ölçülecek.
 
-### 4. Cok musterili SaaS
-- [ ] Sirket/tenant modeli, baglanti/ayrilma akislari ve tenant bazli erisim.
-- [ ] API kota, idempotency, retry ve kuyruk ihtiyacini olc; 1k/10k/100k islem yuk testleri, gecikme ve maliyet.
+### 3. Kullanıcı ve hesap güvenliği
+- [x] Supabase Auth, Brevo SMTP ve e-posta OTP girişi çalıştırıldı.
+- [x] Gerçek kullanıcı oturumu ve QuickBooks OAuth kullanıcı/şirket eşleşmesi doğrulandı.
+- [x] Shopify uygulama kurulumu ve mağaza API erişimi doğrulandı.
+- [x] Supabase içinde iki bağlantının kanıt kayıtları ayrı tutuluyor.
+- [ ] Shopify mağaza sahipliği giriş yapan VERICON kullanıcısına bağlanacak. [ŞİMDİ / TİCARİ ENGEL]
+- [ ] İki bağımsız müşteriyle veri izolasyonu test edilecek. [TİCARİ ENGEL]
+- [ ] Müşteri bazlı token depolama ve yetki iptali/yeniden bağlantı akışları tamamlanacak.
+- [ ] Gereksiz Shopify yazma izinleri, gizli anahtar yenileme ve oturum güvenliği incelenecek.
 
-### 5. Ticari panel
-- [ ] Giris, sirket secimi, baglanti yonetimi, genel durum ve inceleme listesi.
-- [ ] Siparis/fatura/iade/odeme kanitlari, duplicate/missing, durum gecmisi, CSV/Excel ve bildirimler.
+### 4. Çok müşterili SaaS mimarisi
+- [ ] Müşteri/şirket kayıt modeli ve bağımsız Shopify–QBO bağlantıları tamamlanacak.
+- [ ] Müşteri bazlı erişim sınırları ve iki gerçek tenant negatif izolasyon testi yapılacak.
+- [ ] Bağlanma/ayrılma akışları ve API kota sınırları uygulanacak.
+- [ ] Kuyruk ve yeniden deneme yalnız ölçülen ihtiyaca göre kurulacak.
+- [ ] 1.000, 10.000 ve 100.000 işlemde performans, bütünlük ve maliyet ölçülecek.
 
-### 6. Guvenilirlik ve operasyon
-- [ ] Uctan uca kabul; yanlis alarm, kur/vergi/zaman/yuvarlama, eksik/tekrar/gec veri.
-- [ ] API kesintisi, yedek/geri yukleme, izleme/alarm, guvenlik incelemesi, rollout/rollback.
+### 5. Ticari yönetim paneli
+- [ ] Giriş, şirket seçimi ve Shopify/QBO bağlantı yönetimi.
+- [ ] Genel durum ve sipariş–fatura uyuşmazlık ekranları.
+- [ ] Eksik/mükerrer kayıtlar, ödeme, iade ve mahsup denetimleri.
+- [ ] Hata önem derecesi, inceleme durumu ve kanıt görüntüleme.
+- [ ] Excel/CSV raporları, denetim geçmişi ve bildirimler.
 
-### 7. ABD pilot
-- [ ] Izinli 5-10 Shopify+QBO isletmesi; gercek uyusmazliklarin musteri/muhasebeci teyidi.
-- [ ] Zaman tasarrufu, yanlis alarm, musteri faydasi ve odeme istegi olcumu.
+### 6. Ürün güvenilirliği
+- [ ] Uçtan uca müşteri senaryoları ve yanlış pozitif/negatif ölçümü.
+- [ ] API kesintisi, bağlantı kopması, eksik/geç/yinelenen veri testleri.
+- [ ] Para birimi, zaman dilimi, hesaplama ve yuvarlama kontrolleri.
+- [ ] Yedekleme/geri yükleme, izleme, alarm ve güvenlik incelemesi.
+- [ ] Üretime kontrollü geçiş ve geri dönüş planı.
 
-### 8. Hukuk ve sirket
-- [ ] Sirket/odeme ulkesi, Shopify/Intuit ticari sartlar, gizlilik, kullanim ve veri isleme sozlesmeleri.
-- [ ] Veri saklama/silme, uygulanabilir ABD gizlilik/vergi ve yasal faturalandirma.
+### 7. ABD pilot müşteri testi
+- [ ] 5–10 uygun Shopify + QBO işletmesi belirlenecek; veri izinleri alınacak.
+- [ ] Gerçek hesaplar bağlanacak ve uyuşmazlıklar denetlenecek.
+- [ ] Sonuçlar işletme/muhasebeci tarafından doğrulanacak.
+- [ ] Yanlış alarm, kazanılan zaman ve somut fayda ölçülecek.
+- [ ] Geri bildirimle kapsam ve fiyatlandırma kesinleştirilecek.
 
-### 9. Abonelik
-- [ ] Pilot verisiyle fiyat, deneme, paket/limit ve odeme saglayicisi secimi.
-- [ ] Abonelik, iptal, basarisiz odeme, iade ve fatura uctan uca testi.
+### 8. Şirket, hukuk ve uyumluluk
+- [ ] Satış yapılacak tüzel yapı ve ödeme tahsilatı gereksinimleri belirlenecek.
+- [ ] Shopify ve Intuit ticari uygulama şartları değerlendirilecek.
+- [ ] Gizlilik politikası, kullanım şartları ve veri işleme sözleşmesi hazırlanacak.
+- [ ] Veri saklama/silme, ABD gizlilik ve vergi yükümlülükleri değerlendirilecek.
+- [ ] Faturalandırma ve muhasebe düzeni kurulacak.
 
-### 10. Ticari lansman [BLOCKED]
-- [ ] Uretim guvenligi ve gerekli platform onaylari, ilk musteri baglantisi, ilk gercek denetim.
-- [ ] Ilk dogrulanmis rapor, ilk gercek abonelik tahsilati/fatura ve musteri destegi.
+### 9. Abonelik ve ödeme
+- [ ] Pilot sonuçlarına göre fiyat, deneme ve paket limitleri belirlenecek.
+- [ ] Ödeme sağlayıcısı ve aylık/yıllık abonelik altyapısı kurulacak.
+- [ ] Başarısız ödeme, iptal, iade ve abonelik yetkileri test edilecek.
+- [ ] Gerçek ödeme ve fatura akışı doğrulanacak.
 
-**Ticari kabul kapisi:** Kimlik PASS + Shopify/QBO iki sahiplik PASS + iki tenant izolasyonu PASS + finansal gerceklik PASS + guvenilir panel/operasyon + izinli pilot + hukuk/odeme + ilk ucretli musteri. Bunlar tamamlanmadan `TICARI HAZIR` yazma. Profit ve Intelligence sadece sonraki urun ayaklari, Finance kapanmadan kodlama yok.
+### 10. Ticari lansman
+- [ ] Üretim güvenliği ve gerekli Shopify/Intuit onayları tamamlanacak.
+- [ ] İlk müşteri kaydolup iki hesabını bağlayacak.
+- [ ] İlk gerçek denetim ve rapor müşteri tarafından doğrulanacak.
+- [ ] İlk abonelik tahsilatı ve fatura doğrulanacak.
+- [ ] Destek/hata müdahalesi çalışacak; ilk ücretli müşteri uçtan uca doğrulanacak.
+
+### Ticari kabul kapıları (PDF sayfa 3)
+- [x] Gerçek kullanıcı girişi.
+- [x] Shopify API ve QBO OAuth bağlantıları.
+- [ ] İki hesap için kullanıcı sahipliği (Shopify kullanıcı bağı eksik).
+- [ ] Müşteriler arası izolasyon.
+- [ ] Finansal denetim doğruluğunun tam ticari kabulü.
+- [ ] Ticari panel ve operasyon güvenliği.
+- [ ] Gerçek müşteri pilotu.
+- [ ] Hukuk, ödeme ve ilk ücretli müşteri.
+
+**Kesin sıra:** Shopify sahipliği → iki müşteri izolasyonu → Finance açıkları → SaaS altyapısı → panel → güvenilirlik testleri → ABD pilotu → hukuk/ödeme hazırlığı → ticari lansman. Profit/Intelligence Finance ticari kabulünden sonra. `ownership_verified=false`, `financial_access_enabled=false` korunur.
 
 ## Tek is sirasi
 - [x] **1. Kod kapsam olcumu:** Shopify/QBO okuma ve denetim yollari incelendi. Kanitlanmis sinirlar belirlendi.
