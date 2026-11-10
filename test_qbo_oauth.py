@@ -73,10 +73,10 @@ def test_oauth_persists_verified_user_and_keeps_it_on_refresh(cfg, monkeypatch):
     monkeypatch.setattr(q, "_exchange", lambda config, params: {
         "access_token": "FAKE_ACCESS", "refresh_token": "FAKE_REFRESH", "expires_in": 3600})
     q.complete_authorization(cfg, state=state, code="fake", realm="12345", user_id=owner)
-    assert q.load_tokens(cfg)["authorized_user_id"] == owner
-    q._save_tokens(cfg, {"access_token": "NEW_FAKE", "refresh_token": "NEW_REFRESH", "expires_in": 3600},
-                   "12345", user_id=q.load_tokens(cfg).get("authorized_user_id"))
-    assert q.load_tokens(cfg)["authorized_user_id"] == owner
+    assert q.load_tenant_tokens(cfg,user_id=owner)["authorized_user_id"] == owner
+    q.save_tenant_tokens(cfg, {"access_token": "NEW_FAKE", "refresh_token": "NEW_REFRESH", "expires_in": 3600},
+                         user_id=q.load_tenant_tokens(cfg,user_id=owner)["authorized_user_id"])
+    assert q.load_tenant_tokens(cfg,user_id=owner)["authorized_user_id"] == owner
 
 
 def test_pilot_qbo_owner_requires_matching_rls_record(monkeypatch):
@@ -418,3 +418,19 @@ def test_tenant_token_files_are_isolated_and_legacy_unchanged(cfg):
     assert q.load_tenant_tokens(cfg,user_id=second)["access_token"] == "TEST_B"
     assert (cfg.private_dir / "qbo_tokens.enc").read_bytes() == legacy
     assert q.load_tokens(cfg)["authorized_user_id"] == first
+
+
+def test_user_oauth_callback_does_not_overwrite_existing_pilot(cfg, monkeypatch):
+    import uuid
+    owner, other = str(uuid.uuid4()), str(uuid.uuid4())
+    monkeypatch.setattr(q, "_exchange", lambda config, params: {
+        "access_token": "FRESH", "refresh_token": "FRESH_R", "expires_in": 3600})
+    q._save_tokens(cfg,{"access_token":"PILOT","refresh_token":"PILOT_R"},"12345",user_id=other)
+    before=(cfg.private_dir/"qbo_tokens.enc").read_bytes()
+    state=parse_qs(urlparse(q.create_authorization_url(cfg,user_id=owner)).query)["state"][0]
+    q.complete_authorization(cfg,state=state,code="fake",realm="12345",user_id=owner)
+    assert q.load_tenant_tokens(cfg,user_id=owner)["access_token"] == "FRESH"
+    assert (cfg.private_dir/"qbo_tokens.enc").read_bytes() == before
+    assert q.load_tokens(cfg)["access_token"] == "PILOT"
+    with pytest.raises(ValueError,match="not available"):
+        q.load_tenant_tokens(cfg,user_id=other)

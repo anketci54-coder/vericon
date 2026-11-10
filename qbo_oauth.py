@@ -253,7 +253,10 @@ def complete_authorization(config: Config, *, state: str, code: str, realm: str,
     check_state(config, state, user_id=user_id)
     token = _exchange(config, {"grant_type": "authorization_code", "code": code,
                                "redirect_uri": config.redirect_uri})
-    _save_tokens(config, token, realm, user_id=user_id)
+    if user_id is not None:
+        save_tenant_tokens(config, token, user_id=user_id)
+    else:
+        _save_tokens(config, token, realm, user_id=None)
 
 
 def get_access_token(config: Config, *, force_refresh: bool = False) -> tuple[str, str]:
