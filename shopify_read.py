@@ -153,6 +153,23 @@ def get_access_token(config: Config) -> str:
     return str(body["access_token"])
 
 
+def verify_installed_store(config: Config) -> dict:
+    """Verify the app token targets the approved shop; not customer ownership proof."""
+    token = get_access_token(config)
+    response = requests.post(
+        f"https://{STORE}/admin/api/{API_VERSION}/graphql.json",
+        json={"query": "query { shop { myshopifyDomain } }"},
+        headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"},
+        timeout=25,
+    )
+    if response.status_code != 200:
+        raise ValueError(f"Shopify store verification refused (HTTP {response.status_code})")
+    body = response.json()
+    if body.get("errors") or (body.get("data") or {}).get("shop", {}).get("myshopifyDomain") != STORE:
+        raise ValueError("Shopify store identity mismatch or unverified")
+    return {"store": STORE, "app_access_verified": True, "user_ownership_verified": False}
+
+
 def read_stock(config: Config, sku: str) -> dict:
     if not SKU_PATTERN.fullmatch(sku):
         raise ValueError("Invalid SKU; refusing unsafe inventory query")

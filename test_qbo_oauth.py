@@ -66,6 +66,55 @@ def test_supabase_auth_me_validates_signature_and_identity(monkeypatch):
         assert exc.value.status_code == 401
 
 
+def test_oauth_persists_verified_user_and_keeps_it_on_refresh(cfg, monkeypatch):
+    import uuid
+    owner = str(uuid.uuid4())
+    state = parse_qs(urlparse(q.create_authorization_url(cfg, user_id=owner)).query)["state"][0]
+    monkeypatch.setattr(q, "_exchange", lambda config, params: {
+        "access_token": "FAKE_ACCESS", "refresh_token": "FAKE_REFRESH", "expires_in": 3600})
+    q.complete_authorization(cfg, state=state, code="fake", realm="12345", user_id=owner)
+    assert q.load_tokens(cfg)["authorized_user_id"] == owner
+    q._save_tokens(cfg, {"access_token": "NEW_FAKE", "refresh_token": "NEW_REFRESH", "expires_in": 3600},
+                   "12345", user_id=q.load_tokens(cfg).get("authorized_user_id"))
+    assert q.load_tokens(cfg)["authorized_user_id"] == owner
+
+
+def test_pilot_qbo_owner_requires_matching_rls_record(monkeypatch):
+    import uuid
+    from fastapi import HTTPException
+    owner = str(uuid.uuid4())
+    monkeypatch.setattr(q, "_verified_customer_subject", lambda header: owner if header == "Bearer valid" else (_ for _ in ()).throw(HTTPException(401)))
+    monkeypatch.setenv("VERICON_SUPABASE_PUBLISHABLE_KEY", "test-public-key")
+    seen = {}
+    def get(url, *, params, headers, timeout):
+        seen.update(params=params, headers=headers)
+        return FakeResponse([{"qbo_realm_id": "12345", "connection_status": "pilot_linked"}])
+    monkeypatch.setattr(q.requests, "get", get)
+    assert q._pilot_qbo_owner("Bearer valid", "12345") == owner
+    assert seen["params"]["user_id"] == "eq." + owner
+    assert seen["headers"]["Authorization"] == "Bearer valid"
+    with pytest.raises(HTTPException) as err:
+        q._pilot_qbo_owner("Bearer valid", "wrong-company")
+    assert err.value.status_code == 403
+    monkeypatch.delenv("VERICON_SUPABASE_PUBLISHABLE_KEY")
+    with pytest.raises(HTTPException) as err:
+        q._pilot_qbo_owner("Bearer valid", "12345")
+    assert err.value.status_code == 503
+
+
+def test_user_bound_oauth_state_rejects_wrong_user_and_legacy_callback(cfg):
+    import uuid
+    owner, stranger = str(uuid.uuid4()), str(uuid.uuid4())
+    state = parse_qs(urlparse(q.create_authorization_url(cfg, user_id=owner)).query)["state"][0]
+    with pytest.raises(ValueError, match="user binding"):
+        q.check_state(cfg, state, user_id=stranger)
+    with pytest.raises(ValueError, match="user binding"):
+        q.check_state(cfg, state)
+    q.check_state(cfg, state, user_id=owner)
+    with pytest.raises(ValueError, match="Missing"):
+        q.check_state(cfg, state, user_id=owner)
+
+
 def test_authorization_state_rejects_forgery_and_replay(cfg):
     url = q.create_authorization_url(cfg)
     parsed = parse_qs(urlparse(url).query)

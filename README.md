@@ -98,3 +98,10 @@ python3 -B -m pytest -q -p no:cacheprovider test_qbo_oauth.py test_shopify_read.
 - Diger 2 PO'nun Bill bagi yok; bunlar hata diye raporlanmaz (NOT_CHECKED_NO_BILL_LINK). Kismi faturalar, desteklenmeyen satirlar ve bir faturanin birden cok PO'ya baglanmasi konservatif engellenir.
 - Bu **tek kaynak Sandbox iki-belge karsilastirmasidir**; teslimatin fiilen yapildigi, fatura kaydinin hukuken dogru oldugu, odemenin bankadan gectigi veya Shopify siparisiyle eslestirildigi anlamina GELMEZ.
 - invoice_audit.py, test_invoice_audit.py icinde uygulandi: **70 yerel test** ve yeni API sorgusunun gercek yaniti ile dogrulandi. Yeni dosya, servis, zamanlayici, yeni scope veya veri mutasyonu olusturulmadi.
+
+### 2026-11-10 pilot güvenlik devri (güncel)
+- Kaynak durum/iş sırası: `TODO.md` Aşama 8 (2026-11-10). Eski tarihli bölümler tarihsel kanıttır; güncel durumu geçersiz kılmaz.
+- Supabase gerçek OTP girişi ve QBO OAuth Sandbox kullanıcı/realm eşleşmesi PASS. Shopify uygulaması kurulu, API mağaza kimliği PASS; **Shopify kullanıcısına bağlı sahiplik ispatı BEKLİYOR**. `ownership_verified=false`, `financial_access_enabled=false`; ticari müşteri veri endpoint'i AÇMA.
+- HTTPS pilot runtime: `/var/www/vericon-app` (giriş HTML/JS Git dışında), Nginx `app.vericon.site` -> localhost:8785 QBO FastAPI. QBO kimlik bilgileri ve tokenler `private/` altında; GitHub'a KESİNLİKLE gönderme. Runtime portu kalıcı servis yöneticisiyle henüz sabitlenmedi; process restart dayanıklılığı ayrıca doğrulanmalı.
+- Shopify mevcut `client_credentials` ve `write_orders` scope'u: pilot API çalışıyor, ancak salt-okunur asgari yetki hedefi için daha sonra güvenli kapsam daraltma gerekli. Mevcut mağaza veya QBO tokenini izinsiz değiştirme.
+- Test: 139 pytest PASS; gerçek QBO CompanyInfo HTTP 200, Shopify shop GraphQL PASS. Gerçek iki müşteri izolasyonu ve Shopify kullanıcı sahipliği PASS DEĞİL.

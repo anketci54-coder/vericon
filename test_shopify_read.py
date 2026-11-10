@@ -80,6 +80,26 @@ def test_get_token_only_approved_store_and_read_scopes(cred, monkeypatch):
         s.get_access_token(s.Config("id", "secret", "evil.myshopify.com"))
 
 
+def test_installed_store_verification_is_not_user_ownership(cred, monkeypatch):
+    seen = []
+    def post(url, *, data=None, json=None, headers=None, timeout=None):
+        seen.append(url)
+        if url.endswith('/oauth/access_token'):
+            return FakeResponse(body={"access_token":"FAKE", "scope":"read_products,read_inventory,read_locations"})
+        return FakeResponse(body={"data":{"shop":{"myshopifyDomain":"hudys3-p0.myshopify.com"}}})
+    monkeypatch.setattr(s.requests, "post", post)
+    result = s.verify_installed_store(cred)
+    assert result == {"store":s.STORE,"app_access_verified":True,"user_ownership_verified":False}
+    assert len(seen) == 2
+    def wrong(url, *, data=None, json=None, headers=None, timeout=None):
+        if url.endswith('/oauth/access_token'):
+            return FakeResponse(body={"access_token":"FAKE", "scope":"read_products,read_inventory,read_locations"})
+        return FakeResponse(body={"data":{"shop":{"myshopifyDomain":"other.myshopify.com"}}})
+    monkeypatch.setattr(s.requests, "post", wrong)
+    with pytest.raises(ValueError, match="mismatch"):
+        s.verify_installed_store(cred)
+
+
 def test_missing_read_scope_blocks_access(cred, monkeypatch):
     monkeypatch.setattr(s.requests, "post",
         lambda *args, **kwargs: FakeResponse(body={"access_token": "token", "scope": "read_products"}))
@@ -277,7 +297,7 @@ def test_shopify_source_has_no_graphql_mutation_calls():
                 continue
             if isinstance(call.func.value, ast.Name) and call.func.value.id == "requests":
                 outbound.add((fn.name, call.func.attr))
-    assert outbound == {("get_access_token", "post"), ("read_stock", "post"),
+    assert outbound == {("get_access_token", "post"), ("verify_installed_store", "post"), ("read_stock", "post"),
                         ("read_shopify_test_order", "post"),
                         ("read_shopify_test_orders", "post")}
     assert s.STOCK_QUERY.lstrip().startswith("query ")

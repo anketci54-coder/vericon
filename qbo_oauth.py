@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import fcntl
 import os
 import re
@@ -38,7 +39,7 @@ app = FastAPI(title="VERICON QBO sandbox connector", docs_url=None, redoc_url=No
 @app.middleware("http")
 async def reject_unauthenticated_data_routes(request, call_next):
     # Only a token-validation endpoint is allowed; customer data stays closed.
-    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/auth/me"):
+    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me"):
         return PlainTextResponse("Forbidden", status_code=403)
     return await call_next(request)
 
@@ -118,7 +119,9 @@ def _state_path(config: Config) -> Path:
     return config.private_dir / "qbo_oauth_state.json"
 
 
-def create_authorization_url(config: Config) -> str:
+def create_authorization_url(config: Config, *, user_id: str | None = None) -> str:
+    if user_id is not None:
+        user_id = str(uuid.UUID(user_id))
     if not config.expected_realm or not str(config.expected_realm).isdigit():
         raise ValueError("Expected QuickBooks company ID is required")
     _secure_dir(config)
@@ -127,7 +130,7 @@ def create_authorization_url(config: Config) -> str:
         _state_path(config),
         json.dumps({"state": state, "expires_at": int(time.time()) + 600,
                     "expected_realm": config.expected_realm,
-                    "client_id": config.client_id}).encode(),
+                    "client_id": config.client_id, "user_id": user_id}).encode(),
     )
     return AUTH_URL + "?" + urlencode(
         {"client_id": config.client_id,
@@ -138,7 +141,7 @@ def create_authorization_url(config: Config) -> str:
     )
 
 
-def check_state(config: Config, supplied: str) -> None:
+def check_state(config: Config, supplied: str, *, user_id: str | None = None) -> None:
     path = _state_path(config)
     try:
         obj = json.loads(path.read_bytes())
@@ -150,6 +153,10 @@ def check_state(config: Config, supplied: str) -> None:
             not secrets.compare_digest(str(obj.get("expected_realm", "")), str(config.expected_realm)) or
             not secrets.compare_digest(str(obj.get("client_id", "")), str(config.client_id))):
         raise ValueError("OAuth state tenant binding mismatch")
+    if user_id is not None:
+        user_id = str(uuid.UUID(user_id))
+    if obj.get("user_id") != user_id:
+        raise ValueError("OAuth state user binding mismatch")
     path.unlink(missing_ok=True)  # prevent replay, even on failed token exchange
     if int(obj.get("expires_at", 0)) < int(time.time()):
         raise ValueError("OAuth state expired")
@@ -171,13 +178,14 @@ def _exchange(config: Config, params: dict[str, str]) -> dict:
     return payload
 
 
-def _save_tokens(config: Config, payload: dict, realm: str) -> None:
+def _save_tokens(config: Config, payload: dict, realm: str, *, user_id: str | None = None) -> None:
     _secure_dir(config)
     record = {
         "access_token": payload["access_token"],
         "refresh_token": payload["refresh_token"],
         "expires_at": time.time() + int(payload.get("expires_in", 3600)),
         "realm": realm,
+        "authorized_user_id": user_id,
     }
     blob = Fernet(_key(config)).encrypt(json.dumps(record).encode())
     _atomic_write(config.private_dir / "qbo_tokens.enc", blob)
@@ -198,15 +206,16 @@ def load_tokens(config: Config) -> dict:
     return record
 
 
-def complete_authorization(config: Config, *, state: str, code: str, realm: str) -> None:
-    check_state(config, state)
+def complete_authorization(config: Config, *, state: str, code: str, realm: str,
+                           user_id: str | None = None) -> None:
     if not code or not realm or not realm.isdigit():
         raise ValueError("Invalid Intuit callback")
     if config.expected_realm and realm != config.expected_realm:
         raise ValueError("Wrong QuickBooks sandbox company")
+    check_state(config, state, user_id=user_id)
     token = _exchange(config, {"grant_type": "authorization_code", "code": code,
                                "redirect_uri": config.redirect_uri})
-    _save_tokens(config, token, realm)
+    _save_tokens(config, token, realm, user_id=user_id)
 
 
 def get_access_token(config: Config, *, force_refresh: bool = False) -> tuple[str, str]:
@@ -226,7 +235,7 @@ def get_access_token(config: Config, *, force_refresh: bool = False) -> tuple[st
         updated = _exchange(config, {"grant_type": "refresh_token",
                                      "refresh_token": record["refresh_token"]})
         # Intuit can rotate refresh tokens; replace BOTH atomically.
-        _save_tokens(config, updated, record["realm"])
+        _save_tokens(config, updated, record["realm"], user_id=record.get("authorized_user_id"))
         return updated["access_token"], record["realm"]
 
 
@@ -335,14 +344,61 @@ def health() -> str:
     return "VERICON-QBO-SANDBOX-CONNECTOR"
 
 
+def _pilot_qbo_owner(header: str | None, realm: str) -> str:
+    subject = _verified_customer_subject(header)
+    api_key = os.environ.get("VERICON_SUPABASE_PUBLISHABLE_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Pilot authorization not configured")
+    try:
+        response = requests.get(
+            SUPABASE_ISSUER.replace("/auth/v1", "/rest/v1") + "/vericon_pilot_connections",
+            params={"select": "qbo_realm_id,connection_status", "user_id": "eq." + subject},
+            headers={"apikey": api_key, "Authorization": header}, timeout=8)
+        rows = response.json() if response.status_code == 200 else []
+    except (requests.RequestException, ValueError):
+        rows = []
+    if not isinstance(rows, list) or len(rows) != 1 or rows[0].get("qbo_realm_id") != realm or rows[0].get("connection_status") != "pilot_linked":
+        raise HTTPException(status_code=403, detail="Pilot account authorization denied")
+    return subject
+
+
+@app.post("/oauth/quickbooks/start")
+def quickbooks_start(request: Request) -> dict:
+    config = load_saved_setup()
+    if config.redirect_uri != "https://app.vericon.site/oauth/quickbooks/callback":
+        raise HTTPException(status_code=503, detail="Public callback not configured")
+    owner = _pilot_qbo_owner(request.headers.get("authorization"), config.expected_realm or "")
+    return {"authorization_url": create_authorization_url(config, user_id=owner)}
+
+
 @app.get("/oauth/quickbooks/callback", response_class=PlainTextResponse)
 def quickbooks_callback(state: str = "", code: str = "", realmId: str = "", error: str = "") -> str:
     if error:
         raise HTTPException(status_code=400, detail="Intuit authorization was rejected")
     try:
-        complete_authorization(Config.from_env(), state=state, code=code, realm=realmId)
-    except (ValueError, PermissionError, requests.RequestException):
-        # Do not leak authorization code, realm ID or tokens into the browser.
+        config = load_saved_setup()
+        owner = None
+        if config.redirect_uri == "https://app.vericon.site/oauth/quickbooks/callback":
+            record = json.loads(_state_path(config).read_text(encoding="utf-8"))
+            owner = str(uuid.UUID(record["user_id"]))
+        complete_authorization(config, state=state, code=code, realm=realmId, user_id=owner)
+    except (ValueError, KeyError, OSError, PermissionError, requests.RequestException) as exc:
+        reason = str(exc)
+        if isinstance(exc, FileNotFoundError):
+            category = "missing_oauth_state_file"
+        elif isinstance(exc, json.JSONDecodeError):
+            category = "invalid_oauth_state_file"
+        elif reason == "Wrong QuickBooks sandbox company":
+            category = "realm_mismatch"
+        elif reason.startswith("Intuit token exchange refused (HTTP "):
+            category = "token_exchange_http_failure"
+        elif reason in ("Missing or invalid OAuth state", "OAuth state mismatch", "OAuth state expired"):
+            category = "state_validation_failure"
+        elif reason == "OAuth state user binding mismatch":
+            category = "user_binding_failure"
+        else:
+            category = "other_failure"
+        logging.getLogger("uvicorn.error").warning("QBO_OAUTH_CALLBACK_FAILURE category=%s exception_type=%s", category, type(exc).__name__)
         raise HTTPException(status_code=400, detail="QuickBooks authorization failed") from None
     return "QuickBooks Sandbox connection authorized. You can close this tab."
 
