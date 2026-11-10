@@ -40,8 +40,9 @@ Kaynak: `VERICON_Ticari_Urun_Checklist_10_Kasim_2026.pdf` (3 sayfa). Her PDF mad
 - [x] Gerçek kullanıcı oturumu ve QuickBooks OAuth kullanıcı/şirket eşleşmesi doğrulandı.
 - [x] Shopify uygulama kurulumu ve mağaza API erişimi doğrulandı.
 - [x] Supabase içinde iki bağlantının kanıt kayıtları ayrı tutuluyor.
-- [ ] Shopify mağaza sahipliği giriş yapan VERICON kullanıcısına bağlanacak. [ŞİMDİ / TİCARİ ENGEL]
+- [x] Shopify mağaza sahipliği giriş yapan VERICON kullanıcısına bağlanacak. [2026-11-10 DOĞRULANDI]
   - 2026-11-10: `/shopify/ownership/start` ve `/verify` JWT + Supabase RLS pilot mağaza bağlamı, 10 dakika süreli rastgele meydan okuma, SHA256 hash, Shopify Admin API salt-okunur metafield sorgusu ve başarılı eşleşmede tek kullanımlık dosya tüketimiyle hazırlandı. Web arayüzüne iki buton eklendi; gerçek kullanıcı kodu mağazaya kaydedip doğrulamadığı için [ ] korunur. Supabase `ownership_verified`/`financial_access_enabled` hâlâ false. Canlı web/Nginx dosyaları Git dışında, deployment ayrıca izlenmeli.
+  - 2026-11-10 KAPANIŞ: Shopify admin metafield `vericon.owner_proof` değerine gerçek kullanıcı tarafından meydan okuma kaydedildi; API karşılaştırması başarıyla tamamlandı. VPS `shopify_owner_verified.json` kaydı var, `shopify_owner_challenge.json` tüketilmiş; dosyadaki kullanıcı UUID ve mağaza alanı Supabase pilot kaydıyla eşleşti. Supabase `ownership_verified=true`, `financial_access_enabled=false` olarak güncellendi. Sonraki tek görev iki bağımsız müşteri izolasyonu; henüz ticari veri endpointi açılmadı.
 - [ ] İki bağımsız müşteriyle veri izolasyonu test edilecek. [TİCARİ ENGEL]
 - [ ] Müşteri bazlı token depolama ve yetki iptali/yeniden bağlantı akışları tamamlanacak.
 - [ ] Gereksiz Shopify yazma izinleri, gizli anahtar yenileme ve oturum güvenliği incelenecek.
@@ -141,3 +142,6 @@ Kaynak: `VERICON_Ticari_Urun_Checklist_10_Kasim_2026.pdf` (3 sayfa). Her PDF mad
 - Shopify #1001 ↔ QBO Invoice `Id=145`, `DocNumber=1038`: 216 TRY, 100 TRY iade/mahsup, 116 TRY bakiye; banka tahsilati DOGRULANMADI.
 - Gercek Sandbox: 3 Shopify test siparisi, 34 QBO invoice, 1 dogrulanmis pilot kaynak/kalem zinciri; #1003 kaynak referansinda 2 QBO faturasi (151,152) bulundu, duplicate tespiti gercekte PASS; #1002 icin missing alarmi politika onayi olmadan BLOCK. 2 kismi iade, gercek tutar hatasi, gercek musteri ve cok-tenant E2E KANITLANMADI. Otomatik test sonucu sadece teknik kontrol kanitidir.
 - `private/` OAuth anahtarlari ve geri alma yollari korunur. Eski ayrintili test ve karar kayitlari Git history'de; yeni dokuman olusturma.
+
+
+**2026-11-10 güncel karar:** Shopify sahiplik doğrulaması PASS; önceki tarihlere ait `ownership_verified=false` ve "sıradaki Shopify kanıtı" notları tarihsel kayıttır, güncel durum değildir. Güncel Supabase: `ownership_verified=true`, `financial_access_enabled=false`. Sıradaki açık iş iki bağımsız müşteri izolasyon testidir.
