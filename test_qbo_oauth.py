@@ -108,7 +108,7 @@ def test_user_bound_oauth_state_rejects_wrong_user_and_legacy_callback(cfg):
     state = parse_qs(urlparse(q.create_authorization_url(cfg, user_id=owner)).query)["state"][0]
     with pytest.raises(ValueError, match="user binding"):
         q.check_state(cfg, state, user_id=stranger)
-    with pytest.raises(ValueError, match="user binding"):
+    with pytest.raises(ValueError, match="Missing"):
         q.check_state(cfg, state)
     q.check_state(cfg, state, user_id=owner)
     with pytest.raises(ValueError, match="Missing"):
@@ -434,3 +434,18 @@ def test_user_oauth_callback_does_not_overwrite_existing_pilot(cfg, monkeypatch)
     assert q.load_tokens(cfg)["access_token"] == "PILOT"
     with pytest.raises(ValueError,match="not available"):
         q.load_tenant_tokens(cfg,user_id=other)
+
+
+def test_parallel_oauth_states_do_not_overwrite_or_cross_authorize(cfg, monkeypatch):
+    import uuid
+    a,b=str(uuid.uuid4()),str(uuid.uuid4())
+    sa=parse_qs(urlparse(q.create_authorization_url(cfg,user_id=a)).query)["state"][0]
+    sb=parse_qs(urlparse(q.create_authorization_url(cfg,user_id=b)).query)["state"][0]
+    assert q._callback_state_record(cfg,sa)["user_id"]==a
+    assert q._callback_state_record(cfg,sb)["user_id"]==b
+    with pytest.raises(ValueError,match="user binding"):
+        q.check_state(cfg,sa,user_id=b)
+    q.check_state(cfg,sa,user_id=a)
+    q.check_state(cfg,sb,user_id=b)
+    with pytest.raises(ValueError,match="Missing"):
+        q._callback_state_record(cfg,sa)

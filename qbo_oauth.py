@@ -120,6 +120,26 @@ def _state_path(config: Config) -> Path:
     return config.private_dir / "qbo_oauth_state.json"
 
 
+def _oauth_state_file(config: Config, state: str, *, user_id: str | None) -> Path:
+    if user_id is None:
+        return _state_path(config)
+    if not isinstance(state, str) or len(state) < 32 or len(state) > 128 or not re.fullmatch(r"[A-Za-z0-9_-]+", state):
+        raise ValueError("Invalid OAuth state")
+    folder = config.private_dir / "qbo_oauth_states"
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if folder.is_symlink() or folder.stat().st_mode & 0o077:
+        raise PermissionError("OAuth state directory unsafe")
+    return folder / (hashlib.sha256(state.encode()).hexdigest() + ".json")
+
+
+def _callback_state_record(config: Config, state: str) -> dict:
+    path = _oauth_state_file(config, state, user_id="lookup")
+    if path.is_file() and not path.is_symlink() and not path.stat().st_mode & 0o077:
+        return json.loads(path.read_text())
+    # Legacy CLI only; never accept legacy state on the public customer callback.
+    raise ValueError("Missing or invalid OAuth state")
+
+
 def create_authorization_url(config: Config, *, user_id: str | None = None) -> str:
     if user_id is not None:
         user_id = str(uuid.UUID(user_id))
@@ -128,7 +148,7 @@ def create_authorization_url(config: Config, *, user_id: str | None = None) -> s
     _secure_dir(config)
     state = secrets.token_urlsafe(32)
     _atomic_write(
-        _state_path(config),
+        _oauth_state_file(config, state, user_id=user_id),
         json.dumps({"state": state, "expires_at": int(time.time()) + 600,
                     "expected_realm": config.expected_realm,
                     "client_id": config.client_id, "user_id": user_id}).encode(),
@@ -143,7 +163,7 @@ def create_authorization_url(config: Config, *, user_id: str | None = None) -> s
 
 
 def check_state(config: Config, supplied: str, *, user_id: str | None = None) -> None:
-    path = _state_path(config)
+    path = _oauth_state_file(config, supplied, user_id=user_id)
     try:
         obj = json.loads(path.read_bytes())
     except (FileNotFoundError, ValueError, json.JSONDecodeError):
@@ -480,7 +500,7 @@ def quickbooks_callback(state: str = "", code: str = "", realmId: str = "", erro
         config = load_saved_setup()
         owner = None
         if config.redirect_uri == "https://app.vericon.site/oauth/quickbooks/callback":
-            record = json.loads(_state_path(config).read_text(encoding="utf-8"))
+            record = _callback_state_record(config, state)
             owner = str(uuid.UUID(record["user_id"]))
         complete_authorization(config, state=state, code=code, realm=realmId, user_id=owner)
     except (ValueError, KeyError, OSError, PermissionError, requests.RequestException) as exc:
