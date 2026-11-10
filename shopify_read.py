@@ -131,6 +131,42 @@ def load_setup() -> Config:
     return Config(client_id=raw["client_id"], client_secret=raw["client_secret"])
 
 
+def _tenant_setup_path(user_id: str, store: str) -> Path:
+    """Isolated future Shopify tenant credentials; never fall back to pilot."""
+    import uuid
+    user_id = str(uuid.UUID(user_id))
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,61}\.myshopify\.com", store):
+        raise ValueError("Invalid Shopify canonical store domain")
+    _ensure_private()
+    folder = PRIVATE / "shopify_tenants"
+    folder.mkdir(mode=0o700, exist_ok=True)
+    if folder.is_symlink() or stat.S_IMODE(folder.stat().st_mode) != 0o700:
+        raise PermissionError("Shopify tenant directory unsafe")
+    return folder / (user_id + "_" + store + ".json")
+
+
+def save_tenant_setup(user_id: str, store: str, client_id: str, client_secret: str) -> None:
+    if not client_id or not client_secret:
+        raise ValueError("Missing Shopify tenant credentials")
+    path = _tenant_setup_path(user_id, store)
+    if path.exists() or path.is_symlink():
+        raise FileExistsError("Shopify tenant credentials already exist")
+    _atomic_save(path, {"user_id": str(__import__("uuid").UUID(user_id)),
+                        "store": store, "client_id": client_id, "client_secret": client_secret})
+
+
+def load_tenant_setup(user_id: str, store: str) -> Config:
+    path = _tenant_setup_path(user_id, store)
+    if not path.is_file() or path.is_symlink() or stat.S_IMODE(path.stat().st_mode) != 0o600:
+        raise ValueError("Shopify tenant credentials unavailable")
+    record = json.loads(path.read_text())
+    if record.get("user_id") != str(__import__("uuid").UUID(user_id)) or record.get("store") != store:
+        raise ValueError("Shopify tenant identity mismatch")
+    if not record.get("client_id") or not record.get("client_secret"):
+        raise ValueError("Shopify tenant credentials incomplete")
+    return Config(client_id=record["client_id"], client_secret=record["client_secret"], store=store)
+
+
 def get_access_token(config: Config) -> str:
     if config.store != STORE:
         raise ValueError("Shopify store is not the approved store")

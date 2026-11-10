@@ -352,3 +352,34 @@ def test_graphql_price_query_uses_read_only_shop_currency(cred, monkeypatch, rec
     assert "shop { currencyCode }" in query
     assert "price" in query
     assert "mutation" not in query.lower()
+
+
+def test_shopify_tenant_credentials_isolated_from_pilot(tmp_path, monkeypatch):
+    import uuid
+    monkeypatch.setattr(s, "PRIVATE", tmp_path / "private")
+    first, second = str(uuid.uuid4()), str(uuid.uuid4())
+    store_a, store_b = "tenant-a.myshopify.com", "tenant-b.myshopify.com"
+    s.save_tenant_setup(first, store_a, "TEST_ID_A", "TEST_SECRET_A")
+    with pytest.raises(ValueError, match="unavailable"):
+        s.load_tenant_setup(second, store_a)
+    with pytest.raises(ValueError, match="unavailable"):
+        s.load_tenant_setup(first, store_b)
+    s.save_tenant_setup(second, store_b, "TEST_ID_B", "TEST_SECRET_B")
+    assert s.load_tenant_setup(first, store_a).client_id == "TEST_ID_A"
+    assert s.load_tenant_setup(second, store_b).client_id == "TEST_ID_B"
+    assert not (s.PRIVATE / "shopify_setup.json").exists()
+
+
+def test_shopify_tenant_credentials_fail_closed_on_tampering(tmp_path, monkeypatch):
+    import uuid
+    monkeypatch.setattr(s, "PRIVATE", tmp_path / "private")
+    user = str(uuid.uuid4())
+    store = "tenant-a.myshopify.com"
+    s.save_tenant_setup(user, store, "FAKE_ID", "FAKE_SECRET")
+    with pytest.raises(FileExistsError):
+        s.save_tenant_setup(user, store, "REPLACEMENT", "REPLACEMENT")
+    path = s._tenant_setup_path(user, store)
+    data = json.loads(path.read_text());data["store"] = "other.myshopify.com"
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="identity mismatch"):
+        s.load_tenant_setup(user, store)
