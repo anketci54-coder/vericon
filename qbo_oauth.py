@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import hashlib
 import logging
 import fcntl
 import os
@@ -39,7 +40,7 @@ app = FastAPI(title="VERICON QBO sandbox connector", docs_url=None, redoc_url=No
 @app.middleware("http")
 async def reject_unauthenticated_data_routes(request, call_next):
     # Only a token-validation endpoint is allowed; customer data stays closed.
-    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me"):
+    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me", "/shopify/ownership/start", "/shopify/ownership/verify"):
         return PlainTextResponse("Forbidden", status_code=403)
     return await call_next(request)
 
@@ -360,6 +361,66 @@ def _pilot_qbo_owner(header: str | None, realm: str) -> str:
     if not isinstance(rows, list) or len(rows) != 1 or rows[0].get("qbo_realm_id") != realm or rows[0].get("connection_status") != "pilot_linked":
         raise HTTPException(status_code=403, detail="Pilot account authorization denied")
     return subject
+
+
+def _shopify_proof_file(config: Config) -> Path:
+    return config.private_dir / "shopify_owner_challenge.json"
+
+
+def _shopify_owner(header: str | None) -> str:
+    from shopify_read import STORE
+    subject = _verified_customer_subject(header)
+    api_key = os.environ.get("VERICON_SUPABASE_PUBLISHABLE_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Pilot authorization unavailable")
+    try:
+        r = requests.get(SUPABASE_ISSUER.replace("/auth/v1", "/rest/v1") + "/vericon_pilot_connections",
+                         params={"select": "shop_domain,connection_status", "user_id": "eq." + subject},
+                         headers={"apikey": api_key, "Authorization": header}, timeout=8)
+        rows = r.json() if r.status_code == 200 else []
+    except (requests.RequestException, ValueError):
+        rows = []
+    if not isinstance(rows, list) or len(rows) != 1 or rows[0].get("shop_domain") != STORE or rows[0].get("connection_status") != "pilot_linked":
+        raise HTTPException(status_code=403, detail="Shopify pilot account denied")
+    return subject
+
+
+@app.post("/shopify/ownership/start")
+def shopify_ownership_start(request: Request) -> dict:
+    from shopify_read import STORE
+    owner = _shopify_owner(request.headers.get("authorization"))
+    config = load_saved_setup()
+    _secure_dir(config)
+    code = secrets.token_urlsafe(24)
+    _atomic_write(_shopify_proof_file(config), json.dumps({
+        "user_id": owner, "store": STORE, "digest": hashlib.sha256(code.encode()).hexdigest(),
+        "expires_at": int(time.time()) + 600}).encode())
+    return {"challenge": code, "expires_in": 600, "namespace": "vericon", "key": "owner_proof"}
+
+
+@app.post("/shopify/ownership/verify")
+def shopify_ownership_verify(request: Request) -> dict:
+    from shopify_read import STORE, load_setup, read_owner_proof
+    owner = _shopify_owner(request.headers.get("authorization"))
+    config = load_saved_setup()
+    path = _shopify_proof_file(config)
+    try:
+        proof = json.loads(path.read_text())
+        if proof.get("user_id") != owner or proof.get("store") != STORE:
+            raise ValueError("Owner mismatch")
+        if int(proof.get("expires_at", 0)) < time.time():
+            raise ValueError("Expired")
+        value = read_owner_proof(load_setup())
+        if not value or not secrets.compare_digest(
+                hashlib.sha256(value.encode()).hexdigest(), str(proof.get("digest", ""))):
+            raise ValueError("Challenge mismatch")
+        path.unlink(missing_ok=True)
+        _atomic_write(config.private_dir / "shopify_owner_verified.json", json.dumps({
+            "user_id": owner, "store": STORE, "verified_at": int(time.time()),
+            "proof_digest": proof["digest"]}).encode())
+    except (ValueError, OSError, KeyError, requests.RequestException):
+        raise HTTPException(status_code=400, detail="Shopify ownership proof not verified") from None
+    return {"verified": True, "store": STORE, "financial_access_enabled": False}
 
 
 @app.post("/oauth/quickbooks/start")

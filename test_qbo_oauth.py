@@ -373,3 +373,32 @@ def test_qbo_currency_api_failure_does_not_expose_body(cfg, monkeypatch):
     with pytest.raises(ValueError,match="HTTP 403") as err:
         q.read_home_currency(cfg)
     assert "HIDE" not in str(err.value)
+
+
+def test_shopify_proof_start_requires_verified_pilot_owner(monkeypatch):
+    from fastapi import HTTPException
+    from starlette.requests import Request
+    monkeypatch.setattr(q, "_shopify_owner", lambda header: (_ for _ in ()).throw(HTTPException(status_code=401)))
+    req = Request({"type":"http","method":"POST","path":"/shopify/ownership/start","headers":[]})
+    with pytest.raises(HTTPException) as exc:
+        q.shopify_ownership_start(req)
+    assert exc.value.status_code == 401
+
+
+def test_shopify_proof_wrong_code_does_not_verify(cfg, monkeypatch):
+    import hashlib, json, uuid
+    from fastapi import HTTPException
+    from starlette.requests import Request
+    owner = str(uuid.uuid4())
+    monkeypatch.setattr(q, "_shopify_owner", lambda header: owner)
+    monkeypatch.setattr(q, "load_saved_setup", lambda: cfg)
+    monkeypatch.setattr("shopify_read.load_setup", lambda: object())
+    monkeypatch.setattr("shopify_read.read_owner_proof", lambda config: "incorrect-code")
+    path = q._shopify_proof_file(cfg)
+    q._secure_dir(cfg)
+    q._atomic_write(path, json.dumps({"user_id": owner, "store":"hudys3-p0.myshopify.com", "digest":hashlib.sha256(b"correct-code").hexdigest(), "expires_at":int(time.time())+60}).encode())
+    req = Request({"type":"http","method":"POST","path":"/shopify/ownership/verify","headers":[]})
+    with pytest.raises(HTTPException) as exc:
+        q.shopify_ownership_verify(req)
+    assert exc.value.status_code == 400
+    assert not (cfg.private_dir / "shopify_owner_verified.json").exists()

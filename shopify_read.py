@@ -170,6 +170,23 @@ def verify_installed_store(config: Config) -> dict:
     return {"store": STORE, "app_access_verified": True, "user_ownership_verified": False}
 
 
+def read_owner_proof(config: Config) -> str | None:
+    """Read only the shop-level VERICON challenge, never mutate the shop."""
+    token = get_access_token(config)
+    response = requests.post(f"https://{STORE}/admin/api/{API_VERSION}/graphql.json",
+        json={"query": 'query { shop { myshopifyDomain metafield(namespace:"vericon",key:"owner_proof") { value } } }'},
+        headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"}, timeout=20)
+    if response.status_code != 200:
+        raise ValueError("Shopify read failed")
+    data = response.json()
+    if data.get("errors"):
+        raise ValueError("Shopify GraphQL error")
+    shop = (data.get("data") or {}).get("shop") or {}
+    if shop.get("myshopifyDomain") != STORE:
+        raise ValueError("Shopify identity mismatch")
+    return (shop.get("metafield") or {}).get("value")
+
+
 def read_stock(config: Config, sku: str) -> dict:
     if not SKU_PATTERN.fullmatch(sku):
         raise ValueError("Invalid SKU; refusing unsafe inventory query")

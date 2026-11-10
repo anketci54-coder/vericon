@@ -41,6 +41,7 @@ Kaynak: `VERICON_Ticari_Urun_Checklist_10_Kasim_2026.pdf` (3 sayfa). Her PDF mad
 - [x] Shopify uygulama kurulumu ve mağaza API erişimi doğrulandı.
 - [x] Supabase içinde iki bağlantının kanıt kayıtları ayrı tutuluyor.
 - [ ] Shopify mağaza sahipliği giriş yapan VERICON kullanıcısına bağlanacak. [ŞİMDİ / TİCARİ ENGEL]
+  - 2026-11-10: `/shopify/ownership/start` ve `/verify` JWT + Supabase RLS pilot mağaza bağlamı, 10 dakika süreli rastgele meydan okuma, SHA256 hash, Shopify Admin API salt-okunur metafield sorgusu ve başarılı eşleşmede tek kullanımlık dosya tüketimiyle hazırlandı. Web arayüzüne iki buton eklendi; gerçek kullanıcı kodu mağazaya kaydedip doğrulamadığı için [ ] korunur. Supabase `ownership_verified`/`financial_access_enabled` hâlâ false. Canlı web/Nginx dosyaları Git dışında, deployment ayrıca izlenmeli.
 - [ ] İki bağımsız müşteriyle veri izolasyonu test edilecek. [TİCARİ ENGEL]
 - [ ] Müşteri bazlı token depolama ve yetki iptali/yeniden bağlantı akışları tamamlanacak.
 - [ ] Gereksiz Shopify yazma izinleri, gizli anahtar yenileme ve oturum güvenliği incelenecek.
