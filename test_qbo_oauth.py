@@ -579,7 +579,7 @@ def test_finance_invoice_route_cross_tenant_denied_before_qbo(monkeypatch):
 def test_finance_invoice_route_owner_read_only(monkeypatch):
     from starlette.requests import Request
     monkeypatch.setattr(q,"_authorized_tenant_connection",lambda h:{"user_id":"a","realm":"111","store":"a.myshopify.com"})
-    monkeypatch.setattr(q.Config,"from_env",lambda: q.Config("id","secret","https://app.vericon.site/oauth/quickbooks/callback",q.BASE_DIR,"111"))
+    monkeypatch.setattr(q,"load_saved_setup",lambda: q.Config("id","secret","https://app.vericon.site/oauth/quickbooks/callback",q.BASE_DIR,"111"))
     monkeypatch.setattr(q,"read_tenant_invoice_count",lambda config,*,user_id: 31 if config.expected_realm=="111" and user_id=="a" else 0)
     req=Request({"type":"http","method":"GET","path":"/tenant/finance/invoice-count","headers":[]})
     assert q.tenant_finance_invoice_count(req,realm="111")=={"invoice_count":31,"realm":"111","read_only":True}

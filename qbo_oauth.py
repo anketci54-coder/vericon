@@ -501,7 +501,7 @@ def tenant_finance_invoice_count(request: Request, realm: str) -> dict:
     connection = _authorized_tenant_connection(request.headers.get("authorization"))
     if realm != connection["realm"]:
         raise HTTPException(status_code=403, detail="Cross-tenant finance access denied")
-    config = _tenant_qbo_config(Config.from_env(), connection["realm"])
+    config = _tenant_qbo_config(load_saved_setup(), connection["realm"])
     try:
         count = read_tenant_invoice_count(config, user_id=connection["user_id"])
     except (ValueError, requests.RequestException):
