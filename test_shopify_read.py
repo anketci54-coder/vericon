@@ -297,7 +297,7 @@ def test_shopify_source_has_no_graphql_mutation_calls():
                 continue
             if isinstance(call.func.value, ast.Name) and call.func.value.id == "requests":
                 outbound.add((fn.name, call.func.attr))
-    assert outbound == {("get_access_token", "post"), ("verify_installed_store", "post"), ("read_stock", "post"), ("read_owner_proof", "post"),
+    assert outbound == {("get_access_token", "post"), ("verify_installed_store", "post"), ("read_stock", "post"), ("read_owner_proof", "post"), ("verify_tenant_store", "post"),
                         ("read_shopify_test_order", "post"),
                         ("read_shopify_test_orders", "post")}
     assert s.STOCK_QUERY.lstrip().startswith("query ")
@@ -383,3 +383,38 @@ def test_shopify_tenant_credentials_fail_closed_on_tampering(tmp_path, monkeypat
     path.write_text(json.dumps(data))
     with pytest.raises(ValueError, match="identity mismatch"):
         s.load_tenant_setup(user, store)
+
+
+def test_verify_tenant_store_uses_only_tenant_domain(tmp_path, monkeypatch):
+    import uuid
+    monkeypatch.setattr(s, "PRIVATE", tmp_path / "private")
+    owner=str(uuid.uuid4()); store="tenant-b.myshopify.com"
+    s.save_tenant_setup(owner,store,"TEST_B_ID","TEST_B_SECRET")
+    urls=[]
+    def fake_post(url, *, data=None, json=None, headers=None, timeout=None):
+        urls.append(url)
+        assert store in url and s.STORE not in url
+        if url.endswith("/oauth/access_token"):
+            assert data["client_id"] == "TEST_B_ID"
+            return FakeResponse(body={"access_token":"FAKE_B_TOKEN","scope":"read_products,read_inventory,read_locations"})
+        assert headers["X-Shopify-Access-Token"] == "FAKE_B_TOKEN"
+        return FakeResponse(body={"data":{"shop":{"myshopifyDomain":store}}})
+    monkeypatch.setattr(s.requests,"post",fake_post)
+    assert s.verify_tenant_store(owner,store)["app_access_verified"] is True
+    assert len(urls)==2
+    with pytest.raises(ValueError,match="unavailable"):
+        s.verify_tenant_store(str(uuid.uuid4()),store)
+
+
+def test_verify_tenant_store_rejects_wrong_shop_identity(tmp_path, monkeypatch):
+    import uuid
+    monkeypatch.setattr(s,"PRIVATE",tmp_path / "private")
+    owner=str(uuid.uuid4());store="tenant-b.myshopify.com"
+    s.save_tenant_setup(owner,store,"TEST_ID","TEST_SECRET")
+    def fake_post(url, *, data=None, json=None, headers=None, timeout=None):
+        if url.endswith("/oauth/access_token"):
+            return FakeResponse(body={"access_token":"FAKE","scope":"read_products,read_inventory,read_locations"})
+        return FakeResponse(body={"data":{"shop":{"myshopifyDomain":s.STORE}}})
+    monkeypatch.setattr(s.requests,"post",fake_post)
+    with pytest.raises(ValueError,match="identity mismatch"):
+        s.verify_tenant_store(owner,store)

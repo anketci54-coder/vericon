@@ -167,6 +167,35 @@ def load_tenant_setup(user_id: str, store: str) -> Config:
     return Config(client_id=record["client_id"], client_secret=record["client_secret"], store=store)
 
 
+def verify_tenant_store(user_id: str, store: str) -> dict:
+    """Read-only independent tenant connection check; never fall back to pilot."""
+    config = load_tenant_setup(user_id, store)
+    if config.store != store:
+        raise ValueError("Tenant store mismatch")
+    response = requests.post(
+        f"https://{store}/admin/oauth/access_token",
+        data={"grant_type": "client_credentials", "client_id": config.client_id,
+              "client_secret": config.client_secret},
+        headers={"Accept": "application/json"}, timeout=20)
+    if response.status_code != 200:
+        raise ValueError("Tenant Shopify token refused")
+    body = response.json()
+    scopes = frozenset(x.strip() for x in str(body.get("scope", "")).split(","))
+    if not REQUIRED_SCOPES.issubset(scopes) or not body.get("access_token"):
+        raise ValueError("Tenant Shopify read permissions missing")
+    identity = requests.post(
+        f"https://{store}/admin/api/{API_VERSION}/graphql.json",
+        json={"query": "query { shop { myshopifyDomain } }"},
+        headers={"X-Shopify-Access-Token": str(body["access_token"]),
+                 "Content-Type": "application/json"}, timeout=20)
+    if identity.status_code != 200:
+        raise ValueError("Tenant Shopify identity read refused")
+    result = identity.json()
+    if result.get("errors") or ((result.get("data") or {}).get("shop") or {}).get("myshopifyDomain") != store:
+        raise ValueError("Tenant Shopify identity mismatch")
+    return {"store": store, "app_access_verified": True, "user_ownership_verified": False}
+
+
 def get_access_token(config: Config) -> str:
     if config.store != STORE:
         raise ValueError("Shopify store is not the approved store")
