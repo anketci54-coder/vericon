@@ -533,3 +533,35 @@ def test_finance_access_check_uses_authenticated_tenant_and_keeps_finance_closed
     bad=Request({"type":"http","method":"GET","path":"/tenant/finance/access-check","headers":[]})
     with pytest.raises(HTTPException) as exc:q.tenant_finance_access_check(bad)
     assert exc.value.status_code==403
+
+
+def test_tenant_refresh_isolated_from_pilot(cfg,monkeypatch):
+    import uuid,time
+    from dataclasses import replace
+    user=str(uuid.uuid4());other=str(uuid.uuid4())
+    tenant=replace(cfg,expected_realm="987654321")
+    q.save_tenant_tokens(tenant,{"access_token":"OLD","refresh_token":"OLD_REFRESH","expires_in":0},user_id=user)
+    monkeypatch.setattr(q,"_exchange",lambda config,payload:{"access_token":"NEW","refresh_token":"ROTATED","expires_in":3600})
+    token,realm=q.get_tenant_access_token(tenant,user_id=user)
+    assert (token,realm)==("NEW","987654321")
+    assert q.load_tenant_tokens(tenant,user_id=user)["refresh_token"]=="ROTATED"
+    with pytest.raises(ValueError):q.get_tenant_access_token(tenant,user_id=other)
+    assert not (cfg.private_dir / "qbo_tokens.enc").exists()
+
+
+def test_tenant_invoice_count_never_accepts_other_realm(cfg,monkeypatch):
+    import uuid
+    from dataclasses import replace
+    user=str(uuid.uuid4());other=str(uuid.uuid4())
+    tenant=replace(cfg,expected_realm="987654321")
+    q.save_tenant_tokens(tenant,{"access_token":"B_ONLY","refresh_token":"R_B","expires_in":3600},user_id=user)
+    urls=[]
+    def fake_get(url,*,params,headers,timeout):
+        urls.append(url)
+        assert headers["Authorization"]=="Bearer B_ONLY"
+        return FakeResponse({"QueryResponse":{"totalCount":36}})
+    monkeypatch.setattr(q.requests,"get",fake_get)
+    assert q.read_tenant_invoice_count(tenant,user_id=user)==36
+    assert urls==[q.SANDBOX_API+"/v3/company/987654321/query"]
+    with pytest.raises(ValueError):q.read_tenant_invoice_count(tenant,user_id=other)
+    assert len(urls)==1

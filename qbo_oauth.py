@@ -249,6 +249,40 @@ def load_tenant_tokens(config: Config, *, user_id: str) -> dict:
     return record
 
 
+def get_tenant_access_token(config: Config, *, user_id: str) -> tuple[str, str]:
+    """Refresh only this user's realm token; never use the pilot token file."""
+    user_id = str(uuid.UUID(user_id))
+    path = _tenant_token_path(config, user_id=user_id)
+    lock = path.with_suffix(".lock")
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
+    with os.fdopen(fd, "rb") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        record = load_tenant_tokens(config, user_id=user_id)
+        if time.time() < float(record["expires_at"]) - 120:
+            return record["access_token"], record["realm"]
+        updated = _exchange(config, {"grant_type": "refresh_token",
+                                     "refresh_token": record["refresh_token"]})
+        save_tenant_tokens(config, updated, user_id=user_id)
+        return updated["access_token"], config.expected_realm
+
+
+def read_tenant_invoice_count(config: Config, *, user_id: str) -> int:
+    """Tenant-bound QBO read: realm comes only from verified token storage."""
+    token, realm = get_tenant_access_token(config, user_id=user_id)
+    if realm != config.expected_realm:
+        raise ValueError("Tenant realm binding mismatch")
+    response = requests.get(f"{SANDBOX_API}/v3/company/{realm}/query",
+        params={"query": "SELECT COUNT(*) FROM Invoice"},
+        headers={"Authorization": "Bearer " + token, "Accept": "application/json"}, timeout=20)
+    if response.status_code != 200:
+        raise ValueError("Tenant invoice count read refused")
+    body = response.json()
+    count = (body.get("QueryResponse") or {}).get("totalCount")
+    if body.get("Fault") or type(count) is not int or count < 0:
+        raise ValueError("Tenant invoice count invalid")
+    return count
+
+
 def load_tokens(config: Config) -> dict:
     if not config.expected_realm or not str(config.expected_realm).isdigit():
         raise ValueError("Expected QuickBooks company ID is required")
