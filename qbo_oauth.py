@@ -40,7 +40,7 @@ app = FastAPI(title="VERICON QBO sandbox connector", docs_url=None, redoc_url=No
 @app.middleware("http")
 async def reject_unauthenticated_data_routes(request, call_next):
     # Only a token-validation endpoint is allowed; customer data stays closed.
-    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me", "/shopify/ownership/start", "/shopify/ownership/verify", "/tenant/quickbooks/start", "/tenant/shopify/ownership/start", "/tenant/shopify/ownership/verify"):
+    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me", "/shopify/ownership/start", "/shopify/ownership/verify", "/tenant/quickbooks/start", "/tenant/shopify/ownership/start", "/tenant/shopify/ownership/verify", "/tenant/finance/access-check"):
         return PlainTextResponse("Forbidden", status_code=403)
     return await call_next(request)
 
@@ -449,6 +449,16 @@ def _authorized_tenant_connection(header: str | None) -> dict:
             or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,61}\.myshopify\.com", store)):
         raise HTTPException(status_code=403, detail="Tenant connection not authorized")
     return {"user_id": subject, "realm": realm, "store": store}
+
+
+@app.get("/tenant/finance/access-check")
+def tenant_finance_access_check(request: Request) -> dict:
+    """Verify tenant binding without exposing any financial records or credentials."""
+    connection = _authorized_tenant_connection(request.headers.get("authorization"))
+    # Financial data stays disabled until separate explicit enablement and
+    # actual cross-session isolation verification. Never return tokens.
+    return {"authenticated_tenant": True, "shop_domain": connection["store"],
+            "qbo_realm_id": connection["realm"], "financial_access_enabled": False}
 
 
 def _tenant_qbo_config(config: Config, realm: str) -> Config:

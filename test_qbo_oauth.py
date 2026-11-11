@@ -517,3 +517,19 @@ def test_tenant_shopify_proof_is_user_and_store_scoped(cfg,monkeypatch):
     proof=json.loads(path.read_text())
     assert result["challenge"] not in path.read_text()
     assert proof["user_id"]==user and proof["store"]==store
+
+
+def test_finance_access_check_uses_authenticated_tenant_and_keeps_finance_closed(monkeypatch):
+    from starlette.requests import Request
+    from fastapi import HTTPException
+    import uuid
+    user=str(uuid.uuid4())
+    req=Request({"type":"http","method":"GET","path":"/tenant/finance/access-check",
+                 "headers":[(b"authorization",b"Bearer valid")]})
+    monkeypatch.setattr(q,"_authorized_tenant_connection",lambda header:{"user_id":user,"store":"tenant-b.myshopify.com","realm":"12345"} if header=="Bearer valid" else (_ for _ in ()).throw(HTTPException(403)))
+    result=q.tenant_finance_access_check(req)
+    assert result=={"authenticated_tenant":True,"shop_domain":"tenant-b.myshopify.com","qbo_realm_id":"12345","financial_access_enabled":False}
+    assert not any("token" in k for k in result)
+    bad=Request({"type":"http","method":"GET","path":"/tenant/finance/access-check","headers":[]})
+    with pytest.raises(HTTPException) as exc:q.tenant_finance_access_check(bad)
+    assert exc.value.status_code==403
