@@ -40,7 +40,7 @@ app = FastAPI(title="VERICON QBO sandbox connector", docs_url=None, redoc_url=No
 @app.middleware("http")
 async def reject_unauthenticated_data_routes(request, call_next):
     # Only a token-validation endpoint is allowed; customer data stays closed.
-    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me", "/shopify/ownership/start", "/shopify/ownership/verify", "/tenant/quickbooks/start", "/tenant/shopify/ownership/start", "/tenant/shopify/ownership/verify", "/tenant/finance/access-check"):
+    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me", "/shopify/ownership/start", "/shopify/ownership/verify", "/tenant/quickbooks/start", "/tenant/shopify/ownership/start", "/tenant/shopify/ownership/verify", "/tenant/finance/access-check", "/tenant/finance/invoice-count"):
         return PlainTextResponse("Forbidden", status_code=403)
     return await call_next(request)
 
@@ -493,6 +493,20 @@ def tenant_finance_access_check(request: Request) -> dict:
     # actual cross-session isolation verification. Never return tokens.
     return {"authenticated_tenant": True, "shop_domain": connection["store"],
             "qbo_realm_id": connection["realm"], "financial_access_enabled": False}
+
+
+@app.get("/tenant/finance/invoice-count")
+def tenant_finance_invoice_count(request: Request, realm: str) -> dict:
+    """Bounded read-only tenant isolation probe; no invoices or tokens returned."""
+    connection = _authorized_tenant_connection(request.headers.get("authorization"))
+    if realm != connection["realm"]:
+        raise HTTPException(status_code=403, detail="Cross-tenant finance access denied")
+    config = _tenant_qbo_config(Config.from_env(), connection["realm"])
+    try:
+        count = read_tenant_invoice_count(config, user_id=connection["user_id"])
+    except (ValueError, requests.RequestException):
+        raise HTTPException(status_code=503, detail="Financial read unavailable") from None
+    return {"invoice_count": count, "realm": connection["realm"], "read_only": True}
 
 
 def _tenant_qbo_config(config: Config, realm: str) -> Config:
