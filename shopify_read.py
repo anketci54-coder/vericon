@@ -196,6 +196,29 @@ def verify_tenant_store(user_id: str, store: str) -> dict:
     return {"store": store, "app_access_verified": True, "user_ownership_verified": False}
 
 
+def read_tenant_owner_proof(user_id: str, store: str) -> str | None:
+    """Read the store-owned challenge without writing Shopify data."""
+    config = load_tenant_setup(user_id, store)
+    token_response = requests.post(f"https://{store}/admin/oauth/access_token",
+        data={"grant_type":"client_credentials","client_id":config.client_id,"client_secret":config.client_secret},
+        timeout=20)
+    if token_response.status_code != 200:
+        raise ValueError("Tenant token unavailable")
+    token_data = token_response.json()
+    scopes = set(str(token_data.get("scope", "")).split(","))
+    if not REQUIRED_SCOPES.issubset(scopes) or not token_data.get("access_token"):
+        raise ValueError("Tenant token lacks permissions")
+    response = requests.post(f"https://{store}/admin/api/{API_VERSION}/graphql.json",
+        json={"query":'query { shop { myshopifyDomain metafield(namespace:"vericon",key:"owner_proof") { value } } }'},
+        headers={"X-Shopify-Access-Token":token_data["access_token"]}, timeout=20)
+    if response.status_code != 200:
+        raise ValueError("Tenant proof read unavailable")
+    data = response.json()
+    if data.get("errors") or ((data.get("data") or {}).get("shop") or {}).get("myshopifyDomain") != store:
+        raise ValueError("Tenant proof shop mismatch")
+    return ((((data.get("data") or {}).get("shop") or {}).get("metafield") or {}).get("value"))
+
+
 def get_access_token(config: Config) -> str:
     if config.store != STORE:
         raise ValueError("Shopify store is not the approved store")

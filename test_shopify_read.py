@@ -297,7 +297,7 @@ def test_shopify_source_has_no_graphql_mutation_calls():
                 continue
             if isinstance(call.func.value, ast.Name) and call.func.value.id == "requests":
                 outbound.add((fn.name, call.func.attr))
-    assert outbound == {("get_access_token", "post"), ("verify_installed_store", "post"), ("read_stock", "post"), ("read_owner_proof", "post"), ("verify_tenant_store", "post"),
+    assert outbound == {("get_access_token", "post"), ("verify_installed_store", "post"), ("read_stock", "post"), ("read_owner_proof", "post"), ("verify_tenant_store", "post"), ("read_tenant_owner_proof", "post"),
                         ("read_shopify_test_order", "post"),
                         ("read_shopify_test_orders", "post")}
     assert s.STOCK_QUERY.lstrip().startswith("query ")

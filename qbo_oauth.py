@@ -40,7 +40,7 @@ app = FastAPI(title="VERICON QBO sandbox connector", docs_url=None, redoc_url=No
 @app.middleware("http")
 async def reject_unauthenticated_data_routes(request, call_next):
     # Only a token-validation endpoint is allowed; customer data stays closed.
-    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me", "/shopify/ownership/start", "/shopify/ownership/verify", "/tenant/quickbooks/start"):
+    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me", "/shopify/ownership/start", "/shopify/ownership/verify", "/tenant/quickbooks/start", "/tenant/shopify/ownership/start", "/tenant/shopify/ownership/verify"):
         return PlainTextResponse("Forbidden", status_code=403)
     return await call_next(request)
 
@@ -515,6 +515,78 @@ def shopify_ownership_verify(request: Request) -> dict:
     except (ValueError, OSError, KeyError, requests.RequestException):
         raise HTTPException(status_code=400, detail="Shopify ownership proof not verified") from None
     return {"verified": True, "store": STORE, "financial_access_enabled": False}
+
+
+def _tenant_proof_path(config: Config, user_id: str, store: str) -> Path:
+    from shopify_read import _tenant_setup_path
+    _tenant_setup_path(user_id, store)
+    folder = config.private_dir / "shopify_owner_proofs"
+    folder.mkdir(mode=0o700, exist_ok=True)
+    if folder.is_symlink() or (folder.stat().st_mode & 0o077):
+        raise PermissionError("Unsafe tenant proof directory")
+    return folder / (user_id + "_" + store + ".json")
+
+
+def _tenant_shopify_context(header: str | None) -> dict:
+    subject = _verified_customer_subject(header)
+    key = os.environ.get("VERICON_SUPABASE_PUBLISHABLE_KEY", "")
+    if not key:
+        raise HTTPException(status_code=503, detail="Tenant authorization unavailable")
+    try:
+        r = requests.get(SUPABASE_ISSUER.replace("/auth/v1", "/rest/v1") + "/vericon_pilot_connections",
+            params={"select":"user_id,shop_domain,connection_status,ownership_verified", "user_id":"eq." + subject},
+            headers={"apikey":key,"Authorization":header}, timeout=8)
+        rows = r.json() if r.status_code == 200 else []
+    except (ValueError, requests.RequestException):
+        rows = []
+    if not isinstance(rows,list) or len(rows)!=1:
+        raise HTTPException(status_code=403,detail="Tenant not authorized")
+    row=rows[0]
+    store=row.get("shop_domain")
+    if row.get("user_id")!=subject or row.get("connection_status")!="pilot_linked" or not isinstance(store,str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,61}\.myshopify\.com",store):
+        raise HTTPException(status_code=403,detail="Tenant not authorized")
+    from shopify_read import STORE,load_tenant_setup
+    if store == STORE:
+        raise HTTPException(status_code=409,detail="Pilot already verified")
+    try:
+        load_tenant_setup(subject,store)
+    except (ValueError,PermissionError,OSError):
+        raise HTTPException(status_code=403,detail="Tenant Shopify credentials unavailable") from None
+    return {"user_id":subject,"store":store,"verified":row.get("ownership_verified") is True}
+
+
+@app.post("/tenant/shopify/ownership/start")
+def tenant_shopify_ownership_start(request: Request) -> dict:
+    context=_tenant_shopify_context(request.headers.get("authorization"))
+    if context["verified"]:
+        return {"verified":True,"store":context["store"]}
+    config=load_saved_setup()
+    code=secrets.token_urlsafe(24)
+    path=_tenant_proof_path(config,context["user_id"],context["store"])
+    _atomic_write(path,json.dumps({"digest":hashlib.sha256(code.encode()).hexdigest(),
+        "expires_at":int(time.time())+600,"user_id":context["user_id"],"store":context["store"]}).encode())
+    return {"challenge":code,"expires_in":600,"store":context["store"],"namespace":"vericon","key":"owner_proof"}
+
+
+@app.post("/tenant/shopify/ownership/verify")
+def tenant_shopify_ownership_verify(request: Request) -> dict:
+    context=_tenant_shopify_context(request.headers.get("authorization"))
+    config=load_saved_setup()
+    path=_tenant_proof_path(config,context["user_id"],context["store"])
+    try:
+        proof=json.loads(path.read_text())
+        if proof.get("user_id")!=context["user_id"] or proof.get("store")!=context["store"] or int(proof.get("expires_at",0))<time.time():
+            raise ValueError("Invalid proof")
+        from shopify_read import read_tenant_owner_proof
+        value=read_tenant_owner_proof(context["user_id"],context["store"])
+        if not value or not secrets.compare_digest(hashlib.sha256(value.encode()).hexdigest(),proof["digest"]):
+            raise ValueError("Proof mismatch")
+        path.unlink(missing_ok=True)
+        _atomic_write(path.with_suffix(".verified"),json.dumps({"user_id":context["user_id"],
+            "store":context["store"],"verified_at":int(time.time())}).encode())
+    except (ValueError,OSError,KeyError,requests.RequestException):
+        raise HTTPException(status_code=400,detail="Tenant Shopify ownership not verified") from None
+    return {"verified":True,"store":context["store"],"financial_access_enabled":False}
 
 
 @app.post("/oauth/quickbooks/start")

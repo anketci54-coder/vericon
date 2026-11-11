@@ -490,3 +490,30 @@ def test_tenant_quickbooks_start_fails_closed_without_shopify_setup(cfg, monkeyp
         q.tenant_quickbooks_start(req)
     assert exc.value.status_code == 403
     assert not (cfg.private_dir / "qbo_oauth_states").exists()
+
+
+def test_tenant_shopify_proof_start_rejects_unverified_user(monkeypatch):
+    from fastapi import HTTPException
+    from starlette.requests import Request
+    monkeypatch.setattr(q,"_tenant_shopify_context",lambda header: (_ for _ in ()).throw(HTTPException(status_code=403)))
+    req=Request({"type":"http","method":"POST","path":"/tenant/shopify/ownership/start","headers":[]})
+    with pytest.raises(HTTPException) as exc:
+        q.tenant_shopify_ownership_start(req)
+    assert exc.value.status_code == 403
+
+
+def test_tenant_shopify_proof_is_user_and_store_scoped(cfg,monkeypatch):
+    import uuid,json
+    from starlette.requests import Request
+    user=str(uuid.uuid4());store="tenant-b.myshopify.com"
+    monkeypatch.setattr(q,"_tenant_shopify_context",lambda header:{"user_id":user,"store":store,"verified":False})
+    monkeypatch.setattr(q,"load_saved_setup",lambda:cfg)
+    monkeypatch.setattr("shopify_read._tenant_setup_path",lambda user_id,shop:cfg.private_dir / "fake.json")
+    q._secure_dir(cfg)
+    req=Request({"type":"http","method":"POST","path":"/tenant/shopify/ownership/start","headers":[]})
+    result=q.tenant_shopify_ownership_start(req)
+    assert result["store"]==store and len(result["challenge"])>=24
+    path=q._tenant_proof_path(cfg,user,store)
+    proof=json.loads(path.read_text())
+    assert result["challenge"] not in path.read_text()
+    assert proof["user_id"]==user and proof["store"]==store
