@@ -40,7 +40,7 @@ app = FastAPI(title="VERICON QBO sandbox connector", docs_url=None, redoc_url=No
 @app.middleware("http")
 async def reject_unauthenticated_data_routes(request, call_next):
     # Only a token-validation endpoint is allowed; customer data stays closed.
-    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me", "/shopify/ownership/start", "/shopify/ownership/verify", "/tenant/quickbooks/start", "/tenant/shopify/ownership/start", "/tenant/shopify/ownership/verify", "/tenant/finance/access-check", "/tenant/finance/invoice-count"):
+    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me", "/shopify/ownership/start", "/shopify/ownership/verify", "/tenant/quickbooks/start", "/tenant/shopify/ownership/start", "/tenant/shopify/ownership/verify", "/tenant/finance/access-check", "/tenant/finance/invoice-count", "/tenant/quickbooks/disconnect"):
         return PlainTextResponse("Forbidden", status_code=403)
     return await call_next(request)
 
@@ -247,6 +247,26 @@ def load_tenant_tokens(config: Config, *, user_id: str) -> dict:
     if record.get("authorized_user_id") != user_id or record.get("realm") != config.expected_realm:
         raise ValueError("Tenant QuickBooks authorization mismatch")
     return record
+
+
+def disconnect_tenant_quickbooks(config: Config, *, user_id: str) -> None:
+    """Revoke Intuit refresh token, then remove only the matching tenant credential."""
+    user_id = str(uuid.UUID(user_id))
+    path = _tenant_token_path(config, user_id=user_id)
+    lock = path.with_suffix(".lock")
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
+    with os.fdopen(fd, "rb") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        record = load_tenant_tokens(config, user_id=user_id)
+        response = requests.post(
+            "https://developer.api.intuit.com/v2/oauth2/tokens/revoke",
+            auth=(config.client_id, config.client_secret),
+            data={"token": record["refresh_token"]},
+            headers={"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"},
+            timeout=20)
+        if response.status_code != 200:
+            raise ValueError("QuickBooks token revocation unconfirmed")
+        path.unlink()
 
 
 def get_tenant_access_token(config: Config, *, user_id: str) -> tuple[str, str]:
@@ -656,21 +676,29 @@ def quickbooks_start(request: Request) -> dict:
     return {"authorization_url": create_authorization_url(config, user_id=owner)}
 
 
+@app.post("/tenant/quickbooks/disconnect")
+def tenant_quickbooks_disconnect(request: Request) -> dict:
+    connection = _authorized_tenant_connection(request.headers.get("authorization"))
+    config = _tenant_qbo_config(load_saved_setup(), connection["realm"])
+    try:
+        disconnect_tenant_quickbooks(config, user_id=connection["user_id"])
+    except (ValueError, requests.RequestException, OSError, PermissionError):
+        raise HTTPException(status_code=503, detail="QuickBooks disconnect not confirmed") from None
+    return {"disconnected": True, "realm": connection["realm"], "reconnect_via": "/tenant/quickbooks/start"}
+
+
 @app.post("/tenant/quickbooks/start")
 def tenant_quickbooks_start(request: Request) -> dict:
     connection = _authorized_tenant_connection(request.headers.get("authorization"))
     config = load_saved_setup()
     if config.redirect_uri != "https://app.vericon.site/oauth/quickbooks/callback":
         raise HTTPException(status_code=503, detail="Public callback not configured")
-    # Do not let a second user reuse the legacy pilot's company identity.
-    from shopify_read import STORE
-    if connection["store"] == STORE and connection["realm"] == config.expected_realm:
-        raise HTTPException(status_code=409, detail="Pilot must use its existing connection")
-    from shopify_read import load_tenant_setup
-    try:
-        load_tenant_setup(connection["user_id"], connection["store"])
-    except (ValueError, PermissionError, OSError):
-        raise HTTPException(status_code=403, detail="Tenant Shopify connection not configured") from None
+    from shopify_read import STORE, load_tenant_setup
+    if connection["store"] != STORE:
+        try:
+            load_tenant_setup(connection["user_id"], connection["store"])
+        except (ValueError, PermissionError, OSError):
+            raise HTTPException(status_code=403, detail="Tenant Shopify connection not configured") from None
     tenant_config = _tenant_qbo_config(config, connection["realm"])
     return {"authorization_url": create_authorization_url(tenant_config, user_id=connection["user_id"])}
 

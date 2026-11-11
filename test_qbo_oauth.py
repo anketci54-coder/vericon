@@ -344,7 +344,7 @@ def test_qbo_source_has_no_accounting_write_http_calls():
                     assert call.args[0].id == "TOKEN_URL"
     assert ("_exchange", "post") in outbound
     assert ("_query_item", "get") in outbound
-    assert all(method == "get" or (fn == "_exchange" and method == "post")
+    assert all(method == "get" or (fn in ("_exchange", "disconnect_tenant_quickbooks") and method == "post")
                for fn, method in outbound)
 
 
@@ -583,3 +583,51 @@ def test_finance_invoice_route_owner_read_only(monkeypatch):
     monkeypatch.setattr(q,"read_tenant_invoice_count",lambda config,*,user_id: 31 if config.expected_realm=="111" and user_id=="a" else 0)
     req=Request({"type":"http","method":"GET","path":"/tenant/finance/invoice-count","headers":[]})
     assert q.tenant_finance_invoice_count(req,realm="111")=={"invoice_count":31,"realm":"111","read_only":True}
+
+
+def test_tenant_disconnect_revoke_then_delete_only_owner(cfg,monkeypatch):
+    import uuid
+    from dataclasses import replace
+    user=str(uuid.uuid4());other=str(uuid.uuid4());tenant=replace(cfg,expected_realm="987654321")
+    q.save_tenant_tokens(tenant,{"access_token":"A","refresh_token":"RA","expires_in":3600},user_id=user)
+    q.save_tenant_tokens(tenant,{"access_token":"B","refresh_token":"RB","expires_in":3600},user_id=other)
+    calls=[]
+    def fake_post(url,*,auth,data,headers,timeout):
+        assert url=="https://developer.api.intuit.com/v2/oauth2/tokens/revoke"
+        calls.append(data["token"])
+        return FakeResponse({},status=200)
+    monkeypatch.setattr(q.requests,"post",fake_post)
+    q.disconnect_tenant_quickbooks(tenant,user_id=user)
+    assert calls==["RA"]
+    with pytest.raises(ValueError):q.load_tenant_tokens(tenant,user_id=user)
+    assert q.load_tenant_tokens(tenant,user_id=other)["access_token"]=="B"
+    q.save_tenant_tokens(tenant,{"access_token":"A2","refresh_token":"RA2","expires_in":3600},user_id=user)
+    assert q.load_tenant_tokens(tenant,user_id=user)["access_token"]=="A2"
+
+
+def test_tenant_disconnect_failed_revoke_preserves_token(cfg,monkeypatch):
+    import uuid
+    from dataclasses import replace
+    user=str(uuid.uuid4());tenant=replace(cfg,expected_realm="987654321")
+    q.save_tenant_tokens(tenant,{"access_token":"A","refresh_token":"RA","expires_in":3600},user_id=user)
+    monkeypatch.setattr(q.requests,"post",lambda *a,**kw:FakeResponse({},status=500))
+    with pytest.raises(ValueError,match="unconfirmed"):
+        q.disconnect_tenant_quickbooks(tenant,user_id=user)
+    assert q.load_tenant_tokens(tenant,user_id=user)["access_token"]=="A"
+
+
+def test_disconnect_reconnect_flow_same_user_and_realm(cfg,monkeypatch):
+    import uuid
+    from dataclasses import replace
+    user=str(uuid.uuid4());other=str(uuid.uuid4())
+    tenant=replace(cfg,expected_realm="987654321")
+    q.save_tenant_tokens(tenant,{"access_token":"OLD","refresh_token":"OLD_REFRESH","expires_in":3600},user_id=user)
+    monkeypatch.setattr(q.requests,"post",lambda *a,**kw:FakeResponse({},status=200))
+    q.disconnect_tenant_quickbooks(tenant,user_id=user)
+    with pytest.raises(ValueError):q.get_tenant_access_token(tenant,user_id=user)
+    monkeypatch.setattr(q,"_exchange",lambda *a,**kw:{"access_token":"RECONNECTED","refresh_token":"ROTATED","expires_in":3600})
+    url=q.create_authorization_url(tenant,user_id=user)
+    state=parse_qs(urlparse(url).query)["state"][0]
+    q.complete_authorization(tenant,state=state,code="valid",realm="987654321",user_id=user)
+    assert q.get_tenant_access_token(tenant,user_id=user)==("RECONNECTED","987654321")
+    with pytest.raises(ValueError):q.get_tenant_access_token(tenant,user_id=other)
