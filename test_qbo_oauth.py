@@ -43,6 +43,7 @@ def test_supabase_auth_me_validates_signature_and_identity(monkeypatch):
     monkeypatch.setattr(q, "SUPABASE_JWKS", SimpleNamespace(
         get_signing_key_from_jwt=lambda token: SimpleNamespace(key=key)))
     subject = str(uuid.uuid4())
+    monkeypatch.setattr(q, "_require_live_supabase_session", lambda token, subject: None)
     claims = {"sub": subject, "iss": q.SUPABASE_ISSUER, "aud": "authenticated",
               "role": "authenticated", "iat": int(time.time()) - 30,
               "exp": int(time.time()) + 3600}
@@ -65,6 +66,48 @@ def test_supabase_auth_me_validates_signature_and_identity(monkeypatch):
             q._verified_customer_subject(header)
         assert exc.value.status_code == 401
 
+
+
+def test_revoked_or_unavailable_supabase_session_is_denied(monkeypatch):
+    import uuid
+    from fastapi import HTTPException
+    subject = str(uuid.uuid4())
+    token = "not-a-real-token"
+    monkeypatch.setenv("VERICON_SUPABASE_PUBLISHABLE_KEY", "public-test-key")
+    observed = []
+    def fake_get(url, *, headers, timeout):
+        assert url == q.SUPABASE_ISSUER + "/user"
+        assert headers == {"apikey": "public-test-key", "Authorization": "Bearer " + token}
+        assert timeout == 5
+        observed.append(url)
+        return FakeResponse({"id": subject}) if len(observed) == 1 else FakeResponse({}, status=401)
+    monkeypatch.setattr(q.requests, "get", fake_get)
+    q._require_live_supabase_session(token, subject)
+    with pytest.raises(HTTPException) as exc:
+        q._require_live_supabase_session(token, subject)
+    assert exc.value.status_code == 401
+    monkeypatch.delenv("VERICON_SUPABASE_PUBLISHABLE_KEY")
+    with pytest.raises(HTTPException) as exc:
+        q._require_live_supabase_session(token, subject)
+    assert exc.value.status_code == 503
+
+
+def test_supabase_session_identity_mismatch_and_network_failure_denied(monkeypatch):
+    import uuid
+    import requests
+    from fastapi import HTTPException
+    monkeypatch.setenv("VERICON_SUPABASE_PUBLISHABLE_KEY", "public-test-key")
+    subject = str(uuid.uuid4())
+    monkeypatch.setattr(q.requests, "get", lambda *a, **kw: FakeResponse({"id": str(uuid.uuid4())}))
+    with pytest.raises(HTTPException) as exc:
+        q._require_live_supabase_session("test", subject)
+    assert exc.value.status_code == 401
+    def network_fail(*a, **kw):
+        raise requests.Timeout("simulated")
+    monkeypatch.setattr(q.requests, "get", network_fail)
+    with pytest.raises(HTTPException) as exc:
+        q._require_live_supabase_session("test", subject)
+    assert exc.value.status_code == 503
 
 def test_oauth_persists_verified_user_and_keeps_it_on_refresh(cfg, monkeypatch):
     import uuid

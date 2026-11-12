@@ -428,6 +428,29 @@ def read_inventory_item_by_sku(config: Config, sku: str) -> dict:
     return result
 
 
+def _require_live_supabase_session(token: str, subject: str) -> None:
+    """Fail closed unless Supabase Auth still recognizes this session."""
+    key = os.environ.get("VERICON_SUPABASE_PUBLISHABLE_KEY", "")
+    if not key:
+        raise HTTPException(status_code=503, detail="Session validation unavailable")
+    try:
+        response = requests.get(
+            SUPABASE_ISSUER + "/user",
+            headers={"apikey": key, "Authorization": "Bearer " + token},
+            timeout=5,
+        )
+    except requests.RequestException:
+        raise HTTPException(status_code=503, detail="Session validation unavailable") from None
+    if response.status_code != 200:
+        raise HTTPException(status_code=401, detail="Session not active")
+    try:
+        user = response.json()
+    except ValueError:
+        raise HTTPException(status_code=503, detail="Session validation unavailable") from None
+    if not isinstance(user, dict) or user.get("id") != subject:
+        raise HTTPException(status_code=401, detail="Session not active")
+
+
 def _verified_customer_subject(header: str | None) -> str:
     """Authenticate Supabase user JWT; do not infer tenant ownership from it."""
     if not isinstance(header, str) or not header.startswith("Bearer "):
@@ -443,6 +466,7 @@ def _verified_customer_subject(header: str | None) -> str:
         subject = str(uuid.UUID(claims["sub"]))
         if claims.get("role") != "authenticated":
             raise ValueError("Not a user session")
+        _require_live_supabase_session(token, subject)
         return subject
     except (jwt.PyJWTError, ValueError, TypeError, KeyError):
         raise HTTPException(status_code=401, detail="Invalid authentication") from None
