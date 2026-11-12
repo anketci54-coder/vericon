@@ -109,6 +109,41 @@ def test_supabase_session_identity_mismatch_and_network_failure_denied(monkeypat
         q._require_live_supabase_session("test", subject)
     assert exc.value.status_code == 503
 
+
+def test_revoked_validly_signed_jwt_denied_at_auth_endpoint(monkeypatch):
+    import uuid
+    from types import SimpleNamespace
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from starlette.requests import Request
+    import jwt
+    private = ec.generate_private_key(ec.SECP256R1())
+    subject = str(uuid.uuid4())
+    signed = jwt.encode({
+        "sub": subject, "iss": q.SUPABASE_ISSUER, "aud": "authenticated",
+        "role": "authenticated", "iat": int(time.time()) - 5,
+        "exp": int(time.time()) + 1200, "session_id": str(uuid.uuid4()),
+    }, private, algorithm="ES256")
+    monkeypatch.setattr(q, "SUPABASE_JWKS", SimpleNamespace(
+        get_signing_key_from_jwt=lambda _: SimpleNamespace(key=private.public_key())))
+    monkeypatch.setenv("VERICON_SUPABASE_PUBLISHABLE_KEY", "public-test-key")
+    state = {"status": 200}
+    def fake_get(url, *, headers, timeout):
+        assert url == q.SUPABASE_ISSUER + "/user"
+        assert headers["Authorization"] == "Bearer " + signed
+        return FakeResponse({"id": subject} if state["status"] == 200 else {},
+                            status=state["status"])
+    monkeypatch.setattr(q.requests, "get", fake_get)
+    from fastapi import HTTPException
+    req = Request({"type": "http", "method": "GET", "path": "/auth/me",
+                   "headers": [(b"authorization", ("Bearer " + signed).encode())],
+                   "query_string": b""})
+    first = q.auth_identity(req)
+    assert first["authenticated"] is True and first["subject"] == subject
+    state["status"] = 403
+    with pytest.raises(HTTPException) as exc:
+        q.auth_identity(req)
+    assert exc.value.status_code == 401
+
 def test_oauth_persists_verified_user_and_keeps_it_on_refresh(cfg, monkeypatch):
     import uuid
     owner = str(uuid.uuid4())
