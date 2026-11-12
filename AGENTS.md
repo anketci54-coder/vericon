@@ -16,3 +16,13 @@
 
 13. Ticari urune kadar TEK CANLI CHECKLIST `TODO.md` icindeki `Ticari urune kadar ana checklist` bolumudur. Tamamlanan gorevi ancak test + gercek davranis kaniti sonrasi `[x]` yap. Her tamamlanan dar adimda ilgili TODO/README kaydini guncelle, diff/test/canli kontrol yap, VPS commit + GitHub push ve local/remote SHA eslesmesini raporla. Bir adim bloke ise tik atma; gerekce ve sonraki tek isi yaz.
 14. Canli web dosyalari `/var/www/vericon-app` ve Nginx ayarlari Git disindaysa deployment drift'i ayri belirt; kaynak SHA eslesmesini tum VPS dosyalari eslesiyor diye sunma. Gizli dosyalari ve tokenleri Git'e alma.
+
+
+## Modelden bagimsiz devir ve maliyet protokolu (2026-11-12)
+- Bu dosya Codex, Claude, Gemini ve diger ajanlar icin ayni kurallari tasir. Tek gorev kaynagi `TODO.md` PDF checklist; yeni liste acma, mevcut [x] isleri yeniden yapma.
+- Her oturum basinda `AGENTS.md`, `TODO.md` (ozellikle ilk acik madde ve son kanit), `git status`, `git log -1`, ilgili kodu oku. VPS runtime ile GitHub SHA'yi ayri dogrula. Notion Agent Operating Guide: https://app.notion.com/p/40b467bd97ef815abf37c96427066e48
+- Su anki dar siradaki is: PDF 3-7 JWT dogrulamasi sonrasinda Supabase oturumu iptal edilmis eski access tokeninin API tarafinda kabul edilip edilmedigini gercek davranisla olc; gerekiyorsa tek dar, fail-closed aktif oturum kontrolu ekle. Shopify write_orders A ve B'de gercek API ile kaldirildi; yeniden yapma. Secret sizintisi kaniti olmadan anahtar rotasyonu yapma. 3-7 henuz [ ] acik.
+- Model rolleri oneridir, zorunlu API aboneligi degildir: Codex kod degisikligi; Claude bagimsiz diff/guvenlik incelemesi; Gemini uzun dokuman/arastirma; MiMo/Nemotron yalniz olculmus dusuk riskli gorevlerde. Her zaman tek dosya yazari; incelemeciler salt-okunur.
+- Gorev devri: (1) gorev ve kabul olcutu (2) mevcut kanit/kok neden (3) degisen dosyalar ve diff (4) test ve gercek API davranisi (5) acik riskler (6) commit SHA ve sonraki tek is. Sir, JWT, token, musteri kaydi veya tam logu devre ekleme.
+- Maliyet: API token sayilari olculmediyse tahmin olarak etiketle. Her gercek API gorevinde model, input/output token, cache, USD, sure, tekrar deneme ve dogrulanmis sonuc kaydet; abonelik kullanimi ile API faturalarini karistirma. Ilk API deney butce tavani 20 USD/ay; kullanici onayi olmadan yeni ucretli servis acma.
+- Canli servis, OAuth, Supabase politikasi, finansal veri veya musteri yetkisi degisikligi kullanici onayi ve rollback plani gerektirir. CI PASS ticari davranis PASS degildir.
