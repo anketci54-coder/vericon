@@ -829,3 +829,28 @@ def test_two_tenant_mapping_rejects_cross_owned_rows(monkeypatch):
                      "headers": [(b"authorization", header.encode())]}),
                 realm=records[other]["qbo_realm_id"])
         assert exc.value.status_code == 403
+
+@pytest.mark.parametrize('route,handler', [
+    ('/tenant/quickbooks/disconnect', q.tenant_quickbooks_disconnect),
+    ('/tenant/quickbooks/start', q.tenant_quickbooks_start),
+    ('/tenant/shopify/ownership/start', q.tenant_shopify_ownership_start),
+    ('/tenant/shopify/ownership/verify', q.tenant_shopify_ownership_verify),
+])
+def test_mutating_tenant_routes_fail_closed_on_cross_tenant_mapping(monkeypatch, route, handler):
+    """Denied tenant mapping must not reach OAuth, token, or proof side effects."""
+    from fastapi import HTTPException
+    from starlette.requests import Request
+    calls = []
+    def denied(_header):
+        raise HTTPException(status_code=403, detail='Cross-tenant denied')
+    monkeypatch.setattr(q, '_authorized_tenant_connection', denied)
+    monkeypatch.setattr(q, '_tenant_shopify_context', denied)
+    monkeypatch.setattr(q, 'disconnect_tenant_quickbooks', lambda *a, **k: calls.append('revoke'))
+    monkeypatch.setattr(q, 'create_authorization_url', lambda *a, **k: calls.append('oauth'))
+    monkeypatch.setattr(q, '_atomic_write', lambda *a, **k: calls.append('write'))
+    req = Request({'type': 'http', 'method': 'POST', 'path': route,
+                   'headers': [(b'authorization', b'Bearer cross-tenant')]})
+    with pytest.raises(HTTPException) as exc:
+        handler(req)
+    assert exc.value.status_code == 403
+    assert calls == []
