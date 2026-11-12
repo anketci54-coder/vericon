@@ -784,3 +784,48 @@ def test_shopify_owner_requires_full_company_pair(cfg, monkeypatch):
     with pytest.raises(HTTPException) as err:
         q._shopify_owner("Bearer valid")
     assert err.value.status_code == 403
+
+@pytest.mark.parametrize("route,method,handler", [
+    ("/tenant/finance/access-check", "GET", q.tenant_finance_access_check),
+    ("/tenant/shopify/ownership/start", "POST", q.tenant_shopify_ownership_start),
+    ("/tenant/shopify/ownership/verify", "POST", q.tenant_shopify_ownership_verify),
+    ("/tenant/quickbooks/start", "POST", q.tenant_quickbooks_start),
+    ("/tenant/quickbooks/disconnect", "POST", q.tenant_quickbooks_disconnect),
+])
+def test_tenant_routes_reject_unauthenticated_request(route, method, handler):
+    from starlette.requests import Request
+    from fastapi import HTTPException
+    req = Request({"type": "http", "method": method, "path": route, "headers": []})
+    with pytest.raises(HTTPException) as exc:
+        handler(req)
+    assert exc.value.status_code == 401
+
+
+def test_two_tenant_mapping_rejects_cross_owned_rows(monkeypatch):
+    import uuid
+    from fastapi import HTTPException
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    records = {
+        a: {"user_id": a, "shop_domain": "tenant-a.myshopify.com",
+            "qbo_realm_id": "111", "connection_status": "pilot_linked", "ownership_verified": True},
+        b: {"user_id": b, "shop_domain": "tenant-b.myshopify.com",
+            "qbo_realm_id": "222", "connection_status": "pilot_linked", "ownership_verified": True},
+    }
+    monkeypatch.setenv("VERICON_SUPABASE_PUBLISHABLE_KEY", "test-public")
+    monkeypatch.setattr(q, "_verified_customer_subject", lambda header: a if header == "Bearer A" else b)
+    def fake_get(url, *, params, headers, timeout):
+        owner = a if headers["Authorization"] == "Bearer A" else b
+        requested = params["user_id"][3:]
+        return FakeResponse([records[requested]] if requested == owner else [])
+    monkeypatch.setattr(q.requests, "get", fake_get)
+    for header, own, other in [("Bearer A", a, b), ("Bearer B", b, a)]:
+        result = q._authorized_tenant_connection(header)
+        assert result["user_id"] == own
+        assert result["realm"] == records[own]["qbo_realm_id"]
+        with pytest.raises(HTTPException) as exc:
+            q.tenant_finance_invoice_count(
+                __import__("starlette.requests", fromlist=["Request"]).Request(
+                    {"type": "http", "method": "GET", "path": "/tenant/finance/invoice-count",
+                     "headers": [(b"authorization", header.encode())]}),
+                realm=records[other]["qbo_realm_id"])
+        assert exc.value.status_code == 403
