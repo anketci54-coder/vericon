@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import fcntl
 import json
 import os
 import re
@@ -151,8 +152,19 @@ def save_tenant_setup(user_id: str, store: str, client_id: str, client_secret: s
     path = _tenant_setup_path(user_id, store)
     if path.exists() or path.is_symlink():
         raise FileExistsError("Shopify tenant credentials already exist")
-    _atomic_save(path, {"user_id": str(__import__("uuid").UUID(user_id)),
-                        "store": store, "client_id": client_id, "client_secret": client_secret})
+    # Store-scoped process lock protects the check and credential creation together.
+    lock = path.parent / ("store_" + store + ".lock")
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "rb") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        if path.exists() or path.is_symlink():
+            raise FileExistsError("Shopify tenant credentials already exist")
+        suffix = "_" + store + ".json"
+        for existing in path.parent.iterdir():
+            if existing.name.endswith(suffix) and existing.name != path.name:
+                raise ValueError("Shopify store already linked to another customer")
+        _atomic_save(path, {"user_id": str(__import__("uuid").UUID(user_id)),
+                            "store": store, "client_id": client_id, "client_secret": client_secret})
 
 
 def load_tenant_setup(user_id: str, store: str) -> Config:

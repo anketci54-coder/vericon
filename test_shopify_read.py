@@ -418,3 +418,18 @@ def test_verify_tenant_store_rejects_wrong_shop_identity(tmp_path, monkeypatch):
     monkeypatch.setattr(s.requests,"post",fake_post)
     with pytest.raises(ValueError,match="identity mismatch"):
         s.verify_tenant_store(owner,store)
+
+
+def test_second_customer_cannot_bind_same_shopify_store(tmp_path, monkeypatch):
+    import uuid
+    monkeypatch.setattr(s, "PRIVATE", tmp_path / "private")
+    first, second = str(uuid.uuid4()), str(uuid.uuid4())
+    store = "tenant-a.myshopify.com"
+    s.save_tenant_setup(first, store, "TEST_ID_A", "TEST_SECRET_A")
+    with pytest.raises(ValueError, match="already linked"):
+        s.save_tenant_setup(second, store, "TEST_ID_B", "TEST_SECRET_B")
+    assert s.load_tenant_setup(first, store).client_id == "TEST_ID_A"
+    with pytest.raises(ValueError, match="unavailable"):
+        s.load_tenant_setup(second, store)
+    s.save_tenant_setup(second, "tenant-b.myshopify.com", "TEST_ID_B", "TEST_SECRET_B")
+    assert s.load_tenant_setup(second, "tenant-b.myshopify.com").client_id == "TEST_ID_B"

@@ -165,6 +165,8 @@ def create_authorization_url(config: Config, *, user_id: str | None = None) -> s
 def check_state(config: Config, supplied: str, *, user_id: str | None = None) -> None:
     path = _oauth_state_file(config, supplied, user_id=user_id)
     try:
+        if path.is_symlink() or path.stat().st_mode & 0o077:
+            raise ValueError("Missing or invalid OAuth state")
         obj = json.loads(path.read_bytes())
     except (FileNotFoundError, ValueError, json.JSONDecodeError):
         raise ValueError("Missing or invalid OAuth state") from None
@@ -230,11 +232,21 @@ def save_tenant_tokens(config: Config, payload: dict, *, user_id: str) -> None:
     """Explicit new-tenant path; never overwrite the legacy pilot token."""
     _secure_dir(config)
     user_id = str(uuid.UUID(user_id))
-    record = {"access_token": payload["access_token"], "refresh_token": payload["refresh_token"],
-              "expires_at": time.time() + int(payload.get("expires_in", 3600)),
-              "realm": config.expected_realm, "authorized_user_id": user_id}
-    _atomic_write(_tenant_token_path(config, user_id=user_id),
-                  Fernet(_key(config)).encrypt(json.dumps(record).encode()))
+    path = _tenant_token_path(config, user_id=user_id)
+    # Realm-scoped process lock makes check + write one atomic critical section.
+    # Keep the existing per-user lock for refresh/revoke unchanged.
+    realm_lock = path.parent / ("realm_" + config.expected_realm + ".lock")
+    fd = os.open(realm_lock, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "rb") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        suffix = "_" + config.expected_realm + ".enc"
+        for existing in path.parent.iterdir():
+            if existing.name.endswith(suffix) and existing.name != path.name:
+                raise ValueError("QuickBooks company already linked to another customer")
+        record = {"access_token": payload["access_token"], "refresh_token": payload["refresh_token"],
+                  "expires_at": time.time() + int(payload.get("expires_in", 3600)),
+                  "realm": config.expected_realm, "authorized_user_id": user_id}
+        _atomic_write(path, Fernet(_key(config)).encrypt(json.dumps(record).encode()))
 
 
 def load_tenant_tokens(config: Config, *, user_id: str) -> dict:
@@ -484,6 +496,7 @@ def health() -> str:
 
 
 def _pilot_qbo_owner(header: str | None, realm: str) -> str:
+    from shopify_read import STORE
     subject = _verified_customer_subject(header)
     api_key = os.environ.get("VERICON_SUPABASE_PUBLISHABLE_KEY", "")
     if not api_key:
@@ -491,12 +504,13 @@ def _pilot_qbo_owner(header: str | None, realm: str) -> str:
     try:
         response = requests.get(
             SUPABASE_ISSUER.replace("/auth/v1", "/rest/v1") + "/vericon_pilot_connections",
-            params={"select": "qbo_realm_id,connection_status", "user_id": "eq." + subject},
+            params={"select": "qbo_realm_id,shop_domain,connection_status", "user_id": "eq." + subject},
             headers={"apikey": api_key, "Authorization": header}, timeout=8)
         rows = response.json() if response.status_code == 200 else []
     except (requests.RequestException, ValueError):
         rows = []
-    if not isinstance(rows, list) or len(rows) != 1 or rows[0].get("qbo_realm_id") != realm or rows[0].get("connection_status") != "pilot_linked":
+    if (not isinstance(rows, list) or len(rows) != 1 or rows[0].get("qbo_realm_id") != realm
+            or rows[0].get("shop_domain") != STORE or rows[0].get("connection_status") != "pilot_linked"):
         raise HTTPException(status_code=403, detail="Pilot account authorization denied")
     return subject
 
@@ -571,12 +585,14 @@ def _shopify_owner(header: str | None) -> str:
         raise HTTPException(status_code=503, detail="Pilot authorization unavailable")
     try:
         r = requests.get(SUPABASE_ISSUER.replace("/auth/v1", "/rest/v1") + "/vericon_pilot_connections",
-                         params={"select": "shop_domain,connection_status", "user_id": "eq." + subject},
+                         params={"select": "shop_domain,qbo_realm_id,connection_status", "user_id": "eq." + subject},
                          headers={"apikey": api_key, "Authorization": header}, timeout=8)
         rows = r.json() if r.status_code == 200 else []
     except (requests.RequestException, ValueError):
         rows = []
-    if not isinstance(rows, list) or len(rows) != 1 or rows[0].get("shop_domain") != STORE or rows[0].get("connection_status") != "pilot_linked":
+    if (not isinstance(rows, list) or len(rows) != 1 or rows[0].get("shop_domain") != STORE
+            or rows[0].get("qbo_realm_id") != load_saved_setup().expected_realm
+            or rows[0].get("connection_status") != "pilot_linked"):
         raise HTTPException(status_code=403, detail="Shopify pilot account denied")
     return subject
 

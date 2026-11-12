@@ -164,9 +164,11 @@ def test_pilot_qbo_owner_requires_matching_rls_record(monkeypatch):
     monkeypatch.setattr(q, "_verified_customer_subject", lambda header: owner if header == "Bearer valid" else (_ for _ in ()).throw(HTTPException(401)))
     monkeypatch.setenv("VERICON_SUPABASE_PUBLISHABLE_KEY", "test-public-key")
     seen = {}
+    row = {"qbo_realm_id": "12345", "shop_domain": "hudys3-p0.myshopify.com",
+           "connection_status": "pilot_linked"}
     def get(url, *, params, headers, timeout):
         seen.update(params=params, headers=headers)
-        return FakeResponse([{"qbo_realm_id": "12345", "connection_status": "pilot_linked"}])
+        return FakeResponse([dict(row)])
     monkeypatch.setattr(q.requests, "get", get)
     assert q._pilot_qbo_owner("Bearer valid", "12345") == owner
     assert seen["params"]["user_id"] == "eq." + owner
@@ -174,6 +176,11 @@ def test_pilot_qbo_owner_requires_matching_rls_record(monkeypatch):
     with pytest.raises(HTTPException) as err:
         q._pilot_qbo_owner("Bearer valid", "wrong-company")
     assert err.value.status_code == 403
+    row["shop_domain"] = "tenant-b.myshopify.com"
+    with pytest.raises(HTTPException) as err:
+        q._pilot_qbo_owner("Bearer valid", "12345")
+    assert err.value.status_code == 403
+    row["shop_domain"] = "hudys3-p0.myshopify.com"
     monkeypatch.delenv("VERICON_SUPABASE_PUBLISHABLE_KEY")
     with pytest.raises(HTTPException) as err:
         q._pilot_qbo_owner("Bearer valid", "12345")
@@ -484,6 +491,7 @@ def test_shopify_proof_wrong_code_does_not_verify(cfg, monkeypatch):
 
 def test_tenant_token_files_are_isolated_and_legacy_unchanged(cfg):
     import uuid
+    from dataclasses import replace
     first, second = str(uuid.uuid4()), str(uuid.uuid4())
     payload = {"access_token":"TEST_A","refresh_token":"TEST_RA"}
     q._save_tokens(cfg,payload,"12345",user_id=first)
@@ -491,9 +499,14 @@ def test_tenant_token_files_are_isolated_and_legacy_unchanged(cfg):
     q.save_tenant_tokens(cfg,payload,user_id=first)
     with pytest.raises(ValueError,match="not available"):
         q.load_tenant_tokens(cfg,user_id=second)
-    q.save_tenant_tokens(cfg,{"access_token":"TEST_B","refresh_token":"TEST_RB"},user_id=second)
+    other_company = replace(cfg, expected_realm="987654321")
+    q.save_tenant_tokens(other_company,{"access_token":"TEST_B","refresh_token":"TEST_RB"},user_id=second)
     assert q.load_tenant_tokens(cfg,user_id=first)["access_token"] == "TEST_A"
-    assert q.load_tenant_tokens(cfg,user_id=second)["access_token"] == "TEST_B"
+    assert q.load_tenant_tokens(other_company,user_id=second)["access_token"] == "TEST_B"
+    with pytest.raises(ValueError,match="not available"):
+        q.load_tenant_tokens(cfg,user_id=second)
+    with pytest.raises(ValueError,match="not available"):
+        q.load_tenant_tokens(other_company,user_id=first)
     assert (cfg.private_dir / "qbo_tokens.enc").read_bytes() == legacy
     assert q.load_tokens(cfg)["authorized_user_id"] == first
 
@@ -666,9 +679,11 @@ def test_finance_invoice_route_owner_read_only(monkeypatch):
 def test_tenant_disconnect_revoke_then_delete_only_owner(cfg,monkeypatch):
     import uuid
     from dataclasses import replace
-    user=str(uuid.uuid4());other=str(uuid.uuid4());tenant=replace(cfg,expected_realm="987654321")
+    user=str(uuid.uuid4());other=str(uuid.uuid4())
+    tenant=replace(cfg,expected_realm="987654321")
+    other_tenant=replace(cfg,expected_realm="111111111")
     q.save_tenant_tokens(tenant,{"access_token":"A","refresh_token":"RA","expires_in":3600},user_id=user)
-    q.save_tenant_tokens(tenant,{"access_token":"B","refresh_token":"RB","expires_in":3600},user_id=other)
+    q.save_tenant_tokens(other_tenant,{"access_token":"B","refresh_token":"RB","expires_in":3600},user_id=other)
     calls=[]
     def fake_post(url,*,auth,data,headers,timeout):
         assert url=="https://developer.api.intuit.com/v2/oauth2/tokens/revoke"
@@ -678,7 +693,7 @@ def test_tenant_disconnect_revoke_then_delete_only_owner(cfg,monkeypatch):
     q.disconnect_tenant_quickbooks(tenant,user_id=user)
     assert calls==["RA"]
     with pytest.raises(ValueError):q.load_tenant_tokens(tenant,user_id=user)
-    assert q.load_tenant_tokens(tenant,user_id=other)["access_token"]=="B"
+    assert q.load_tenant_tokens(other_tenant,user_id=other)["access_token"]=="B"
     q.save_tenant_tokens(tenant,{"access_token":"A2","refresh_token":"RA2","expires_in":3600},user_id=user)
     assert q.load_tenant_tokens(tenant,user_id=user)["access_token"]=="A2"
 
@@ -708,4 +723,64 @@ def test_disconnect_reconnect_flow_same_user_and_realm(cfg,monkeypatch):
     state=parse_qs(urlparse(url).query)["state"][0]
     q.complete_authorization(tenant,state=state,code="valid",realm="987654321",user_id=user)
     assert q.get_tenant_access_token(tenant,user_id=user)==("RECONNECTED","987654321")
-    with pytest.raises(ValueError):q.get_tenant_access_token(tenant,user_id=other)
+
+
+def test_second_customer_cannot_bind_same_qbo_company(cfg):
+    import uuid
+    from dataclasses import replace
+    first, second = str(uuid.uuid4()), str(uuid.uuid4())
+    q.save_tenant_tokens(cfg, {"access_token":"A","refresh_token":"RA","expires_in":3600}, user_id=first)
+    with pytest.raises(ValueError, match="already linked"):
+        q.save_tenant_tokens(cfg, {"access_token":"B","refresh_token":"RB","expires_in":3600}, user_id=second)
+    assert q.load_tenant_tokens(cfg, user_id=first)["access_token"] == "A"
+    with pytest.raises(ValueError, match="not available"):
+        q.load_tenant_tokens(cfg, user_id=second)
+    other_company = replace(cfg, expected_realm="987654321")
+    q.save_tenant_tokens(other_company, {"access_token":"B","refresh_token":"RB","expires_in":3600}, user_id=second)
+    assert q.load_tenant_tokens(other_company, user_id=second)["access_token"] == "B"
+    q.save_tenant_tokens(cfg, {"access_token":"A2","refresh_token":"RA2","expires_in":3600}, user_id=first)
+    assert q.load_tenant_tokens(cfg, user_id=first)["access_token"] == "A2"
+
+
+def test_check_state_rejects_symlinked_and_unsafe_state_file(cfg):
+    import os
+    import uuid
+    owner = str(uuid.uuid4())
+    state = parse_qs(urlparse(q.create_authorization_url(cfg, user_id=owner)).query)["state"][0]
+    path = q._oauth_state_file(cfg, state, user_id=owner)
+    target = cfg.private_dir / "outside.json"
+    os.replace(path, target)
+    os.symlink(target, path)
+    with pytest.raises(ValueError, match="Missing or invalid"):
+        q._callback_state_record(cfg, state)
+    with pytest.raises(ValueError, match="Missing or invalid"):
+        q.check_state(cfg, state, user_id=owner)
+    path.unlink()
+    os.replace(target, path)
+    os.chmod(path, 0o644)
+    with pytest.raises(ValueError, match="Missing or invalid"):
+        q.check_state(cfg, state, user_id=owner)
+    os.chmod(path, 0o600)
+    q.check_state(cfg, state, user_id=owner)
+
+
+def test_shopify_owner_requires_full_company_pair(cfg, monkeypatch):
+    import uuid
+    from fastapi import HTTPException
+    owner = str(uuid.uuid4())
+    monkeypatch.setattr(q, "_verified_customer_subject", lambda header: owner)
+    monkeypatch.setattr(q, "load_saved_setup", lambda: cfg)
+    monkeypatch.setenv("VERICON_SUPABASE_PUBLISHABLE_KEY", "test-public-key")
+    row = {"shop_domain": "hudys3-p0.myshopify.com", "connection_status": "pilot_linked",
+           "qbo_realm_id": cfg.expected_realm}
+    monkeypatch.setattr(q.requests, "get", lambda url, **kw: FakeResponse([dict(row)]))
+    assert q._shopify_owner("Bearer valid") == owner
+    row["qbo_realm_id"] = "99999"
+    with pytest.raises(HTTPException) as err:
+        q._shopify_owner("Bearer valid")
+    assert err.value.status_code == 403
+    row["qbo_realm_id"] = cfg.expected_realm
+    row["shop_domain"] = "tenant-b.myshopify.com"
+    with pytest.raises(HTTPException) as err:
+        q._shopify_owner("Bearer valid")
+    assert err.value.status_code == 403
