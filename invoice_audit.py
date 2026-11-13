@@ -16,7 +16,7 @@ import re
 import stat
 import sys
 from pathlib import Path
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, DecimalException, InvalidOperation, ROUND_HALF_UP
 from collections import Counter
 
 import requests
@@ -65,10 +65,17 @@ def audit_invoice(inv: dict) -> dict:
             quantity = number(detail.get("Qty"))
             unit_price = number(detail.get("UnitPrice"))
             amount = number(line.get("Amount"))
-        except (ValueError, AttributeError):
+            # USD Amount is recorded in cents; UnitPrice/Qty can be fractional.
+            # Half-cent ties need a documented provider rounding policy.
+            if amount % Decimal("0.01") != 0:
+                return {**base, "status": "BLOCKED_SUBCENT_RECORDED_AMOUNT"}
+            calculated = quantity * unit_price
+            if abs(calculated) % Decimal("0.01") == Decimal("0.005"):
+                return {**base, "status": "BLOCKED_ROUNDING_POLICY_UNVERIFIED"}
+        except (ValueError, AttributeError, DecimalException):
             return {**base, "status": "BLOCKED_INCOMPLETE_PRODUCT_LINE"}
         base["checked_product_lines"] += 1
-        if abs(quantity * unit_price - amount) > USD_REVIEW_TOLERANCE:
+        if abs(calculated - amount) > USD_REVIEW_TOLERANCE:
             base["review_product_lines"] += 1
     if not product_lines:
         return {**base, "status": "BLOCKED_NO_PRODUCT_LINES"}
@@ -913,7 +920,9 @@ def audit_shopify_invoice_link(order: dict, invoices: list[dict]) -> dict:
     if currency != shop_total["currencyCode"]:
         return {**base, "status": "BLOCKED_LINKED_CURRENCY_MISMATCH"}
     try:
-        if abs(number(inv.get("TotalAmt")) - number(shop_total["amount"])) > Decimal("0.01"):
+        # Compare recorded same-currency totals exactly; these are not raw
+        # quantity/rate products requiring a rounding allowance.
+        if number(inv.get("TotalAmt")) != number(shop_total["amount"]):
             return {**base, "status": "REVIEW_LINKED_TOTAL_MISMATCH"}
     except ValueError:
         return {**base, "status": "BLOCKED_LINKED_AMOUNT_UNKNOWN"}

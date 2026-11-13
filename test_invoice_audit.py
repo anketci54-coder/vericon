@@ -71,6 +71,37 @@ def test_exact_fractional_quantity_line_remains_matched():
     assert result['status'] == 'LINE_AMOUNTS_MATCH'
 
 
+@pytest.mark.parametrize('amount', ['1.00', '1.01'])
+def test_half_cent_tie_requires_rounding_policy(amount):
+    result = a.audit_invoice(invoice(sales(qty=1, price='1.005', amount=amount)))
+    assert result['status'] == 'BLOCKED_ROUNDING_POLICY_UNVERIFIED'
+
+
+def test_subcent_recorded_usd_amount_is_not_verified():
+    result = a.audit_invoice(invoice(sales(qty=1, price='1.001', amount='1.001')))
+    assert result['status'] == 'BLOCKED_SUBCENT_RECORDED_AMOUNT'
+
+
+@pytest.mark.parametrize('qty,price,amount', [('1', '1e30', '1e30'), ('1e999999', '1e999999', '1')])
+def test_line_decimal_capacity_exceeded_is_blocked(qty, price, amount):
+    result = a.audit_invoice(invoice(sales(qty=qty, price=price, amount=amount)))
+    assert result['status'] == 'BLOCKED_INCOMPLETE_PRODUCT_LINE'
+
+
+@pytest.mark.parametrize('price,amount', [('1.004', '1.00'), ('1.006', '1.01')])
+def test_unambiguous_nearest_cent_rounding_remains_supported(price, amount):
+    assert a.audit_invoice(invoice(sales(qty=1, price=price, amount=amount)))['status'] == 'LINE_AMOUNTS_MATCH'
+
+
+@pytest.mark.parametrize('amount', ['9.99', '10.01'])
+def test_linked_totals_never_swallow_one_cent(amount):
+    order = {'id': 'gid://shopify/Order/123', 'name': '#123',
+             'totalPriceSet': {'shopMoney': {'amount': '10.00', 'currencyCode': 'USD'}}}
+    inv = {'Id': '1', 'PrivateNote': 'VERICON_SHOPIFY_ORDER_ID=123',
+           'TotalAmt': amount, 'CurrencyRef': {'value': 'USD'}}
+    assert a.audit_shopify_invoice_link(order, [inv])['status'] == 'REVIEW_LINKED_TOTAL_MISMATCH'
+
+
 def test_missing_item_and_totals_only_are_blocked():
     result = a.audit_invoice(invoice({"DetailType": "SubTotalLineDetail", "Amount": 75}))
     assert result["status"] == "BLOCKED_NO_PRODUCT_LINES"

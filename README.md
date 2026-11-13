@@ -1,5 +1,7 @@
 # VERICON
 
+Finans devamı: USD yarım-sent yuvarlama politikası belirsizse BLOCKED; alt-sent kayıtlı Amount kabul edilmez. Kayıtlı sipariş/fatura toplamları tam eşit karşılaştırılır. 203 test ve mevcut iki Sandbox üzerinde salt-okunur doğrulama PASS; gerçek tahsilat, banka ve müşteri kabulü hâlâ doğrulanmadı.
+
 ASTRA devamı: systemd adayı artık `python3 -B qbo_oauth.py --saved-setup preflight` ile ağsız yapılandırma kontrolü ve 0077 umask kullanır. Hazırlanmış public env gerçek özel yapılandırmayla doğrulandı; boş kalıcı env reddedilir. Kurulum/servis devri yapılmadı; canlı yeniden başlatma hâlâ onay bekler. Preflight provider veya kullanıcı oturumu sağlığını kanıtlamaz.
 
 2026-11-13 bağımsız denetim: ürün ticari kullanıma hazır değildir. Güncel yeniden ölçüm ve bloke işler `TODO.md` içindedir. Güvenlik başlığı düzeltmesi ayrı aday çalışma kopyasında gerçek Nginx ile sınandı; canlı yapılandırma ve servisler onaysız değiştirilmedi. Başlangıç 177 offline test PASS; bu sonuç ticari finans/tenant kabulü değildir.
