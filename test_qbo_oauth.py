@@ -451,6 +451,29 @@ def test_saved_setup_permissions_and_values(monkeypatch, tmp_path):
         q.load_saved_setup()
 
 
+@pytest.mark.parametrize('target', ['key', 'setup', 'directory'])
+def test_qbo_secret_read_rejects_symlink_even_with_private_permissions(cfg, tmp_path, monkeypatch, target):
+    outside = tmp_path / 'outside'
+    outside.mkdir(mode=0o700)
+    key = q.Fernet.generate_key()
+    (outside / 'qbo.key').write_bytes(key)
+    (outside / 'qbo.key').chmod(0o600)
+    (outside / 'qbo_setup.json').write_text(json.dumps({
+        'VERICON_QBO_CLIENT_ID': 'fake', 'VERICON_QBO_CLIENT_SECRET': 'fake',
+        'VERICON_QBO_REDIRECT_URI': 'http://localhost:8782/oauth/quickbooks/callback',
+        'VERICON_QBO_EXPECTED_REALM': '12345'}))
+    (outside / 'qbo_setup.json').chmod(0o600)
+    monkeypatch.setattr(q, 'BASE_DIR', tmp_path)
+    if target == 'directory':
+        cfg.private_dir.symlink_to(outside, target_is_directory=True)
+    else:
+        cfg.private_dir.mkdir(mode=0o700)
+        name = 'qbo.key' if target == 'key' else 'qbo_setup.json'
+        (cfg.private_dir / name).symlink_to(outside / name)
+    with pytest.raises((ValueError, PermissionError)):
+        q._key(cfg) if target == 'key' else q.load_saved_setup()
+
+
 def test_force_refresh_rotates_unexpired_tokens(cfg, monkeypatch):
     q._save_tokens(cfg, {"access_token": "STILL_VALID", "refresh_token": "OLD_REFRESH", "expires_in": 3600}, "12345")
     called = []

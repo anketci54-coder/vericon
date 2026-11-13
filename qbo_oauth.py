@@ -104,6 +104,8 @@ def _atomic_write(path: Path, data: bytes) -> None:
 def _key(config: Config) -> bytes:
     _secure_dir(config)
     path = config.private_dir / "qbo.key"
+    if path.is_symlink():
+        raise PermissionError("Encryption key file must not be a symlink")
     if not path.exists():
         try:
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -111,7 +113,7 @@ def _key(config: Config) -> bytes:
                 f.write(Fernet.generate_key())
         except FileExistsError:
             pass
-    if path.stat().st_mode & 0o077:
+    if not path.is_file() or path.stat().st_mode & 0o077:
         raise PermissionError("Encryption key file permissions must be 0600")
     return path.read_bytes()
 
@@ -797,9 +799,9 @@ def quickbooks_callback(state: str = "", code: str = "", realmId: str = "", erro
 def load_saved_setup() -> Config:
     private = BASE_DIR / "private"
     path = private / "qbo_setup.json"
-    if not private.is_dir() or private.stat().st_mode & 0o077:
+    if private.is_symlink() or not private.is_dir() or private.stat().st_mode & 0o077:
         raise PermissionError("Private directory missing or unsafe")
-    if not path.is_file() or path.stat().st_mode & 0o077:
+    if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077:
         raise PermissionError("Saved setup missing or unsafe")
     values = json.loads(path.read_text(encoding="utf-8"))
     required = ("VERICON_QBO_CLIENT_ID", "VERICON_QBO_CLIENT_SECRET",
