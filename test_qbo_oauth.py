@@ -1060,3 +1060,11 @@ def test_mutating_tenant_routes_fail_closed_on_cross_tenant_mapping(monkeypatch,
         handler(req)
     assert exc.value.status_code == 403
     assert calls == []
+
+
+@pytest.mark.parametrize('value', ['*', '111,*', '111,', '111 222'])
+def test_malformed_pilot_grant_fails_closed_before_startup(monkeypatch, value):
+    monkeypatch.setenv('VERICON_PILOT_INVOICE_COUNT_REALMS', value)
+    with pytest.raises(q.HTTPException) as exc:
+        q.runtime_preflight()
+    assert exc.value.status_code == 503

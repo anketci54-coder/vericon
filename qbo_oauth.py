@@ -922,6 +922,7 @@ def load_saved_setup() -> Config:
 
 def runtime_preflight() -> None:
     """Read-only startup check; never creates keys, refreshes tokens or calls APIs."""
+    _pilot_invoice_count_realms()
     key = os.environ.get("VERICON_SUPABASE_PUBLISHABLE_KEY", "")
     if not key.startswith("sb_publishable_") or any(c.isspace() for c in key):
         raise ValueError("Publishable Auth configuration missing or invalid")
@@ -952,7 +953,7 @@ def main() -> None:
     if args.command == "preflight":
         try:
             runtime_preflight()
-        except (ValueError, OSError, TypeError, KeyError):
+        except (ValueError, OSError, TypeError, KeyError, HTTPException):
             print("VERICON configuration preflight FAILED; check private configuration and public Auth key")
             raise SystemExit(1) from None
         print("VERICON configuration preflight PASS; provider/session readiness not tested")
