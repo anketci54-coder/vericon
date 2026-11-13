@@ -112,7 +112,48 @@ Kaynak: `VERICON_Ticari_Urun_Checklist_10_Kasim_2026.pdf` (3 sayfa). Her PDF mad
 - [ ] Kuyruk ve yeniden deneme yalnız ölçülen ihtiyaca göre kurulacak.
 - [ ] 1.000, 10.000 ve 100.000 işlemde performans, bütünlük ve maliyet ölçülecek.
 
-### 2026-11-13 bağımsız başdenetçi kanıt ve engel kaydı
+### 2026-11-13 ASTRA devamı: son doğrulama ve onay kapısı
+
+Sol 6.1 çalışması ve ad646ba korundu; aynı denetim dalından devam edildi. İlk 188 test yeniden PASS, son tam pytest **228 PASS** (0,95 sn). Canlı main 213eea9, web dosyaları değişmedi; üç API health 200, anonim finans 401. Systemd statik doğrulama ve diff check PASS. Adayın GitHub HEAD eşitliği son push sonrası ayrıca ölçülür. **Ürün ticari kullanıma hazır değil.**
+
+| Aşama | Toplam alt iş | Tamamlanan | Açık | Bloke |
+|---|---:|---:|---:|---:|
+| 1. Temel yapı | 6 | 5 | 0 | 1 |
+| 2. Finans denetimi | 8 | 4 | 0 | 4 |
+| 3. Kullanıcı güvenliği | 8 | 2 | 0 | 6 |
+| 4. Çok müşterili SaaS | 5 | 1 | 3 | 1 |
+| Toplam | 27 | 12 | 3 | 12 |
+
+Yeni aday düzeltmeler dağıtılmadığından dış kabul gerektiren ana checkboxlar kapatılmadı. Tamamlananların dar kapsamı devralınan madde tablosunda korunur.
+
+| Düzeltme | Kanıt | Commit |
+|---|---|---|
+| Eksik env ile başlamayı engelleme, özel umask | Gerçek setup + hazırlanmış public env PASS; boş env ret, systemd verify PASS | adecf31, 00aba53 |
+| Yarım-sent belirsizliği/subcent BLOCK, toplamda bir kuruş farkı REVIEW | 5 RED→GREEN; gerçek USD 31/16/1 snapshot, 29 satır MATCH/2 BLOCK, 16 ödeme kenarı | 2fc940c |
+| JWT session_id ve anonim oturum reddi, Auth/JWKS kesintisinde 503 | İmzalı sentetik JWT ve 429/5xx/redirect testleri; gerçek logout tekrarı BLOKE | 4b6f68c |
+| QBO anahtar/setup symlink sınırı | 3 gerçek geçici dosya RED→GREEN | f10fd42 |
+| Açık finans izni veya dar pilot sayım istisnası | 5 RED→GREEN; izin yokken QBO çağrısı 0 | 7b55906 |
+| Realm sayım kotası ve sağlayıcı bekleme süresi | 8 OS process/gerçek dosya: 1 kabul/7 ret; 429/503 sonrası ikinci sağlayıcı çağrısı yok | 9804c0a |
+| OAuth hata logu koruması | Sentetik upstream 502 öncesi error.log kod içeriyordu; sonra access/error kod yok | 36109ac |
+| Nginx API hız sınırı | Ayrı Nginx + yerel upstream: 80 istekte 11 normal/69 adet 429; Retry-After, health ve başlıklar PASS | 64671aa |
+| Shopify challenge tüketimi | Pilot/tenant 1 kabul/1 ret; yeni challenge eski verification ile silinmez | 7c8fcb4 |
+| Genişletilmiş sentetik ölçüm | Boyut başına 21 batch, CPU/RSS, p50/p95/p99, ID oracle, değişmeyen hash, API=0 | 5a9feee |
+
+Gerçek kaynak kontrolleri: Shopify A/B tokenlarında yalnız read_inventory/read_locations/read_orders/read_products; write_orders yok. Supabase gerçek katalogda RLS=true, authenticated yalnız owner SELECT, anon grant yok; user/store/realm üç UNIQUE; 2 bağımsız kayıt, sahiplik=2, finans açılmış=0. Yönetici katalog erişimi gerçek HTTP kullanıcı oturumu değildir. Tarihsel A→A/B→B 200, A→B/B→A 403 kanıtı korunur; yeni adayda gerçek iki oturum ve tüm uçlar BLOKE. Kimliksiz canlı ret 401 yeniden ölçüldü. OTP gönderilmedi, revoke/reconnect tekrarlanmadı.
+
+Kaynak → açık ID eşleştirmesi → müşteri/para birimi/bakiye hesabı → kanıt → sonuç zinciri korundu. Gerçek okumalar 12 QBO query200 + 2 normal refresh200 + 2 Shopify token/query çağrısı; scope kontrolü ayrıca 4 Shopify çağrısı. Finansal kayıt mutasyonu 0. İki iade/mahsup zinciri doğrulanırken dört test siparişinin gerçek tahsilatı incelemede; banka kaynağı yok. Yeni sandbox.json içindeki duplicate_groups=null, eski ölçüm betiğindeki alan adı uyuşmazlığıdır; yeni duplicate kanıtı diye sunulmaz. Devralınan finance-followup.json içindeki 1 duplicate kaynak grubu ve 1 toplam farkı kanıtı geçerlidir.
+
+Refresh sonrası güncel özel dosya yedeği 0600 alındı: astra-evidence/rollback-private-current.tar; 28 özel dosya izole geri açılıp byte karşılaştırması PASS. Önceki kaynak/config yedeği korundu; dosya silinmedi. Canlı restore/reboot yapılmadı. Kod rollback'inde güncel tokenları eski arşivle değiştirme. Eski 8782–8786, Aider dosyaları ve kurtarma kodu kullanılmadıkları kanıtlanmadığından korunur; silinen dosya/fonksiyon/bağımlılık **0**.
+
+Kalan işler: root yerine özel runtime kullanıcısı, kilitli bağımlılık kurulumu, merkezi izleme/tam readiness, legacy entity GET ve eski B pilot yenileme borcu, genel merchant Shopify OAuth/onboarding, bütün tenant Finance yolları ve büyük veri ingest. Bunlar yeni kota veya sentetik benchmark ile tamamlanmış sayılmaz. HSTS henüz yok. Supabase mevcut leaked-password protection WARN korunur; otomatik plan/ayar değişmedi: https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection .
+
+Dış kapılar: main merge + canlı Nginx/env/systemd devri/API restart onayı; iki izinli kullanıcının tarayıcısında OTP/A-B/logout testi; onaylı muhasebe politikası ve senkron penceresi; izinli banka/ödeme sağlayıcı snapshotı ve muhasebeci etiketli örneklem; ticari merchant OAuth kurulum bilgileri. Tokenları sohbete veya Git'e taşıma. Tüm VPS reboot diğer projeleri etkilediğinden ayrı bakım onayı gerektirir.
+
+Web erişimi vardı: Nginx başlık ve limit belgeleri, Intuit kota/429 belgesi, Supabase sessions ve güncel auth kaynak/release kayıtları, Shopify 2026-10 currentAppInstallation resmi toolkit araması ve rate-limits, FastAPI sync route/thread belgesi okundu. Intuit Invoice/Payment sayfaları yalnız yükleme kabuğu döndürdü; bunlardan yuvarlama kuralı doğrulanmış gibi sunulmadı. Yarım-sent belirsizliği BLOCK edildi.
+
+Yeni kanıtlar /root/vericon-audit-20261113/astra-evidence/ içinde; evidence-sha256.json bütünlük manifestidir. Ham finansal kayıtlar/sırlar Git'e alınmadı. Canlı merge/dağıtım/restart yapılmadı.
+
+### 2026-11-13 Sol 6.1 devralınan kanıt ve engel kaydı (tarihsel)
 
 Bu kayıt önceki günlüklerin güncel üst kaydıdır. Son kullanıcı talimatı gereği geçmiş `[x]` tek başına kabul edilmedi. Bölüm 3'te gerçek oturum/merchant/revoke erişimi olmadan bağımsız teyit edilemeyen beş madde ve yeni OAuth kusuru açık bırakıldı: eski testlerin başarısız olduğu iddia edilmiyor. Bu oturumda kullanıcı JWT'si edinilmedi, process environment okunmadı, yeni kullanıcı/finansal kayıt oluşturulmadı, canlı OAuth iptal edilmedi. Gereken sonraki kanıt: kullanıcının kendi iki izinli oturumuyla test; JWT'yi sohbet veya Git'e aktarma. Muhasebe politikası sorusu yanıtsız; politika varsayılmadı.
 

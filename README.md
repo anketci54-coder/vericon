@@ -1,5 +1,15 @@
 # VERICON
 
+Güncel ASTRA sonucu: 188 başlangıç testi yeniden doğrulandı; 228 son test PASS. Canlı main 213eea9 korunuyor. Yeni güvenlik/finans/kota düzeltmeleri ve 27 maddelik son durum TODO.md ASTRA kaydındadır. Ürün ticari açılışa hazır değildir.
+
+Onay sonrası pilot dağıtım ve geri dönüş sırası (uygulanmadı):
+
+1. İncelenen aday SHA ile GitHub dal SHA'sını eşitle; canlı main başlangıcını ve tracked dosyalarda kullanıcı değişikliği olmadığını doğrula. Kod/Nginx/unit yedeğini 0600 tut; token yedeğini kod rollback'inde kullanma.
+2. Yalnız açık onayla adayı main'e al, /root/vericon kaynağını aynı commit'e getir. Private dizini korunur. astra-evidence/vericon-api.env public Auth anahtarı ve mevcut iki Sandbox sayım iznini içerir; /etc/vericon altına 0600 kurulacak dosya budur. Process environment'dan secret okunmaz.
+3. Systemd şablonunu kur; statik verify ve gerçek setup ile preflight çalıştır. Onaylı daemon-reload sonrasında yalnız PID/cwd/port eşleşmesi yeniden doğrulanan 8789 → 8788 → 8787 süreçlerini sırayla systemd'ye devret. Her adımda health=200 ve anonim finance=401 olmadan ilerleme. 8782–8786 korunur.
+4. Nginx adayını kur, nginx -t başarısından sonra onaylı reload. HTTPS başlıkları, hız sınırı, callback log gizliliği ve A/B pilot sayımı kullanıcı tarayıcılarında doğrulanmalı. Gerçek sign-out/reconnect kullanıcı katılımı gerektirir; tokenları topluca iptal etme.
+5. Hata halinde önceki kaynak commit'i, önceki unit ve Nginx config'i geri yükle; geçerli public Auth env ve güncel private/token dosyalarını koru. Eski boş env dosyasını geri getirmek oturum kontrolünü bozar. Sağlık/anon kontrollerini tekrarla ve rollback SHA farkını bildir. Sunucu reboot'u bu prosedüre dahil değildir; diğer VPS uygulamalarını etkileyen bakım ayrı onay gerektirir.
+
 Benchmark artık boyut başına 21 seri batch, p50/p95/p99, CPU/RSS, değişmeyen girdi hashı ve ID düzeyinde sentetik yanlış-pozitif/negatif kontrolü raporlar. Maliyet alanı yalnız belirtilen vCPU-saat varsayımıyla aritmetik CPU tahminidir; gerçek SaaS maliyeti değildir.
 
 Finans erişim politikası: sayım endpointi sahipliği doğrulanmış RLS kaydındaki boolean `financial_access_enabled=true` gerektirir. Mevcut Sandbox pilot sayımı, yalnız operatörün `VERICON_PILOT_INVOICE_COUNT_REALMS` virgüllü realm listesi ile istisna alabilir; varsayılan liste boştur. Bu izin diğer finans uçlarını açmaz. Aday env mevcut iki pilotu koruyacak biçimde hazırlanmıştır; genel finans izni DB üzerinde değiştirilmedi.
