@@ -1,36 +1,16 @@
 # VERICON
 
-Güncel ASTRA sonucu: 188 başlangıç testi yeniden doğrulandı; 228 son test PASS. Canlı main 213eea9 korunuyor. Yeni güvenlik/finans/kota düzeltmeleri ve 27 maddelik son durum TODO.md ASTRA kaydındadır. Ürün ticari açılışa hazır değildir.
+2026-11-13 canlı durum: `36ce87b` kaynak sürümü üç systemd API servisine alınmış checkpoint'ten devam edildi. 8787/8788/8789 active+enabled; kontrollü süreç kaybında otomatik toparlanma 6,3 saniye, health 200 ve anonim auth/finance 401. Kalıcı env 0600, ağsız preflight PASS. Sunucu reboot'u yapılmadı.
 
-Onay sonrası pilot dağıtım ve geri dönüş sırası (uygulanmadı):
+Nginx başlıkları, IP başına 5 istek/sn + 10 burst ve callback metadata logu canlıya dağıtıldı. HTTP yönlendirmesindeki callback log açığı sentetik istekle kanıtlandı; rollback ardından HTTP callback de korundu. İzole 502 hata testi ve canlı 301/400/429 kontrollerinde code/state loglara girmiyor; callback yalnız status/upstream/elapsed kaydediyor. Canlı 32 istekte 11 normal ret/21 hız sınırı, beş güvenlik başlığı, sağlık/statik 200. Sağlayıcıya yük gönderilmedi.
 
-1. İncelenen aday SHA ile GitHub dal SHA'sını eşitle; canlı main başlangıcını ve tracked dosyalarda kullanıcı değişikliği olmadığını doğrula. Kod/Nginx/unit yedeğini 0600 tut; token yedeğini kod rollback'inde kullanma.
-2. Yalnız açık onayla adayı main'e al, /root/vericon kaynağını aynı commit'e getir. Private dizini korunur. astra-evidence/vericon-api.env public Auth anahtarı ve mevcut iki Sandbox sayım iznini içerir; /etc/vericon altına 0600 kurulacak dosya budur. Process environment'dan secret okunmaz.
-3. Systemd şablonunu kur; statik verify ve gerçek setup ile preflight çalıştır. Onaylı daemon-reload sonrasında yalnız PID/cwd/port eşleşmesi yeniden doğrulanan 8789 → 8788 → 8787 süreçlerini sırayla systemd'ye devret. Her adımda health=200 ve anonim finance=401 olmadan ilerleme. 8782–8786 korunur.
-4. Nginx adayını kur, nginx -t başarısından sonra onaylı reload. HTTPS başlıkları, hız sınırı, callback log gizliliği ve A/B pilot sayımı kullanıcı tarayıcılarında doğrulanmalı. Gerçek sign-out/reconnect kullanıcı katılımı gerektirir; tokenları topluca iptal etme.
-5. Hata halinde önceki kaynak commit'i, önceki unit ve Nginx config'i geri yükle; geçerli public Auth env ve güncel private/token dosyalarını koru. Eski boş env dosyasını geri getirmek oturum kontrolünü bozar. Sağlık/anon kontrollerini tekrarla ve rollback SHA farkını bildir. Sunucu reboot'u bu prosedüre dahil değildir; diğer VPS uygulamalarını etkileyen bakım ayrı onay gerektirir.
+Dört `web/` dosyası kaynak/disk/HTTPS olarak birebir; aktif Nginx `deploy/vericon-app.nginx.conf` ile eşit. Git dışı dosyaların uyumu ayrıca ölçüldü; kaynak SHA eşitliği tüm VPS için eşitlik iddiası değildir. Son suite 228 pytest PASS. Güncel madde durumları ve kalan engeller yalnız `TODO.md` ana checklist'indedir; eski kabul testleri yeni sürüm testi diye sunulmaz. Ürün ticari kullanıma hazır değildir.
 
-Benchmark artık boyut başına 21 seri batch, p50/p95/p99, CPU/RSS, değişmeyen girdi hashı ve ID düzeyinde sentetik yanlış-pozitif/negatif kontrolü raporlar. Maliyet alanı yalnız belirtilen vCPU-saat varsayımıyla aritmetik CPU tahminidir; gerçek SaaS maliyeti değildir.
+Rollback kanıtları `/root/vericon-completion-20261113/` içinde korunur. Nginx hatasında önceki config'i geri koy, `nginx -t` ardından yalnız Nginx reload yap. Kod/unit geri dönüşünde çalışan public Auth env ve GÜNCEL `private/` dosyalarını koru; eski boş env veya OAuth token arşivini otomatik geri yükleme. Diğer VPS projelerine dokunma.
 
-Finans erişim politikası: sayım endpointi sahipliği doğrulanmış RLS kaydındaki boolean `financial_access_enabled=true` gerektirir. Mevcut Sandbox pilot sayımı, yalnız operatörün `VERICON_PILOT_INVOICE_COUNT_REALMS` virgüllü realm listesi ile istisna alabilir; varsayılan liste boştur. Bu izin diğer finans uçlarını açmaz. Aday env mevcut iki pilotu koruyacak biçimde hazırlanmıştır; genel finans izni DB üzerinde değiştirilmedi.
+Finans sayımı, doğrulanmış RLS/sahiplik/realm bağından sonra `financial_access_enabled=true` veya operatörün açık Sandbox realm listesiyle sınırlıdır. Kurulu env mevcut iki pilotun yalnız sayım iznini taşır; genel finans erişimi açılmadı. Alt-sent kayıtlar ve belirsiz yarım-sent politikası BLOCKED; kayıtlı toplamlar tam eşitlik gerektirir. Muhasebe politikası, banka mutabakatı ve muhasebeci etiketli örneklem beklenir.
 
-Finans devamı: USD yarım-sent yuvarlama politikası belirsizse BLOCKED; alt-sent kayıtlı Amount kabul edilmez. Kayıtlı sipariş/fatura toplamları tam eşit karşılaştırılır. 203 test ve mevcut iki Sandbox üzerinde salt-okunur doğrulama PASS; gerçek tahsilat, banka ve müşteri kabulü hâlâ doğrulanmadı.
-
-ASTRA devamı: systemd adayı artık `python3 -B qbo_oauth.py --saved-setup preflight` ile ağsız yapılandırma kontrolü ve 0077 umask kullanır. Hazırlanmış public env gerçek özel yapılandırmayla doğrulandı; boş kalıcı env reddedilir. Kurulum/servis devri yapılmadı; canlı yeniden başlatma hâlâ onay bekler. Preflight provider veya kullanıcı oturumu sağlığını kanıtlamaz.
-
-2026-11-13 bağımsız denetim: ürün ticari kullanıma hazır değildir. Güncel yeniden ölçüm ve bloke işler `TODO.md` içindedir. Güvenlik başlığı düzeltmesi ayrı aday çalışma kopyasında gerçek Nginx ile sınandı; canlı yapılandırma ve servisler onaysız değiştirilmedi. Başlangıç 177 offline test PASS; bu sonuç ticari finans/tenant kabulü değildir.
-
-Aday finans düzeltmesi: fatura/ödeme grafiği artık eksik veya farklı müşteri referansını bloke eder. 183 offline test, gerçek USD Sandbox'ta 16 geçerli kenar ve aynı snapshot üzerinde yalnız bellekte yanlış müşteri negatif kontrolü PASS; nakit/banka tahsilatı doğrulanmış sayılmaz.
-
-Aday satır hesabında ±1 sent fark artık REVIEW olur; kesirli miktar hesabı korunur. Son suite 186 test PASS. Büyük veri ölçümü yalnız yerel aritmetik katmanını değerlendirir; mevcut Shopify–QBO batch sınırları ticari kapasiteyi karşılamaz.
-
-Aday Nginx callback yapılandırması OAuth query parametrelerini access log dışında tutar; ayrı gerçek Nginx'te sentetik kodla doğrulandı. Aktif logda geçmiş sızıntı kanıtı bulunmadı; canlı reload bekliyor.
-
-OAuth state eşzamanlı replay kapısı adayda düzeltildi: 8 ayrı process'te yalnız 1 tüketim, 7 ret (pilot ve tenant). 188 test PASS. Canlı dağıtım yapılmadığından ilgili güvenlik checklist maddesi yeniden açıktır.
-
-Systemd hazırlığı: `deploy/vericon-api@.service` mevcut VPS şablonunun aynısıdır; statik doğrulama PASS. Hazırlanan 0600 environment dosyası yalnız yayımlanmış Supabase publishable anahtarı içerir; QBO/Shopify sırları mevcut `private/` altında kalır. Kalıcı dosyanın kurulması, 8787/8788/8789 süreçlerinin systemd'ye devri ve Nginx reload ayrı canlı onayı gerektirir. Rollback yalnız kod/config içindir; yenilenmiş OAuth tokenlarını eski yedekle geri almak güvenli değildir.
-
-Bağımsız yeniden kabul tablosu: ilk dört bölümde 27 işten 12'si dar kapsamıyla doğrulandı, 3'ünde uygulama eksik, 12'sinde oturum/veri/onay/dağıtım kanıtı bekleniyor. Geçmiş kullanıcı testleri silinmedi; yeniden teyit edilemeyen işler otomatik tamam sayılmadı. Ayrıntılı madde/kanıt/commit/risk tablosu `TODO.md` içindedir. Salt sentetik aritmetik ölçümünü tekrar çalıştırmak için `python3 -B benchmark_invoice_audit.py`; 10–100.000 fatura, bağımsız sent hesabı oracle'ı, ayrı process bellek/CPU sınırı, dış API çağrısı yok. Bu betik tam Shopify–QBO kapasitesini ölçmez.
+`python3 -B benchmark_invoice_audit.py` dış API çağırmadan izole sentetik aritmetiği ölçer. 21 batch, p50/p95/p99, CPU/RSS ve ID oracle içerir; CPU maliyeti yalnız açıkça belirtilen fiyat varsayımıdır, gerçek SaaS faturası değildir. Tam Shopify–QBO ingest kapasitesiyle karıştırılmaz.
 
 **Guncel tek ana plan: [`TODO.md`](TODO.md), 2026-11-07.** VERICON'un kalici 3 ayagi: **Finance** (fatura/odeme/iade/muhasebe denetimi, AKTIF), **Profit** (urun/stok/maliyet ve gercek karlilik, SONRA) ve **Intelligence** (rakip fiyatlari, yeni urun/firsat ve kanitli ticari tavsiyeler, SONRA). Ilk pazar ABD Shopify + QuickBooks Online. Mevcut Finance gelistirme sirasi korunur; diger ayaklarin kodu, paneli veya altyapisi simdilik kurulmaz. Abonelik ucretinin ekonomik faydasi ayrica olculur, tahmini getiri garanti edilmez. Asagidaki tarihli bulgular tarihsel kayittir; eski 'siradaki is' ifadeleri guncel karar degildir.
 
