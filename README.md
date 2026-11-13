@@ -1,5 +1,7 @@
 # VERICON
 
+ASTRA devamı: systemd adayı artık `python3 -B qbo_oauth.py --saved-setup preflight` ile ağsız yapılandırma kontrolü ve 0077 umask kullanır. Hazırlanmış public env gerçek özel yapılandırmayla doğrulandı; boş kalıcı env reddedilir. Kurulum/servis devri yapılmadı; canlı yeniden başlatma hâlâ onay bekler. Preflight provider veya kullanıcı oturumu sağlığını kanıtlamaz.
+
 2026-11-13 bağımsız denetim: ürün ticari kullanıma hazır değildir. Güncel yeniden ölçüm ve bloke işler `TODO.md` içindedir. Güvenlik başlığı düzeltmesi ayrı aday çalışma kopyasında gerçek Nginx ile sınandı; canlı yapılandırma ve servisler onaysız değiştirilmedi. Başlangıç 177 offline test PASS; bu sonuç ticari finans/tenant kabulü değildir.
 
 Aday finans düzeltmesi: fatura/ödeme grafiği artık eksik veya farklı müşteri referansını bloke eder. 183 offline test, gerçek USD Sandbox'ta 16 geçerli kenar ve aynı snapshot üzerinde yalnız bellekte yanlış müşteri negatif kontrolü PASS; nakit/banka tahsilatı doğrulanmış sayılmaz.

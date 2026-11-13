@@ -29,6 +29,42 @@ def cfg(tmp_path):
     )
 
 
+@pytest.mark.parametrize('fault', ['none', 'env', 'permissions', 'symlink', 'missing', 'redirect'])
+def test_runtime_preflight_is_read_only_and_fail_closed(tmp_path, monkeypatch, fault):
+    monkeypatch.setattr(q, 'BASE_DIR', tmp_path)
+    monkeypatch.setenv('VERICON_SUPABASE_PUBLISHABLE_KEY', 'sb_publishable_test')
+    private = tmp_path / 'private'
+    private.mkdir(mode=0o700)
+    setup = {'VERICON_QBO_CLIENT_ID': 'fake', 'VERICON_QBO_CLIENT_SECRET': 'fake',
+             'VERICON_QBO_EXPECTED_REALM': '123',
+             'VERICON_QBO_REDIRECT_URI': 'https://app.vericon.site/oauth/quickbooks/callback'}
+    if fault == 'redirect':
+        setup['VERICON_QBO_REDIRECT_URI'] = 'https://other.test/callback'
+    for name, data in [('qbo_setup.json', json.dumps(setup)), ('qbo.key', 'fake'),
+                       ('shopify_setup.json', '{}')]:
+        path = private / name
+        path.write_text(data)
+        path.chmod(0o600)
+    if fault == 'env':
+        monkeypatch.delenv('VERICON_SUPABASE_PUBLISHABLE_KEY')
+    elif fault == 'permissions':
+        (private / 'qbo.key').chmod(0o644)
+    elif fault == 'symlink':
+        (private / 'qbo.key').unlink()
+        (private / 'qbo.key').symlink_to(private / 'qbo_setup.json')
+    elif fault == 'missing':
+        (private / 'qbo.key').unlink()
+    before = {p.name: p.read_bytes() for p in private.iterdir()}
+    monkeypatch.setattr(q.requests.sessions.Session, 'request',
+                        lambda *a, **k: pytest.fail('preflight must not call providers'))
+    if fault == 'none':
+        q.runtime_preflight()
+    else:
+        with pytest.raises((ValueError, PermissionError)):
+            q.runtime_preflight()
+    assert {p.name: p.read_bytes() for p in private.iterdir()} == before
+
+
 @pytest.mark.parametrize('user_id', [None, '11111111-1111-4111-8111-111111111111'])
 def test_oauth_state_is_consumed_once_under_concurrent_callbacks(cfg, monkeypatch, user_id):
     from concurrent.futures import ThreadPoolExecutor

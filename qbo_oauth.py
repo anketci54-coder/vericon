@@ -807,6 +807,24 @@ def load_saved_setup() -> Config:
                   private_dir=private, expected_realm=values["VERICON_QBO_EXPECTED_REALM"])
 
 
+def runtime_preflight() -> None:
+    """Read-only startup check; never creates keys, refreshes tokens or calls APIs."""
+    key = os.environ.get("VERICON_SUPABASE_PUBLISHABLE_KEY", "")
+    if not key.startswith("sb_publishable_") or any(c.isspace() for c in key):
+        raise ValueError("Publishable Auth configuration missing or invalid")
+    private = BASE_DIR / "private"
+    if private.is_symlink() or not private.is_dir() or private.stat().st_mode & 0o077:
+        raise ValueError("Private directory missing or unsafe")
+    for name in ("qbo_setup.json", "qbo.key", "shopify_setup.json"):
+        path = private / name
+        if (path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077
+                or path.stat().st_size == 0):
+            raise ValueError("Private configuration missing or unsafe")
+    config = load_saved_setup()
+    if config.redirect_uri != "https://app.vericon.site/oauth/quickbooks/callback":
+        raise ValueError("Public callback not configured")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="VERICON QBO sandbox connector")
     parser.add_argument("--saved-setup", action="store_true",
@@ -816,7 +834,16 @@ def main() -> None:
     item_cmd = cmd.add_parser("item", help="Read one QBO sandbox item by exact name")
     item_cmd.add_argument("--name", default="VERICON TEST")
     cmd.add_parser("status", help="Show connection status without revealing credentials")
+    cmd.add_parser("preflight", help="Validate service configuration without network or token changes")
     args = parser.parse_args()
+    if args.command == "preflight":
+        try:
+            runtime_preflight()
+        except (ValueError, OSError, TypeError, KeyError):
+            print("VERICON configuration preflight FAILED; check private configuration and public Auth key")
+            raise SystemExit(1) from None
+        print("VERICON configuration preflight PASS; provider/session readiness not tested")
+        return
     config = load_saved_setup() if args.saved_setup else Config.from_env()
     if args.command == "auth-url":
         print(create_authorization_url(config))
