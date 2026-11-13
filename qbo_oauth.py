@@ -454,12 +454,14 @@ def _require_live_supabase_session(token: str, subject: str) -> None:
         response = requests.get(
             SUPABASE_ISSUER + "/user",
             headers={"apikey": key, "Authorization": "Bearer " + token},
-            timeout=5,
+            timeout=5, allow_redirects=False,
         )
     except requests.RequestException:
         raise HTTPException(status_code=503, detail="Session validation unavailable") from None
-    if response.status_code != 200:
+    if response.status_code in (401, 403):
         raise HTTPException(status_code=401, detail="Session not active")
+    if response.status_code != 200:
+        raise HTTPException(status_code=503, detail="Session validation unavailable")
     try:
         user = response.json()
     except ValueError:
@@ -479,12 +481,17 @@ def _verified_customer_subject(header: str | None) -> str:
         key = SUPABASE_JWKS.get_signing_key_from_jwt(token).key
         claims = jwt.decode(token, key, algorithms=["ES256"],
                             issuer=SUPABASE_ISSUER, audience="authenticated",
-                            options={"require": ["exp", "iat", "iss", "aud", "sub"]}, leeway=0)
+                            options={"require": ["exp", "iat", "iss", "aud", "sub", "session_id"]}, leeway=0)
+        if not isinstance(claims["sub"], str) or not isinstance(claims["session_id"], str):
+            raise ValueError("Invalid session identity")
         subject = str(uuid.UUID(claims["sub"]))
-        if claims.get("role") != "authenticated":
+        uuid.UUID(claims["session_id"])
+        if claims.get("role") != "authenticated" or claims.get("is_anonymous") is True:
             raise ValueError("Not a user session")
         _require_live_supabase_session(token, subject)
         return subject
+    except jwt.PyJWKClientConnectionError:
+        raise HTTPException(status_code=503, detail="Session validation unavailable") from None
     except (jwt.PyJWTError, ValueError, TypeError, KeyError):
         raise HTTPException(status_code=401, detail="Invalid authentication") from None
 

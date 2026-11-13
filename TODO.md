@@ -47,6 +47,7 @@ Kaynak: `VERICON_Ticari_Urun_Checklist_10_Kasim_2026.pdf` (3 sayfa). Her PDF mad
 - [ ] Daha geniş örneklemde yanlış alarm ve rapor doğruluğu ölçülecek.
 
 ### 3. Kullanıcı ve hesap güvenliği
+- 2026-11-13 ASTRA oturum kapısı: eksik/geçersiz `session_id` ve anonim Supabase oturumunu reddeden yerel JWT kontrolü eklendi. Auth 429/5xx/redirect artık kullanıcı çıkışı gibi 401 değil, fail-closed 503; JWKS bağlantı kesintisi de 503. Auth isteği redirect takip etmez. Önce 6 RED, sonra 67 auth testi PASS. Resmi Supabase Auth kaynak kodunda `maybeLoadUserOrSession` session varlığını denetliyor; bu dağıtılmış hizmet sürümü/gerçek logout testi yerine geçmez. Güncel gerçek oturum olmadığı için OTP/çıkış/A-B kontrolleri BLOKE kalır.
 - [ ] Supabase Auth, Brevo SMTP ve e-posta OTP girişi çalıştırıldı. [2026-11-13 BAĞIMSIZ CANLI TEYİT BLOKE; önceki kullanıcı kanıtı korunur]
 - [ ] Gerçek kullanıcı oturumu ve QuickBooks OAuth kullanıcı/şirket eşleşmesi doğrulandı. [2026-11-13 GERÇEK OTURUM TEYİDİ BLOKE; eski test başarısız sayılmadı]
 - [x] Shopify uygulama kurulumu ve mağaza API erişimi doğrulandı.

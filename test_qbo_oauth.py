@@ -112,7 +112,7 @@ def test_supabase_auth_me_validates_signature_and_identity(monkeypatch):
     monkeypatch.setattr(q, "_require_live_supabase_session", lambda token, subject: None)
     claims = {"sub": subject, "iss": q.SUPABASE_ISSUER, "aud": "authenticated",
               "role": "authenticated", "iat": int(time.time()) - 30,
-              "exp": int(time.time()) + 3600}
+              "exp": int(time.time()) + 3600, "session_id": str(uuid.uuid4())}
     def signed(**changes):
         return jwt.encode({**claims, **changes}, private, algorithm="ES256")
     assert q._verified_customer_subject("Bearer " + signed()) == subject
@@ -123,6 +123,9 @@ def test_supabase_auth_me_validates_signature_and_identity(monkeypatch):
                "Bearer " + signed(iss="https://other.supabase.co/auth/v1"),
                "Bearer " + signed(aud="other"),
                "Bearer " + signed(role="service_role"),
+               "Bearer " + signed(session_id=None),
+               "Bearer " + signed(session_id="invalid"),
+               "Bearer " + signed(is_anonymous=True),
                "Bearer " + signed(sub="not-a-uuid"),
                "Bearer " + signed(iat=int(time.time())+1000),
                "Bearer " + jwt.encode(claims, ec.generate_private_key(ec.SECP256R1()),
@@ -133,6 +136,17 @@ def test_supabase_auth_me_validates_signature_and_identity(monkeypatch):
         assert exc.value.status_code == 401
 
 
+@pytest.mark.parametrize('upstream,expected', [(401,401), (403,401), (429,503),
+                                            (500,503), (502,503), (503,503), (302,503)])
+def test_auth_provider_failure_is_not_reported_as_logout(monkeypatch, upstream, expected):
+    from fastapi import HTTPException
+    monkeypatch.setenv('VERICON_SUPABASE_PUBLISHABLE_KEY', 'public-test')
+    monkeypatch.setattr(q.requests, 'get', lambda *a, **kw: FakeResponse({}, upstream))
+    with pytest.raises(HTTPException) as exc:
+        q._require_live_supabase_session('synthetic', 'subject')
+    assert exc.value.status_code == expected
+
+
 
 def test_revoked_or_unavailable_supabase_session_is_denied(monkeypatch):
     import uuid
@@ -141,7 +155,8 @@ def test_revoked_or_unavailable_supabase_session_is_denied(monkeypatch):
     token = "not-a-real-token"
     monkeypatch.setenv("VERICON_SUPABASE_PUBLISHABLE_KEY", "public-test-key")
     observed = []
-    def fake_get(url, *, headers, timeout):
+    def fake_get(url, *, headers, timeout, allow_redirects):
+        assert allow_redirects is False
         assert url == q.SUPABASE_ISSUER + "/user"
         assert headers == {"apikey": "public-test-key", "Authorization": "Bearer " + token}
         assert timeout == 5
@@ -193,7 +208,8 @@ def test_revoked_validly_signed_jwt_denied_at_auth_endpoint(monkeypatch):
         get_signing_key_from_jwt=lambda _: SimpleNamespace(key=private.public_key())))
     monkeypatch.setenv("VERICON_SUPABASE_PUBLISHABLE_KEY", "public-test-key")
     state = {"status": 200}
-    def fake_get(url, *, headers, timeout):
+    def fake_get(url, *, headers, timeout, allow_redirects):
+        assert allow_redirects is False
         assert url == q.SUPABASE_ISSUER + "/user"
         assert headers["Authorization"] == "Bearer " + signed
         return FakeResponse({"id": subject} if state["status"] == 200 else {},
