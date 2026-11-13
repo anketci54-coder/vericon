@@ -45,14 +45,14 @@ Kaynak: `VERICON_Ticari_Urun_Checklist_10_Kasim_2026.pdf` (3 sayfa). Her PDF mad
 - [ ] Daha geniş örneklemde yanlış alarm ve rapor doğruluğu ölçülecek.
 
 ### 3. Kullanıcı ve hesap güvenliği
-- [x] Supabase Auth, Brevo SMTP ve e-posta OTP girişi çalıştırıldı.
-- [x] Gerçek kullanıcı oturumu ve QuickBooks OAuth kullanıcı/şirket eşleşmesi doğrulandı.
+- [ ] Supabase Auth, Brevo SMTP ve e-posta OTP girişi çalıştırıldı. [2026-11-13 BAĞIMSIZ CANLI TEYİT BLOKE; önceki kullanıcı kanıtı korunur]
+- [ ] Gerçek kullanıcı oturumu ve QuickBooks OAuth kullanıcı/şirket eşleşmesi doğrulandı. [2026-11-13 GERÇEK OTURUM TEYİDİ BLOKE; eski test başarısız sayılmadı]
 - [x] Shopify uygulama kurulumu ve mağaza API erişimi doğrulandı.
 - [x] Supabase içinde iki bağlantının kanıt kayıtları ayrı tutuluyor.
-- [x] Shopify mağaza sahipliği giriş yapan VERICON kullanıcısına bağlanacak. [2026-11-10 DOĞRULANDI]
+- [ ] Shopify mağaza sahipliği giriş yapan VERICON kullanıcısına bağlanacak. [2026-11-13 BAĞIMSIZ OTURUM/ADMIN TEYİDİ BLOKE; geçmiş kanıt aşağıda]
   - 2026-11-10: `/shopify/ownership/start` ve `/verify` JWT + Supabase RLS pilot mağaza bağlamı, 10 dakika süreli rastgele meydan okuma, SHA256 hash, Shopify Admin API salt-okunur metafield sorgusu ve başarılı eşleşmede tek kullanımlık dosya tüketimiyle hazırlandı. Web arayüzüne iki buton eklendi; gerçek kullanıcı kodu mağazaya kaydedip doğrulamadığı için [ ] korunur. Supabase `ownership_verified`/`financial_access_enabled` hâlâ false. Canlı web/Nginx dosyaları Git dışında, deployment ayrıca izlenmeli.
   - 2026-11-10 KAPANIŞ: Shopify admin metafield `vericon.owner_proof` değerine gerçek kullanıcı tarafından meydan okuma kaydedildi; API karşılaştırması başarıyla tamamlandı. VPS `shopify_owner_verified.json` kaydı var, `shopify_owner_challenge.json` tüketilmiş; dosyadaki kullanıcı UUID ve mağaza alanı Supabase pilot kaydıyla eşleşti. Supabase `ownership_verified=true`, `financial_access_enabled=false` olarak güncellendi. Sonraki tek görev iki bağımsız müşteri izolasyonu; henüz ticari veri endpointi açılmadı.
-- [x] İki bağımsız müşteriyle veri izolasyonu test edildi. [2026-11-11 CANLI İKİ YÖNLÜ PASS]
+- [ ] İki bağımsız müşteriyle veri izolasyonu test edildi. [2026-11-13 BAĞIMSIZ GERÇEK A/B OTURUM TEYİDİ BLOKE; 2026-11-11 kanıtı korunur]
   - KAPANIŞ KANITI (kullanıcının iki ayrı gerçek Supabase oturumu, canlı app.vericon.site paneli): A kendi realm 9341458613758425 HTTP 200, 31 Invoice; A -> B HTTP 403. B kendi realm 9341458641399133 HTTP 200, 36 Invoice; B -> A HTTP 403. Endpoint GET /tenant/finance/invoice-count yalnızca fatura SAYISI verir; diğer finansal uçların izolasyonu kapsam dışıdır. financial_access_enabled=false tutulur. 157 pytest PASS ve canlı negatif kontroller önceki satırlarda. Önceki tarihsel "görev açık" kayıtları test öncesi durumdur.
   - 2026-11-11 HTTP 503 KÖK NEDENİ: 8789 uvicorn manuel yeniden başlatılırken `VERICON_SUPABASE_PUBLISHABLE_KEY` environment aktarılmadı; ayrıca yeni finance route yanlışlıkla `Config.from_env()` ile QBO env arıyordu, kayıtlı pilot konfigürasyonu `load_saved_setup()` kullanılmalıydı. Tek dar düzeltme: env anahtarı mevcut 8787 prosesinden 8789 prosesine güvenli aktarıldı, route kayıtlı setup kullanıyor. 157 pytest PASS, A 31/B 36 gerçek QBO PASS, anonim 401, script 200. Gerçek JWT ile endpoint yeniden test edilmeli; görev açık.
   - 2026-11-11 CANLI API DEVREDE: GET /tenant/finance/invoice-count?realm=<realm> yalnız JWT doğrulama + Supabase RLS tenant mapping + tam realm eşleşmesi + user_id/realm şifreli tokenı ile read-only QBO COUNT. A=31, B=36 gerçek Sandbox PASS; A->B ve B->A şifreli token erişimi DENIED; anonim HTTPS 401, POST 403, health 200, 157 pytest PASS. A pilot tokenı ayrı korunarak A kullanıcıya bağlı şifreli tenant tokenına kopyalandı. Gerçek A/B JWT ile bu YENİ endpoint üzerinden başarılı/başarısız çapraz çağrılar henüz yapılmadı; bu nedenle ana checkbox açık, financial_access_enabled=false. Önceki satırdaki "canlı finans API yok" tarihsel durumdur.
@@ -72,7 +72,7 @@ Kaynak: `VERICON_Ticari_Urun_Checklist_10_Kasim_2026.pdf` (3 sayfa). Her PDF mad
   - 2026-11-10 İKİNCİ SHOPIFY GERÇEK API: `vericon-tenant-b-test.myshopify.com` üzerinde mevcut VERICON uygulaması client_credentials token HTTP 200 ve GraphQL `shop.myshopifyDomain` HTTP 200 ile doğrulandı. API scopes `read_products,read_inventory,read_locations,write_orders` döndü; `write_orders` fazla ve ticari kullanımdan önce kaldırılmalı. Bu sadece ikinci mağaza app API erişimi kanıtı; ikinci Supabase kullanıcı kimliği, ikinci QBO realm OAuth ve çapraz erişim testi henüz yapılmadı.
   - 2026-11-10 GERÇEK İKİ KAYIT RLS: Supabase `authenticated` rolü ve ayrı `request.jwt.claim.sub` ile rollback işlemlerinde A kullanıcısı kendi mağaza kaydını 1, B kaydını 0; B kullanıcısı kendi kaydını 1, A kaydını 0 gördü. İki gerçek kullanıcı kaydı üzerinde DB RLS PASS. Bu simüle edilmiş JWT bağlamıdır; gerçek kullanıcı HTTP JWT, Shopify sipariş ve QBO fatura uçtan uca çapraz erişim testleri henüz yapılmadı. [ ] korunur.
   - 2026-11-10 TENANT B CREDENTIALS LIVE: B kullanıcısı (`23219b89-5adc-4378-92ee-65e9ac67908e`) için `vericon-tenant-b-test.myshopify.com` bağlantısı ayrı 0600 kimlik dosyasına kaydedildi; mevcut pilot kimlik dosyası korunuyor. Tenant B client_credentials HTTP 200 ve GraphQL shop domain eşleşmesi HTTP 200. B Shopify merchant ownership proof=false, B QBO OAuth henüz yok; gerçek çapraz finansal erişim testi bu nedenle hâlâ yapılamıyor.
-- [x] Müşteri bazlı token depolama ve yetki iptali/yeniden bağlantı akışları tamamlandı. [2026-11-11 GERÇEK QBO PASS]
+- [ ] Müşteri bazlı token depolama ve yetki iptali/yeniden bağlantı akışları tamamlandı. [2026-11-13 TEKRAR CANLI İPTAL ONAYI YOK; geçmiş QBO PASS korunur]
   - KAPANIŞ KANITI: B kullanıcısı gerçek QuickBooks Sandbox revoke işlemini panelden onayladı; VPS B token dosyası yok, B finans okuma DENIED; A tokenı korundu. Kullanıcı B Sandbox Company US 32e0 şirketini yeniden OAuth ile yetkilendirdi, callback başarılı. VPS: B şifreli token user_id+realm eşleşmesi PASS, B gerçek Invoice COUNT 36, A kendi tokenı ve Invoice COUNT 31 PASS, A->B/B->A DENIED. 160 pytest PASS. Genel finans erişimi hâlâ kapalı. Önceki tarihsel "görev açık" satırları test öncesi durumdur.
   - 2026-11-11 İPTAL/YENİDEN BAĞLANTI ALTYAPISI CANLI: `/tenant/quickbooks/disconnect` JWT + RLS tenant bağlamı, QBO revoke API HTTP 200 şartı, kullanıcı+realm kilitli dosya silme, başka tenant ve legacy dosyasını koruma. `/tenant/quickbooks/start` artık A ve B kullanıcıları için tenant OAuth reconnect başlatabiliyor. Web panelinde kullanıcı onaylı iptal butonu ve mevcut QuickBooks yetkilendir butonu var. 160 pytest PASS: mock revoke başarılı/başarısız, silme ve aynı kullanıcı OAuth reconnect akışı. Canlı anonim POST 401, GET 403, health 200, JS 200. GERÇEK QBO revoke ve kullanıcı onaylı gerçek OAuth reconnect HENÜZ YAPILMADI; pilot bağlantılar korunuyor. Bu nedenle [ ] açık, uçtan uca PASS iddia edilmez.
   - 2026-11-10 KISMİ: QBO yeni tenant tokenlarını kullanıcı UUID + QBO realm ile ayrıştıran şifreli özel dosya saklama ve fail-closed okuma yardımcıları eklendi. İki sahte bağımsız kullanıcıyla token çapraz erişimi negatif test PASS; mevcut `qbo_tokens.enc` pilot yolu değiştirilmedi. Yeni çok-tenant OAuth akışına henüz bağlanmadı, Shopify sabit mağaza ve revocation/refresh eksikleri devam ediyor. Bu nedenle görev [ ] açık.
@@ -101,6 +101,69 @@ Kaynak: `VERICON_Ticari_Urun_Checklist_10_Kasim_2026.pdf` (3 sayfa). Her PDF mad
 - [ ] Bağlanma/ayrılma akışları ve API kota sınırları uygulanacak.
 - [ ] Kuyruk ve yeniden deneme yalnız ölçülen ihtiyaca göre kurulacak.
 - [ ] 1.000, 10.000 ve 100.000 işlemde performans, bütünlük ve maliyet ölçülecek.
+
+### 2026-11-13 bağımsız başdenetçi kanıt ve engel kaydı
+
+Bu kayıt önceki günlüklerin güncel üst kaydıdır. Son kullanıcı talimatı gereği geçmiş `[x]` tek başına kabul edilmedi. Bölüm 3'te gerçek oturum/merchant/revoke erişimi olmadan bağımsız teyit edilemeyen beş madde ve yeni OAuth kusuru açık bırakıldı: eski testlerin başarısız olduğu iddia edilmiyor. Bu oturumda kullanıcı JWT'si edinilmedi, process environment okunmadı, yeni kullanıcı/finansal kayıt oluşturulmadı, canlı OAuth iptal edilmedi. Gereken sonraki kanıt: kullanıcının kendi iki izinli oturumuyla test; JWT'yi sohbet veya Git'e aktarma. Muhasebe politikası sorusu yanıtsız; politika varsayılmadı.
+
+Durumlar yalnız yukarıdaki dört bölümün 27 checkbox'ını sayar; geniş ticari kabul anlamına gelmez. Tamamlananlar bu oturumun ölçülen dar kapsamıdır. Eksik = uygulama işi var; BLOKE = onay/oturum/veri kanıtı gerekiyor. Aday dal `audit/independent-20261113`; canlı `main` başlangıcı `213eea9`, değişmeden korunur.
+
+| Bölüm | Toplam iş | Tamamlanan | Eksik | Bloke | Kanıt |
+|---|---:|---:|---:|---:|---|
+| 1. Temel yapı | 6 | 5 | 0 | 1 | baseline.json, nginx-candidate.json, backup-evidence.json; servis devri onayı yok |
+| 2. Finans denetimi | 8 | 4 | 0 | 4 | sandbox.json, sandbox-tenant-b.json, finance-followup.json; politika/banka/örneklem yok |
+| 3. Kullanıcı güvenliği | 8 | 2 | 0 | 6 | scopes.json, Supabase salt-okunur katalog; diğerlerinde gerçek oturum/onay veya dağıtım eksik |
+| 4. Çok müşterili SaaS | 5 | 1 | 3 | 1 | RLS/UNIQUE, izole testler, performance.json, api-capacity.json; A/B canlı kapsamı eksik |
+
+Kanıt dosyalarının tamamı `/root/vericon-audit-20261113/` içinde; sır/ham müşteri kayıtları rapora veya Git'e eklenmedi. Mevcut source/config ve private yedeği 0600; 40 dosya izole dizine geri açılıp byte karşılaştırması PASS. Canlı geri yükleme/reboot yapılmadı. Token yenilemesi sonrası güncel yedek ayrıca alındı; kod rollback'inde güncel tokenlar KORUNMALI, eski refresh token arşivi otomatik geri yüklenmez.
+
+| Madde | Mevcut durum ve sorun | Test / gerçek davranış / kanıt | Değişiklik / commit | Kalan risk veya sonraki kanıt |
+|---|---|---|---|---|
+| 1.1 Proje/depo/VPS | Tamam | Çalışma ağacı, GitHub main ve VPS `213eea9` eşit | Yok / başlangıç SHA | Aday dal canlıya alınmadı |
+| 1.2 Bağlantılar | Tamam, sadece test/Sandbox | İki Shopify identity + dört read scope; iki QBO sorgu yolu 200 | Yok / başlangıç SHA | Production merchant kurulumu yok |
+| 1.3 API/test altyapısı | Tamam, dar kapsam | 177 başlangıç → 188 son test; gerçek GET query ve Shopify okuma | bddfbb4, 04c9598, d1b2e0e | CI teknik kanıttır, müşteri kabulü değildir |
+| 1.4 Kaynak bütünlüğü | Tamam, dallar ayrı | Canlı main/GitHub main eşit; aday push SHA ayrıca doğrulanır | Bu dalın commitleri | Adayı canlı HEAD diye sunma |
+| 1.5 Otomatik başlatma | BLOKE | 3 unit disabled/inactive, canlı env boş; aday env 0600, systemd verify PASS | 06a639d, canlı değişmedi | Onaylı devralma, yeniden başlatma ve reboot testi |
+| 1.6 Web/Nginx kaynak takibi | Tamam | 4 dosya source/disk/HTTPS hash eşit, Nginx byte eşit | 3182f8c, e99a87f aday düzeltmeleri | Başlık/log düzeltmesi canlı dağıtılmadı |
+| 2.1 Sipariş/fatura | Tamam, kontrollü | 4 test order / 36 invoice: 2 tam link, 1 duplicate block, 1 total mismatch | Mevcut pilot yol / başlangıç SHA | Genel merchant SKU/politika ve production kapsamı yok |
+| 2.2 Duplicate/tutar | Tamam | Gerçek 1 duplicate referans grubu, 1 yanlış toplam REVIEW; ±1 sent 2 RED→GREEN | 04c9598 | Duplicate referans çift satış/kayıp kanıtı değildir |
+| 2.3 İade/mahsup | Tamam, test zinciri | İki order offset zinciri; çoklu kısmi refund/credit application PASS; 31/16/1 USD grafında 16 kenar PASS | bddfbb4 | Banka nakdi doğrulanmadı |
+| 2.4 Bilinmeyeni inceleme | Tamam | 4 order'ın tamamı ödeme açısından incelemede, bank_settlement=false; USD 29 satır MATCH, 2 BLOCK | bddfbb4, 04c9598 | MATCH yalnız ilgili hesabı doğrular |
+| 2.5 Eksik fatura politikası | BLOKE | BLOCKED_ACCOUNTING_METHOD_UNVERIFIED; müşteri onayı yok | Yok | Muhasebe yöntemi, istisnalar ve sync bekleme süresi |
+| 2.6 Gerçek nakit/mahsup | BLOKE | Sıfır-nakit credit offset ayrılıyor; gerçek settlement kaynağı yok | Yok | Gerçek ödeme/banka kaydı olmadan tam kabul yok |
+| 2.7 Banka mutabakatı | BLOKE | Veri/izin yok, sonuç üretilmedi | Yok | İzinli ödeme sağlayıcı/banka snapshot'ı |
+| 2.8 Yanlış alarm örneklemi | BLOKE | 4 kontrollü test order müşteri örneklemi değildir | Yok | İzinli, muhasebeci etiketli geniş gerçek örneklem |
+| 3.1 OTP/SMTP | BLOKE bağımsız teyit | Önceki kullanıcı testi mevcut; bu oturumda OTP pozitif yeniden oynatılmadı | Yok | Gerçek izinli kullanıcı OTP girişi |
+| 3.2 Oturum/QBO kullanıcı eşlemi | BLOKE bağımsız teyit | Token realm pin, tenant refresh ve DB modeli var; gerçek JWT pozitif yok | d1b2e0e aday | İki izinli gerçek oturum |
+| 3.3 Shopify kurulum/API | Tamam, test mağazaları | A ve B identity match ve 4 read scope gerçek PASS | Yok | client_credentials owned-store yoludur; ticari merchant OAuth tamam değil |
+| 3.4 Supabase ayrı kayıtlar | Tamam | ACTIVE_HEALTHY; 2 kullanıcı/store/realm, RLS=true, owner SELECT-only, 3 UNIQUE; financial_access 0 | Yok | Model gerçek HTTP yetkilendirme kanıtı yerine geçmez |
+| 3.5 Shopify sahiplik/user | BLOKE bağımsız teyit | DB verified=2; önceki merchant challenge kanıtı var; bu oturumda tekrar yazma yapılmadı | Yok | Gerçek oturum+merchant kanıtına erişim |
+| 3.6 A/B izolasyon | BLOKE bağımsız teyit | Tarihsel A→A/B→B 200, çapraz403 kaydı; yeni oturumlarda pozitif/cross yok; anonim401 ölçüldü | Yok | Gerçek A/B JWT'leri kullanıcı tarayıcısında tutarak kapsam testi |
+| 3.7 Token/revoke/reconnect | BLOKE canlı tekrar onayı | Şifreli user+realm yolunda gerçek B refresh/query PASS; eski pilot B refresh400; tarihsel revoke/reconnect var | Yok | İzinli kontrollü revoke/reconnect; mevcut bağlantı korunur |
+| 3.8 Scope/secret/session | BLOKE dağıtım ve oturum | A/B write scope yok; logout geçmiş kullanıcı kanıtı; OAuth state yarışında 2 kabul hatası, yeni 8 process 1 kabul/7 ret | d1b2e0e | Canlı güncelleme, eski token sign-out negatif; 429/5xx sınıflandırması açık |
+| 4.1 Bağımsız bağlantı modeli | Tamam, pilot model | 2 bağımsız DB kaydı, UNIQUE+RLS, ayrı tenant dosyaları, gerçek iki Shopify/QBO okuma | Mevcut model / başlangıç SHA | Otomatik ticari onboarding yok |
+| 4.2 Tüm uçlarda A/B izolasyon | BLOKE | Mock pozitif/negatif ve anonim canlı reddi var; gerçek iki oturumla tüm uçlar yok | Yok | Yan etki oluşturacak gerçek testler ayrıca onaylı olmalı |
+| 4.3 Bağlanma/ayrılma/kota | Eksik | QBO yolu var; Shopify merchant OAuth/disconnect, tenant rate budget ve 429 retry yok | Yok | Mevcut kota sınırları uygulanmadan ticari açılış yok |
+| 4.4 Kuyruk/yeniden deneme | Eksik | Sync API ve flock refresh; worker/queue/retry yok | Yok | Sağlayıcı gecikmesi ölçüldü; yeni queue mimarisi kör kurulmadı |
+| 4.5 Büyük hacim/maliyet | Eksik | 10–100k yerel aritmetik ölçüldü; tam batch 20 order/100 invoice üstünü BLOCK ediyor | Ölçüm scriptleri kanıt dizininde | Gerçek ingest/incremental/quota ve ticari maliyet kanıtı yok |
+
+Performans: VPS'den HTTPS health 20 ardışık örnek p50/p95/p99=4,26/5,00/5,11 ms, hata 0/20; bu İnternet müşterisi veya authenticated audit kapasitesi değildir. İzole tek uvicorn'da 100 paralel anonim finans isteği 500 örnekte beklenen 401: p50/p95/p99=27,76/132,55/163,20 ms, beklenmeyen yanıt 0; API RSS 66,1 MiB. Diğer 1/10/50 istemci sonuçları `api-capacity.json` içinde. Gerçek oturumlu eşzamanlı müşteri kapasitesi ÖLÇÜLMEDİ. Test süreci SIGTERM ile sonlandı (-15); graceful shutdown garantisi iddia edilmiyor.
+
+| Sentetik fatura | Satır | Yerel aritmetik medyanı (3 ölçüm) | Tepe RSS | Bağımsız tamsayı-sent oracle |
+|---:|---:|---:|---:|---|
+| 10 | 20 | 0,073 ms | 54,4 MiB | 1 kasıtlı fark PASS |
+| 100 | 200 | 0,626 ms | 54,2 MiB | 10 kasıtlı fark PASS |
+| 1.000 | 2.000 | 6,37 ms | 56,2 MiB | 100 kasıtlı fark PASS |
+| 10.000 | 20.000 | 100,06 ms | 71,3 MiB | 1.000 kasıtlı fark PASS |
+| 100.000 | 200.000 | 926,42 ms | 224,4 MiB | 10.000 kasıtlı fark PASS |
+
+100k üç ölçüm toplam CPU 2,808 sn / wall 2,822 sn (~1 çekirdeğin %99,5'i). Çok kısa ölçümlerde CPU saat çözünürlüğü yüzünden oran raporlanmadı. Yerel testlerde sağlayıcı çağrısı 0. Tam ticari denetim kapasitesi bu rakamlar değildir. Gerçek USD snapshot+graf denetimi 7,706 sn; dört Shopify test siparişinin B Sandbox iade/offset denetimi 8,271 sn (tek örnek, percentile değil). Ana Sandbox ölçümlerinde 12 QBO query200, 2 refresh200, 1 eski pilot refresh400; followup 4 query200; iki ayrı Shopify batch sorgusunda cost requested65/actual31, restore100 puan/sn. Scope kontrolü 4 ek token/query isteği. Gerçek aylık API kullanım/maliyet ve kullanıcı kapasitesi yok; ücret/model token maliyeti tahmin edilmedi.
+
+Tekrarlanabilir ölçüm `benchmark_invoice_audit.py` olarak depoya eklendi. Aynı aday kaynakta ikinci çalıştırma: 10/100/1k/10k/100k medyanları 0,077/0,711/5,732/77,515/849,768 ms, tüm oracle kontrolleri PASS, 100k RSS 224,6 MiB (`reproducible-benchmark.json`). Önceki tablo ilk bağımsız ölçümü korur; iki koşu kapasite garantisi değildir. Alt process başarısızlığı benchmark exit=1 döndürür.
+
+Teknik borç: hiçbir fonksiyon, kurtarma dosyası, bağımlılık veya eski süreç silinmedi. `qbo_setup.py` yerel yetki kurtarmada referanslı; eski pilot token ve sabit test mağazası/realm/SKU yolları hâlâ CLI denetiminde kullanılıyor. Silmek mevcut kurtarma/denetimi bozabilir. Eski B pilot refresh400 yeni tenant yolunun başarısına rağmen CLI borcudur. `read_try_pilot_*` içinde tekil GET entity uçları bulunuyor; bu denetim sadece GET `/query` kullandı, iç kural uyumu borcu silinmedi. Tam Finance henüz tenant API üzerinden sunulmuyor. Paket bağımlılıkları için yeniden üretilebilir kilitli kurulum, liveness health'in ötesinde readiness/uyarı, uygulama rate limit, production yetkileri ve ABD para/kur/vergi/genel SKU kapsamı eksik. HSTS yok; eklemek kalıcı tarayıcı davranışı olduğundan bu dar adayda yapılmadı. Supabase advisor tek WARN: leaked-password protection disabled; OTP akışına etkisi ve password-login yapılandırması ayrıca doğrulanmalı, otomatik ayar/plan değişmedi.
+
+Dış kaynaklı kararlar: Nginx başlık mirası resmi `ngx_http_headers_module` belgesine göre düzeltildi (https://nginx.org/en/docs/http/ngx_http_headers_module.html#add_header); kurulu 1.26.3 yeni `add_header_inherit merge` direktifini desteklemediği için kullanılmadı. Supabase changelog ve sessions belgesi incelendi (https://supabase.com/changelog.md , https://supabase.com/docs/guides/auth/sessions); imza kontrolü tek başına session iptali sayılmadı, gerçek logout bağımsız tekrarı açık. Shopify sürüm 2026-10 korunur; scope modeli resmi AccessScope belgesiyle (https://shopify.dev/docs/api/admin-graphql/2026-10/objects/AccessScope), kota davranışı resmi dokümanla (https://shopify.dev/docs/apps/build/apis/graphql-admin/rate-limits) karşılaştırıldı. Intuit sınırları resmi belgede realm/app bazında (https://static.developer.intuit.com/output_html/qbo/docs/learn/limits-and-throttles.html); bu, koda kota/retry uygulandığı iddiası değildir. Ek izin veya ücretli servis açılmadı.
 
 ### 5. Ticari yönetim paneli
 - [ ] Giriş, şirket seçimi ve Shopify/QBO bağlantı yönetimi.
