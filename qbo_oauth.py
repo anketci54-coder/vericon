@@ -589,12 +589,13 @@ def _pilot_qbo_owner(header: str | None, realm: str) -> str:
     try:
         response = requests.get(
             SUPABASE_ISSUER.replace("/auth/v1", "/rest/v1") + "/vericon_pilot_connections",
-            params={"select": "qbo_realm_id,shop_domain,connection_status", "user_id": "eq." + subject},
+            params={"select": "user_id,qbo_realm_id,shop_domain,connection_status", "user_id": "eq." + subject},
             headers={"apikey": api_key, "Authorization": header}, timeout=8)
         rows = response.json() if response.status_code == 200 else []
     except (requests.RequestException, ValueError):
         rows = []
-    if (not isinstance(rows, list) or len(rows) != 1 or rows[0].get("qbo_realm_id") != realm
+    if (not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict)
+            or rows[0].get("user_id") != subject or rows[0].get("qbo_realm_id") != realm
             or rows[0].get("shop_domain") != STORE or rows[0].get("connection_status") != "pilot_linked"):
         raise HTTPException(status_code=403, detail="Pilot account authorization denied")
     return subject
@@ -718,12 +719,13 @@ def _shopify_owner(header: str | None) -> str:
         raise HTTPException(status_code=503, detail="Pilot authorization unavailable")
     try:
         r = requests.get(SUPABASE_ISSUER.replace("/auth/v1", "/rest/v1") + "/vericon_pilot_connections",
-                         params={"select": "shop_domain,qbo_realm_id,connection_status", "user_id": "eq." + subject},
+                         params={"select": "user_id,shop_domain,qbo_realm_id,connection_status", "user_id": "eq." + subject},
                          headers={"apikey": api_key, "Authorization": header}, timeout=8)
         rows = r.json() if r.status_code == 200 else []
     except (requests.RequestException, ValueError):
         rows = []
-    if (not isinstance(rows, list) or len(rows) != 1 or rows[0].get("shop_domain") != STORE
+    if (not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict)
+            or rows[0].get("user_id") != subject or rows[0].get("shop_domain") != STORE
             or rows[0].get("qbo_realm_id") != load_saved_setup().expected_realm
             or rows[0].get("connection_status") != "pilot_linked"):
         raise HTTPException(status_code=403, detail="Shopify pilot account denied")
@@ -790,7 +792,7 @@ def _tenant_shopify_context(header: str | None) -> dict:
         rows = r.json() if r.status_code == 200 else []
     except (ValueError, requests.RequestException):
         rows = []
-    if not isinstance(rows,list) or len(rows)!=1:
+    if not isinstance(rows,list) or len(rows)!=1 or not isinstance(rows[0], dict):
         raise HTTPException(status_code=403,detail="Tenant not authorized")
     row=rows[0]
     store=row.get("shop_domain")

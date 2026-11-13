@@ -1,5 +1,7 @@
 # VERICON
 
+2026-11-13 Stage 4 execution: 4.2'nin 12 route envanteri ve gerçek/izole kanıt ayrımı `TODO.md` içinde. Pilot RLS yanıtlarına açık sahip+satır biçimi doğrulaması eklendi; 22 RED sonrası 120 yeni izole HTTP kontrolü, toplam 351 pytest PASS. Kod yedekli üç servis restart'ında health 200; 10 yetkili route anonim 401, callback 400. Güncel gerçek A/B oturumu yok: 4.2 açık, tarihsel aşama 3 kabulü korunur. Sahte provider revoke/proof testleri canlı kabul değildir; gerçek bağlantı iptal edilmedi. Web/Nginx byte uyumu ayrıca doğrulandı.
+
 2026-11-13 canlı durum: `36ce87b` kaynak sürümü üç systemd API servisine alınmış checkpoint'ten devam edildi. 8787/8788/8789 active+enabled; kontrollü süreç kaybında otomatik toparlanma 6,3 saniye, health 200 ve anonim auth/finance 401. Kalıcı env 0600, ağsız preflight PASS. Sunucu reboot'u yapılmadı.
 
 Nginx başlıkları, IP başına 5 istek/sn + 10 burst ve callback metadata logu canlıya dağıtıldı. HTTP yönlendirmesindeki callback log açığı sentetik istekle kanıtlandı; rollback ardından HTTP callback de korundu. İzole 502 hata testi ve canlı 301/400/429 kontrollerinde code/state loglara girmiyor; callback yalnız status/upstream/elapsed kaydediyor. Canlı 32 istekte 11 normal ret/21 hız sınırı, beş güvenlik başlığı, sağlık/statik 200. Sağlayıcıya yük gönderilmedi.

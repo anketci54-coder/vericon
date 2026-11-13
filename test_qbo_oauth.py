@@ -246,7 +246,7 @@ def test_pilot_qbo_owner_requires_matching_rls_record(monkeypatch):
     monkeypatch.setattr(q, "_verified_customer_subject", lambda header: owner if header == "Bearer valid" else (_ for _ in ()).throw(HTTPException(401)))
     monkeypatch.setenv("VERICON_SUPABASE_PUBLISHABLE_KEY", "test-public-key")
     seen = {}
-    row = {"qbo_realm_id": "12345", "shop_domain": "hudys3-p0.myshopify.com",
+    row = {"user_id": owner, "qbo_realm_id": "12345", "shop_domain": "hudys3-p0.myshopify.com",
            "connection_status": "pilot_linked"}
     def get(url, *, params, headers, timeout):
         seen.update(params=params, headers=headers)
@@ -1014,7 +1014,7 @@ def test_shopify_owner_requires_full_company_pair(cfg, monkeypatch):
     monkeypatch.setattr(q, "_verified_customer_subject", lambda header: owner)
     monkeypatch.setattr(q, "load_saved_setup", lambda: cfg)
     monkeypatch.setenv("VERICON_SUPABASE_PUBLISHABLE_KEY", "test-public-key")
-    row = {"shop_domain": "hudys3-p0.myshopify.com", "connection_status": "pilot_linked",
+    row = {"user_id": owner, "shop_domain": "hudys3-p0.myshopify.com", "connection_status": "pilot_linked",
            "qbo_realm_id": cfg.expected_realm}
     monkeypatch.setattr(q.requests, "get", lambda url, **kw: FakeResponse([dict(row)]))
     assert q._shopify_owner("Bearer valid") == owner
@@ -1105,3 +1105,283 @@ def test_malformed_pilot_grant_fails_closed_before_startup(monkeypatch, value):
     with pytest.raises(q.HTTPException) as exc:
         q.runtime_preflight()
     assert exc.value.status_code == 503
+
+
+# Stage 4 HTTP contract harness: identity alone is mocked, never a fabricated JWT.
+# RLS requests, provider I/O and private storage are isolated from the live service.
+STAGE4_ROUTES = [
+    ('GET', '/auth/me'), ('GET', '/health'),
+    ('GET', '/tenant/finance/access-check'), ('GET', '/tenant/finance/invoice-count'),
+    ('POST', '/shopify/ownership/start'), ('POST', '/shopify/ownership/verify'),
+    ('POST', '/tenant/shopify/ownership/start'), ('POST', '/tenant/shopify/ownership/verify'),
+    ('POST', '/oauth/quickbooks/start'), ('POST', '/tenant/quickbooks/disconnect'),
+    ('POST', '/tenant/quickbooks/start'), ('GET', '/oauth/quickbooks/callback'),
+]
+STAGE4_OWNED_ROUTES = [(method, path) for method, path in STAGE4_ROUTES
+                       if path not in ('/health', '/auth/me', '/oauth/quickbooks/callback')]
+
+
+@pytest.fixture
+def stage4_http(cfg, monkeypatch):
+    import copy
+    import shopify_read as s
+    import socket
+    import threading
+    import urllib.error
+    import urllib.request
+    import uvicorn
+    from urllib.parse import urlencode
+    from types import SimpleNamespace
+    cfg = q.replace(cfg, redirect_uri='https://app.vericon.site/oauth/quickbooks/callback')
+    q._secure_dir(cfg)
+    monkeypatch.setattr(q, 'load_saved_setup', lambda: cfg)
+    monkeypatch.setattr(s, 'PRIVATE', cfg.private_dir)
+    monkeypatch.setattr(s, 'load_setup', lambda: s.Config('fake', 'fake', s.STORE))
+    monkeypatch.setenv('VERICON_SUPABASE_PUBLISHABLE_KEY', 'test-public')
+    monkeypatch.delenv('VERICON_PILOT_INVOICE_COUNT_REALMS', raising=False)
+    ids = {'A': '11111111-1111-4111-8111-111111111111',
+           'B': '22222222-2222-4222-8222-222222222222'}
+    rows = {actor: {'user_id': uid, 'shop_domain': f'tenant-{actor.lower()}.myshopify.com',
+                   'qbo_realm_id': '12345' if actor == 'A' else '67890',
+                   'connection_status': 'pilot_linked', 'ownership_verified': True,
+                   'financial_access_enabled': True} for actor, uid in ids.items()}
+    for actor, row in rows.items():
+        q.save_tenant_tokens(q.replace(cfg, expected_realm=row['qbo_realm_id']),
+            {'access_token': 'fake-' + actor, 'refresh_token': 'fake-refresh-' + actor},
+            user_id=row['user_id'])
+        s.save_tenant_setup(row['user_id'], row['shop_domain'], 'fake', 'fake')
+    state = {'cfg': cfg, 'ids': ids, 'rows': rows, 'calls': [], 'rls_fault': None,
+             'proof_values': {}, 'revoke_status': 200}
+    def identity(header):
+        if header not in ('Bearer fixture-A', 'Bearer fixture-B'):
+            raise q.HTTPException(401, 'Fixture authentication required')
+        return ids[header[-1]]
+    monkeypatch.setattr(q, '_verified_customer_subject', identity)
+    def get(url, **kw):
+        if url.endswith('/vericon_pilot_connections'):
+            actor = kw['headers']['Authorization'][-1]
+            assert kw['params']['user_id'] == 'eq.' + ids[actor]
+            fault = state['rls_fault']
+            if fault == 'timeout':
+                raise q.requests.Timeout('synthetic')
+            if fault == 'malformed':
+                return FakeResponse([None])
+            row = copy.deepcopy(rows[actor])
+            if fault == 'cross':
+                row['user_id'] = ids['B' if actor == 'A' else 'A']
+            elif fault == 'missing_owner':
+                row.pop('user_id')
+            elif fault == 'store':
+                row['shop_domain'] = 'invalid.example'
+            elif fault == 'realm':
+                row['qbo_realm_id'] = 'invalid'
+            elif fault == 'unlinked':
+                row['connection_status'] = 'disconnected'
+            return FakeResponse([row])
+        assert url.startswith(q.SANDBOX_API) and url.endswith('/query')
+        state['calls'].append(('query', url))
+        return FakeResponse({'QueryResponse': {'totalCount': 7}})
+    def post(url, **kw):
+        state['calls'].append(('post', url))
+        if url.endswith('/tokens/revoke'):
+            return FakeResponse({}, state['revoke_status'])
+        if url == q.TOKEN_URL:
+            return FakeResponse({'access_token': 'new-fake', 'refresh_token': 'new-fake-refresh'})
+        store = urlparse(url).hostname
+        if url.endswith('/access_token'):
+            return FakeResponse({'access_token': 'fake', 'scope': ','.join(s.REQUIRED_SCOPES)})
+        assert url.endswith('/graphql.json') and kw['json']['query'].startswith('query')
+        return FakeResponse({'data': {'shop': {'myshopifyDomain': store,
+            'metafield': {'value': state['proof_values'].get(store)}}}})
+    monkeypatch.setattr(q.requests, 'get', get)
+    monkeypatch.setattr(q.requests, 'post', post)
+    monkeypatch.setattr(q.requests.sessions.Session, 'request',
+                        lambda *a, **kw: pytest.fail('unexpected external network'))
+    state['snapshot'] = lambda: {str(p.relative_to(cfg.private_dir)): p.read_bytes()
+                               for p in cfg.private_dir.rglob('*') if p.is_file()}
+    # Use the installed server and stdlib client: real HTTP, no new dependency.
+    sock = socket.socket()
+    sock.bind(('127.0.0.1', 0))
+    server = uvicorn.Server(uvicorn.Config(q.app, log_level='critical', access_log=False))
+    thread = threading.Thread(target=server.run, kwargs={'sockets': [sock]}, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 5
+    while not server.started and thread.is_alive() and time.monotonic() < deadline:
+        time.sleep(.01)
+    class Client:
+        def request(self, method, path, *, params=None, headers=None, json=None):
+            url = f'http://127.0.0.1:{sock.getsockname()[1]}' + path
+            if params:
+                url += '?' + urlencode(params)
+            data = __import__('json').dumps(json).encode() if json is not None else None
+            request = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
+            try:
+                response = urllib.request.urlopen(request, timeout=5)
+            except urllib.error.HTTPError as exc:
+                response = exc
+            with response:
+                body = response.read().decode()
+                return SimpleNamespace(status_code=response.status, text=body, headers=response.headers,
+                                       json=lambda: __import__('json').loads(body))
+    try:
+        assert server.started, 'Isolated HTTP server did not start'
+        state['client'] = Client()
+        yield state
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+        sock.close()
+        assert not thread.is_alive()
+
+
+def test_stage4_route_inventory_is_exhaustive():
+    assert {(method, r.path) for r in q.app.routes for method in r.methods} == set(STAGE4_ROUTES)
+
+
+@pytest.mark.parametrize('actor', ['A', 'B'])
+@pytest.mark.parametrize('method,path', STAGE4_OWNED_ROUTES)
+@pytest.mark.parametrize('fault', ['cross', 'missing_owner', 'malformed', 'timeout', 'unlinked'])
+def test_stage4_http_denials_have_no_side_effects(stage4_http, actor, method, path, fault):
+    import shopify_read as s
+    h = stage4_http
+    if not path.startswith('/tenant/'):
+        h['rows'][actor].update(shop_domain=s.STORE, qbo_realm_id=h['cfg'].expected_realm)
+    h['rls_fault'] = fault
+    before = h['snapshot']()
+    r = h['client'].request(method, path, params={'realm': h['rows'][actor]['qbo_realm_id']},
+                            headers={'Authorization': 'Bearer fixture-' + actor})
+    assert r.status_code == 403
+    assert h['calls'] == [] and h['snapshot']() == before
+
+
+@pytest.mark.parametrize('method,path', STAGE4_ROUTES)
+def test_stage4_http_anonymous_has_no_side_effects(stage4_http, method, path):
+    h = stage4_http
+    before = h['snapshot']()
+    r = h['client'].request(method, path, params={'realm': '12345'})
+    expected = 200 if path == '/health' else 400 if path.endswith('/callback') else 401
+    assert r.status_code == expected
+    assert h['calls'] == [] and h['snapshot']() == before
+
+
+@pytest.mark.parametrize('actor', ['A', 'B'])
+def test_stage4_http_own_cross_and_reconnect(stage4_http, actor):
+    h = stage4_http
+    other = 'B' if actor == 'A' else 'A'
+    row, peer = h['rows'][actor], h['rows'][other]
+    cfg = q.replace(h['cfg'], expected_realm=row['qbo_realm_id'])
+    peer_path = q._tenant_token_path(q.replace(cfg, expected_realm=peer['qbo_realm_id']), user_id=peer['user_id'])
+    peer_before = peer_path.read_bytes()
+    headers = {'Authorization': 'Bearer fixture-' + actor}
+    def call(method, path, **kwargs):
+        return h['client'].request(method, path, headers=headers, **kwargs)
+    # Caller-scoped routes have no target parameter; extra input cannot select a peer.
+    injected = {'user_id': peer['user_id'], 'store': peer['shop_domain'], 'realm': peer['qbo_realm_id']}
+    assert call('GET', '/auth/me', params=injected).json()['subject'] == row['user_id']
+    access = call('GET', '/tenant/finance/access-check', params=injected)
+    assert access.status_code == 200 and access.json()['qbo_realm_id'] == row['qbo_realm_id']
+    before = h['snapshot']()
+    assert call('GET', '/tenant/finance/invoice-count', params={'realm': peer['qbo_realm_id']}).status_code == 403
+    assert h['calls'] == [] and h['snapshot']() == before
+    count = call('GET', '/tenant/finance/invoice-count', params={'realm': row['qbo_realm_id']})
+    assert count.status_code == 200 and count.json() == {'invoice_count': 7, 'realm': row['qbo_realm_id'], 'read_only': True}
+    assert f"/company/{row['qbo_realm_id']}/query" in h['calls'][0][1]
+    started = call('POST', '/tenant/quickbooks/start', params=injected, json=injected)
+    assert started.status_code == 200
+    state = parse_qs(urlparse(started.json()['authorization_url']).query)['state'][0]
+    record = q._callback_state_record(cfg, state)
+    assert record['user_id'] == row['user_id'] and record['expected_realm'] == row['qbo_realm_id']
+    before = h['snapshot'](); h['calls'].clear()
+    callback = {'state': state, 'code': 'fake-code', 'realmId': peer['qbo_realm_id']}
+    assert call('GET', '/oauth/quickbooks/callback', params=callback).status_code == 400
+    assert h['calls'] == [] and h['snapshot']() == before
+    callback['realmId'] = row['qbo_realm_id']
+    assert call('GET', '/oauth/quickbooks/callback', params=callback).status_code == 200
+    assert len(h['calls']) == 1 and peer_path.read_bytes() == peer_before
+    assert call('GET', '/oauth/quickbooks/callback', params=callback).status_code == 400
+    assert len(h['calls']) == 1
+    # Fake provider only. Unconfirmed revoke keeps the credential; confirmed revoke
+    # deletes only the authenticated caller. Reconnect creates a fresh bound state.
+    h['revoke_status'] = 503
+    own_path = q._tenant_token_path(cfg, user_id=row['user_id'])
+    own_before = own_path.read_bytes()
+    assert call('POST', '/tenant/quickbooks/disconnect').status_code == 503
+    assert own_path.read_bytes() == own_before
+    h['revoke_status'] = 200
+    assert call('POST', '/tenant/quickbooks/disconnect', json=injected).status_code == 200
+    assert not own_path.exists() and peer_path.read_bytes() == peer_before
+    h['calls'].clear()
+    assert call('POST', '/tenant/quickbooks/disconnect').status_code == 503
+    assert h['calls'] == []  # repeated disconnect cannot repeat provider revoke
+    assert call('POST', '/tenant/quickbooks/start').status_code == 200
+    assert peer_path.read_bytes() == peer_before
+
+
+@pytest.mark.parametrize('actor', ['A', 'B'])
+@pytest.mark.parametrize('fault', ['user', 'store', 'expired', 'wrong_code', 'none'])
+def test_stage4_http_tenant_proof_binding(stage4_http, actor, fault):
+    h = stage4_http
+    row = h['rows'][actor]; other = h['rows']['B' if actor == 'A' else 'A']
+    row['ownership_verified'] = False
+    headers = {'Authorization': 'Bearer fixture-' + actor}
+    response = h['client'].request('POST', '/tenant/shopify/ownership/start', headers=headers,
+                                  json={'user_id': other['user_id'], 'store': other['shop_domain']})
+    assert response.status_code == 200 and response.json()['store'] == row['shop_domain']
+    path = q._tenant_proof_path(h['cfg'], row['user_id'], row['shop_domain'])
+    proof = json.loads(path.read_text())
+    assert proof['user_id'] == row['user_id'] and proof['store'] == row['shop_domain']
+    h['proof_values'][row['shop_domain']] = response.json()['challenge']
+    if fault == 'user': proof['user_id'] = other['user_id']
+    if fault == 'store': proof['store'] = other['shop_domain']
+    if fault == 'expired': proof['expires_at'] = 0
+    if fault == 'wrong_code': h['proof_values'][row['shop_domain']] = 'wrong-code'
+    q._atomic_write(path, json.dumps(proof).encode())
+    before = h['snapshot']()
+    result = h['client'].request('POST', '/tenant/shopify/ownership/verify', headers=headers)
+    assert result.status_code == (200 if fault == 'none' else 400)
+    if fault != 'none':
+        assert h['snapshot']() == before
+        if fault != 'wrong_code': assert h['calls'] == []
+    else:
+        assert not path.exists() and path.with_suffix('.verified').is_file()
+        assert result.json()['financial_access_enabled'] is False
+        calls = len(h['calls'])
+        assert h['client'].request('POST', '/tenant/shopify/ownership/verify', headers=headers).status_code == 400
+        assert len(h['calls']) == calls
+
+
+def test_stage4_http_pilot_routes_only_accept_pilot_owner(stage4_http):
+    import shopify_read as s
+    h = stage4_http
+    h['rows']['A']['shop_domain'] = s.STORE
+    a, b = {'Authorization': 'Bearer fixture-A'}, {'Authorization': 'Bearer fixture-B'}
+    paths = ['/oauth/quickbooks/start', '/shopify/ownership/start', '/shopify/ownership/verify']
+    before = h['snapshot']()
+    for path in paths:
+        assert h['client'].request('POST', path, headers=b).status_code == 403
+    assert h['snapshot']() == before and h['calls'] == []
+    start = h['client'].request('POST', paths[0], headers=a)
+    assert start.status_code == 200
+    state = parse_qs(urlparse(start.json()['authorization_url']).query)['state'][0]
+    assert q._callback_state_record(h['cfg'], state)['user_id'] == h['ids']['A']
+    proof = h['client'].request('POST', paths[1], headers=a)
+    assert proof.status_code == 200
+    h['proof_values'][s.STORE] = proof.json()['challenge']
+    verified = h['client'].request('POST', paths[2], headers=a)
+    assert verified.status_code == 200 and verified.json()['financial_access_enabled'] is False
+    assert h['client'].request('POST', paths[2], headers=a).status_code == 400
+
+
+@pytest.mark.parametrize('actor', ['A', 'B'])
+@pytest.mark.parametrize('field', ['store', 'realm'])
+def test_stage4_http_invalid_tenant_binding(stage4_http, actor, field):
+    h = stage4_http; h['rls_fault'] = field
+    before = h['snapshot']()
+    for method, path in STAGE4_OWNED_ROUTES:
+        # Store-proof routes intentionally do not authorize QBO access.
+        if field == 'realm' and path.startswith('/tenant/shopify/'):
+            continue
+        r = h['client'].request(method, path, params={'realm': h['rows'][actor]['qbo_realm_id']},
+                                headers={'Authorization': 'Bearer fixture-' + actor})
+        assert r.status_code == 403, path
+    assert h['calls'] == [] and h['snapshot']() == before
