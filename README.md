@@ -1,5 +1,7 @@
 # VERICON
 
+Stage 4.4: mevcut elle başlatılan pilot için kuyruk gerekmiyor. Sekiz ayrı process'te tek refresh, count/proof için 1 kabul/7 ret ve kalıcı soğuma doğrulandı. OAuth callback'i artık refresh/disconnect ile aynı tenant kilidini paylaşır; yeni tokenın eski işlem tarafından kaybedilmesi yarışı kapatıldı. 372 pytest PASS ve kontrollü üç servis dağıtımı doğrulandı. Bu karar tam ingest/checkpoint veya ticari kapasite kabulü değildir; aşama 4'te yalnız 4.1 ve bu dar 4.4 kriteri kapalıdır.
+
 Stage 4.3: QBO yetki reddi artık geçici servis hatasından ayrılır; 409 ve 60 sn ortak soğuma, token koruma ve panelde yeniden yetkilendirme/bekleme mesajı vardır. Shopify proof okumaları mağaza başına 60/dakika ve 0,5 sn aralıkla sınırlı; provider hataları ortak soğumaya girer. Son suite 367 PASS; ticari merchant onboarding ve CLI ingest kota kapsamı hâlâ açık. Ölçümler ve güncel tek checklist `TODO.md` içindedir.
 
 2026-11-13 Stage 4 execution: 4.2'nin 12 route envanteri ve gerçek/izole kanıt ayrımı `TODO.md` içinde. Pilot RLS yanıtlarına açık sahip+satır biçimi doğrulaması eklendi; 22 RED sonrası 120 yeni izole HTTP kontrolü, toplam 351 pytest PASS. Kod yedekli üç servis restart'ında health 200; 10 yetkili route anonim 401, callback 400. Güncel gerçek A/B oturumu yok: 4.2 açık, tarihsel aşama 3 kabulü korunur. Sahte provider revoke/proof testleri canlı kabul değildir; gerçek bağlantı iptal edilmedi. Web/Nginx byte uyumu ayrıca doğrulandı.

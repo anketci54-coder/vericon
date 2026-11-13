@@ -1493,3 +1493,130 @@ def test_stage43_callback_failure_requires_fresh_state_without_retry(stage4_http
         assert result.status_code == 400 and 'MUST_NOT_ESCAPE' not in result.text
     assert calls == ['exchange'] and token_path.read_bytes() == before
     assert h['client'].request('POST', '/tenant/quickbooks/start', headers=headers).status_code == 200
+
+
+@pytest.mark.parametrize('mode', ['refresh', 'count', 'proof'])
+def test_stage44_independent_processes_share_admission_and_refresh(cfg, mode):
+    """Real localhost provider HTTP + fresh interpreters + temporary encrypted files."""
+    import subprocess
+    import sys
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    uid = '11111111-1111-4111-8111-111111111111'
+    fixed = time.time()
+    q.save_tenant_tokens(cfg, {'access_token': 'fake', 'refresh_token': 'fake-refresh',
+                              'expires_in': 0 if mode == 'refresh' else 3600}, user_id=uid)
+    token_path = q._tenant_token_path(cfg, user_id=uid)
+    before = token_path.read_bytes()
+    calls = {'get': 0, 'post': 0, 'status': 200}
+    lock = threading.Lock()
+    class Provider(BaseHTTPRequestHandler):
+        def log_message(self, *args): pass
+        def reply(self, payload, status=200):
+            body = json.dumps(payload).encode()
+            self.send_response(status); self.send_header('Content-Length', str(len(body)))
+            self.end_headers(); self.wfile.write(body)
+        def do_POST(self):
+            assert self.path == '/token'
+            self.rfile.read(int(self.headers['Content-Length']))
+            with lock: calls['post'] += 1
+            self.reply({'access_token': 'rotated-fake', 'refresh_token': 'rotated-fake-refresh'})
+        def do_GET(self):
+            assert self.path == '/proof' or self.path.startswith('/v3/company/12345/query?')
+            with lock: calls['get'] += 1
+            self.reply({'QueryResponse': {'totalCount': 7}}, calls['status'])
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
+    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    base = 'http://127.0.0.1:' + str(server.server_port)
+    gate = cfg.private_dir / 'worker-go'
+    script = '''
+import json,sys,time
+from pathlib import Path
+from types import SimpleNamespace
+import qbo_oauth as q
+folder,base,mode,now,gate=sys.argv[1:]
+cfg=q.Config('fake','fake','https://example.test/oauth/quickbooks/callback',Path(folder),'12345')
+q.SANDBOX_API=base; q.TOKEN_URL=base+'/token'
+q.time=SimpleNamespace(time=lambda:float(now))
+deadline=time.monotonic()+10
+while not Path(gate).exists():
+    if time.monotonic()>deadline: raise RuntimeError('gate timeout')
+    time.sleep(.01)
+start=time.monotonic()
+try:
+    if mode=='refresh':
+        value=q.get_tenant_access_token(cfg,user_id='11111111-1111-4111-8111-111111111111')
+        assert value==('rotated-fake','12345')
+    elif mode=='count':
+        assert q.read_tenant_invoice_count(cfg,user_id='11111111-1111-4111-8111-111111111111')==7
+    else:
+        q._read_shopify_proof_with_budget(cfg,'tenant-a.myshopify.com',lambda:q.requests.get(base+'/proof',timeout=2).json())
+    status=200; retry=None
+except q.HTTPException as e:
+    status=e.status_code; retry=(e.headers or {}).get('Retry-After')
+print(json.dumps({'status':status,'retry':retry,'seconds':time.monotonic()-start}))
+'''
+    processes = []
+    def start(now):
+        p = subprocess.Popen([sys.executable, '-B', '-c', script, str(cfg.private_dir), base,
+                              mode, str(now), str(gate)], cwd=Path(q.__file__).parent,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        processes.append(p)
+        return p
+    def result(p):
+        out, err = p.communicate(timeout=15)
+        assert p.returncode == 0, err
+        return json.loads(out)
+    try:
+        first = [start(fixed) for _ in range(8)]
+        gate.touch()
+        results = [result(p) for p in first]
+        assert sorted(r['status'] for r in results) == ([200] * 8 if mode == 'refresh' else [200] + [429] * 7)
+        assert calls['post'] == (1 if mode == 'refresh' else 0)
+        assert calls['get'] == (0 if mode == 'refresh' else 1)
+        if mode == 'refresh':
+            assert q.load_tenant_tokens(cfg, user_id=uid)['refresh_token'] == 'rotated-fake-refresh'
+        else:
+            assert token_path.read_bytes() == before
+        if mode == 'count':
+            calls['status'] = 429
+            assert result(start(fixed + 1))['retry'] == '60'
+            assert result(start(fixed + 2))['retry'] == '59'
+            assert calls['get'] == 2 and token_path.read_bytes() == before
+        print(json.dumps({'mode': mode, 'workers': 8, 'statuses': [r['status'] for r in results],
+                          'provider_gets': calls['get'], 'provider_posts': calls['post'],
+                          'max_worker_seconds': max(r['seconds'] for r in results)}))
+    finally:
+        for p in processes:
+            if p.poll() is None: p.kill(); p.wait(timeout=5)
+        server.shutdown(); server.server_close(); thread.join(timeout=5)
+
+
+@pytest.mark.parametrize('operation', ['disconnect', 'refresh'])
+def test_stage44_callback_serializes_with_inflight_token_change(cfg, monkeypatch, operation):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    uid = '11111111-1111-4111-8111-111111111111'
+    q.save_tenant_tokens(cfg, {'access_token': 'old', 'refresh_token': 'old-refresh', 'expires_in': 0}, user_id=uid)
+    state = parse_qs(urlparse(q.create_authorization_url(cfg, user_id=uid)).query)['state'][0]
+    entered, release, code_exchange = Event(), Event(), Event()
+    def post(url, **kwargs):
+        if kwargs['data'].get('grant_type') == 'authorization_code':
+            code_exchange.set()
+            return FakeResponse({'access_token': 'reconnected', 'refresh_token': 'reconnected-refresh'})
+        entered.set()
+        assert release.wait(5)
+        return FakeResponse({'access_token': 'refreshed', 'refresh_token': 'refreshed-refresh'})
+    monkeypatch.setattr(q.requests, 'post', post)
+    action = q.disconnect_tenant_quickbooks if operation == 'disconnect' else q.get_tenant_access_token
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        prior = pool.submit(action, cfg, user_id=uid)
+        assert entered.wait(2)
+        callback = pool.submit(q.complete_authorization, cfg, state=state, code='fake',
+                               realm=cfg.expected_realm, user_id=uid)
+        try:
+            assert not code_exchange.wait(.2), 'callback crossed an in-flight token operation'
+        finally:
+            release.set()
+            prior.result(timeout=5); callback.result(timeout=5)
+    assert q.load_tenant_tokens(cfg, user_id=uid)['refresh_token'] == 'reconnected-refresh'

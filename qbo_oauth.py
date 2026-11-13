@@ -454,12 +454,17 @@ def complete_authorization(config: Config, *, state: str, code: str, realm: str,
     if config.expected_realm and realm != config.expected_realm:
         raise ValueError("Wrong QuickBooks sandbox company")
     check_state(config, state, user_id=user_id)
-    token = _exchange(config, {"grant_type": "authorization_code", "code": code,
-                               "redirect_uri": config.redirect_uri})
+    params = {"grant_type": "authorization_code", "code": code, "redirect_uri": config.redirect_uri}
     if user_id is not None:
-        save_tenant_tokens(config, token, user_id=user_id)
+        # Same user/realm lock as refresh and disconnect: an older in-flight
+        # operation must finish before this new authorization can replace it.
+        lock = _tenant_token_path(config, user_id=user_id).with_suffix('.lock')
+        fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'rb') as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            save_tenant_tokens(config, _exchange(config, params), user_id=user_id)
     else:
-        _save_tokens(config, token, realm, user_id=None)
+        _save_tokens(config, _exchange(config, params), realm, user_id=None)
 
 
 def get_access_token(config: Config, *, force_refresh: bool = False) -> tuple[str, str]:
