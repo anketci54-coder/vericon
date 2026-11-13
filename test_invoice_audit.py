@@ -59,6 +59,18 @@ def test_actual_line_amount_mismatch_is_review_not_loss():
     assert result["review_product_lines"] == 1
 
 
+@pytest.mark.parametrize('amount', ['14.99', '15.01'])
+def test_one_cent_sales_line_difference_requires_review(amount):
+    result = a.audit_invoice(invoice(sales(qty=3, price=5, amount=amount)))
+    assert result['status'] == 'REVIEW_LINE_AMOUNT'
+    assert result['review_product_lines'] == 1
+
+
+def test_exact_fractional_quantity_line_remains_matched():
+    result = a.audit_invoice(invoice(sales(qty='0.3', price='0.1', amount='0.03')))
+    assert result['status'] == 'LINE_AMOUNTS_MATCH'
+
+
 def test_missing_item_and_totals_only_are_blocked():
     result = a.audit_invoice(invoice({"DetailType": "SubTotalLineDetail", "Amount": 75}))
     assert result["status"] == "BLOCKED_NO_PRODUCT_LINES"

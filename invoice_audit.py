@@ -24,7 +24,7 @@ import requests
 from qbo_oauth import SANDBOX_API, get_access_token, load_saved_setup
 
 MAX_INVOICES = 100
-USD_REVIEW_TOLERANCE = Decimal("0.01")
+USD_REVIEW_TOLERANCE = Decimal("0.005")
 COMPONENT_CENT_TOLERANCE = Decimal("0.005")
 SUPPORTED_NON_PRODUCT_LINES = frozenset(("SubTotalLineDetail", "DiscountLineDetail"))
 
