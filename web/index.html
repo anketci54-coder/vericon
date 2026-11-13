@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#080d17">
+  <meta name="description" content="VERICON Finance. Shopify ve QuickBooks kayıtlarında kanıta dayalı finansal denetim.">
+  <title>VERICON | Finance</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" defer src="/app.bundle.js"></script>
+  <script defer src="/tenant-isolation-check.js"></script>
+
+</head>
+<body>
+  <div class="backdrop" aria-hidden="true"><div class="glow glow-a"></div><div class="glow glow-b"></div><div class="grid"></div></div>
+  <div class="shell">
+    <header class="masthead">
+      <a class="brand" href="/" aria-label="VERICON ana sayfa">
+        <span class="brand-icon" aria-hidden="true"><svg viewBox="0 0 38 38" fill="none"><path d="M7 10L18.6 29L31 10" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="31" cy="10" r="3.5" fill="#75F7D0"/></svg></span>
+        <span class="brand-name">VERICON<span class="brand-dot">.</span></span>
+      </a>
+      <span class="masthead-tag"><span class="status-light"></span> Finance <span class="tag-divider"></span> Pilot</span>
+    </header>
+    <main class="layout">
+      <section class="story" aria-labelledby="headline">
+        <span class="eyebrow"><span class="eyebrow-line"></span> FINANSAL DENETİM PLATFORMU</span>
+        <h1 id="headline">Rakamlar<br>konuşsun.<br><span class="gradient-text">Şüpheler değil.</span></h1>
+        <p class="story-lead">Shopify ile QuickBooks kayıtlarını karşılaştırın. Sipariş, fatura ve iadeler arasındaki farkları varsayımlarla değil, kanıtlarla değerlendirin.</p>
+        <div class="flow" aria-label="Entegrasyon akışı">
+          <div class="flow-label">BAĞLANTI AKIŞI <span>Üç aşamalı kontrol</span></div>
+          <div class="flow-nodes">
+            <div class="flow-node"><span class="node-logo shopify">S</span><span><strong>Shopify</strong><small>Siparişler</small></span></div>
+            <span class="flow-line"><i></i></span>
+            <div class="flow-node flow-core"><span class="node-logo vericon">V</span><span><strong>VERICON</strong><small>Kanıt kontrolü</small></span></div>
+            <span class="flow-line"><i></i></span>
+            <div class="flow-node"><span class="node-logo qbo">Q</span><span><strong>QuickBooks</strong><small>Muhasebe</small></span></div>
+          </div>
+          <div class="flow-foot"><span class="flow-check">✓</span> Mevcut sistemlerinizi değiştirmeden, salt-okunur denetim hedefi</div>
+        </div>
+        <div class="story-footer"><span class="footer-rule"></span> DOĞRULANABİLİR VERİ. ÖLÇÜLEBİLİR GÜVEN.</div>
+      </section>
+      <section class="login-panel" aria-labelledby="login-title">
+        <div class="panel-top">
+          <div class="panel-symbol"><span class="panel-symbol-inner">↗</span></div>
+          <span class="panel-flag">ÖZEL ERİŞİM</span>
+        </div>
+        <div id="login-view">
+          <p class="panel-kicker">HESABINIZA ERİŞİN</p>
+          <h2 id="login-title">Tekrar hoş geldiniz.</h2>
+          <p class="panel-description">E-postanıza gelen 6 veya 8 haneli doğrulama koduyla giriş yapın. Şifre gerekmez.</p>
+          <form id="login-form" novalidate>
+            <label for="email">E-posta adresi</label>
+            <div class="input-wrap">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2.5" y="4.5" width="19" height="15" rx="3" stroke="currentColor" stroke-width="1.7"/><path d="M3.5 6L12 12.5L20.5 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+              <input id="email" name="email" type="email" autocomplete="email" inputmode="email" placeholder="ornek@firma.com" maxlength="254" required>
+            </div>
+            <button class="primary-button" id="submit" type="submit"><span id="submit-label">Doğrulama kodu gönder</span><span class="button-arrow" aria-hidden="true">↗</span></button>
+          </form>
+          <form id="otp-form" hidden novalidate><label for="otp-code">E-postanıza gelen 6 veya 8 haneli kod</label><input id="otp-code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}([0-9]{2})?" minlength="6" maxlength="8" placeholder="000000" required><button class="primary-button" id="otp-submit" type="submit">Kodu doğrula</button></form>
+          <p id="notice" class="notice" role="status" aria-live="polite" hidden></p>
+          <div class="separator"><span></span> NASIL ÇALIŞIR? <span></span></div>
+          <div class="steps">
+            <div><b>01</b><span>E-postanıza 6 veya 8 haneli kod gelir.</span></div>
+            <div><b>02</b><span>Kodu girerek kimliğinizi doğrularsınız.</span></div>
+            <div><b>03</b><span>Yetkileriniz ayrıca kontrol edilir.</span></div>
+          </div>
+        </div>
+        <div id="session-view" hidden>
+          <p class="panel-kicker">OTURUM</p>
+          <h2>Kimlik doğrulandı.</h2>
+          <p class="panel-description">Supabase oturumu alındı. VERICON sunucusundaki yetkilendirme kontrolü ayrıca çalıştırılıyor.</p>
+          <div class="session-data">
+            <div><span>E-posta</span><strong id="session-email">—</strong></div>
+            <div><span>Kimlik doğrulaması</span><strong id="session-identity">Kontrol ediliyor</strong></div>
+            <div><span>Müşteri veri erişimi</span><strong class="locked">Kapalı · Pilot</strong></div>
+          </div>
+          <p id="session-notice" class="notice" role="status" aria-live="polite" hidden></p>
+          <section id="shopify-proof" style="margin-top:14px">
+            <button class="secondary-button" id="shopify-proof-start" type="button">Shopify sahiplik kodu oluştur</button>
+            <p id="shopify-proof-value" style="overflow-wrap:anywhere" hidden></p>
+            <button class="secondary-button" id="shopify-proof-verify" type="button" hidden>Shopify kodunu doğrula</button>
+          </section>
+          <section id="tenant-shopify-proof" style="margin-top:14px">
+            <button class="secondary-button" id="tenant-shopify-start" type="button">İkinci mağaza doğrulama kodu oluştur</button>
+            <p id="tenant-shopify-code" style="overflow-wrap:anywhere" hidden></p>
+            <button class="secondary-button" id="tenant-shopify-verify" type="button" hidden>İkinci mağaza kodunu doğrula</button>
+          </section>
+          <button class="secondary-button" id="qbo-connect" type="button" hidden>QuickBooks Sandbox hesabını yetkilendir</button>
+          <button class="secondary-button" id="qbo-disconnect" type="button">QuickBooks bağlantısını iptal et</button>
+          <p id="qbo-disconnect-result" role="status" aria-live="polite" hidden></p>
+          <button class="secondary-button" id="pdf42-check" type="button">4-2 İzolasyon Testi</button>
+          <p id="pdf42-result" role="status" aria-live="polite" style="overflow-wrap:anywhere" hidden></p>
+          <button class="secondary-button" id="tenant-isolation-check" type="button">Finansal izolasyonu doğrula</button>
+          <p id="tenant-isolation-result" role="status" aria-live="polite" style="overflow-wrap:anywhere" hidden></p>
+          <button class="secondary-button" id="signout" type="button">Güvenli çıkış yap <span aria-hidden="true">→</span></button>
+        </div>
+        <div class="panel-bottom"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="M8 10V7a4 4 0 0 1 8 0v3" stroke="currentColor" stroke-width="1.7"/></svg><span>Şifre paylaşılmaz. Müşteri verileri henüz erişime açık değildir.</span></div>
+      </section>
+    </main>
+    <footer class="site-footer"><span>© 2026 VERICON</span><span>Finance Pilot · Giriş altyapısı</span><span>Built for clarity.</span></footer>
+  </div>
+</body>
+</html>

@@ -23,7 +23,10 @@ Kaynak: `VERICON_Ticari_Urun_Checklist_10_Kasim_2026.pdf` (3 sayfa). Her PDF mad
 - [x] API üzerinden gerçek veri okuma ve temel test altyapısı doğrulandı.
 - [x] VPS ile GitHub kaynak kodları eşitlendi.
 - [ ] Canlı servislerin yeniden başlatma sonrası otomatik çalışması doğrulanacak.
-- [ ] Canlı web arayüzü ve Nginx yapılandırması, gizli bilgiler hariç, sürüm kontrolüne alınacak.
+- [x] Canlı web arayüzü ve Nginx yapılandırması, gizli bilgiler hariç, sürüm kontrolüne alınacak. [2026-11-13 PDF 1-6 KAPANDI]
+  - Canlı `/var/www/vericon-app` içindeki dört aktif dosya `web/` altında; HTTPS üzerinden alınan HTML/CSS/JS yanıtlarının her biri SHA-256 olarak birebir eşleşti (HTTP 200).
+  - Aktif `/etc/nginx/sites-available/vericon-app.conf`, `deploy/vericon-app.nginx.conf` altında birebir SHA-256 eşleşmesiyle kayıtlı; `nginx -t` PASS. Gizli anahtar ve yedek dosyalar eklenmedi.
+  - Bu adım yalnızca kaynak takibi; canlı Nginx veya API servisleri değiştirilmedi. PDF 1-5 otomatik başlatma ayrı açık iş olarak kalır.
 
 ### 2. Finance denetim motoru
 - [x] Shopify siparişleri ve QBO faturaları okunuyor; referans eşleştirmesi yapılıyor.
