@@ -10,6 +10,8 @@ Aday Nginx callback yapılandırması OAuth query parametrelerini access log dı
 
 OAuth state eşzamanlı replay kapısı adayda düzeltildi: 8 ayrı process'te yalnız 1 tüketim, 7 ret (pilot ve tenant). 188 test PASS. Canlı dağıtım yapılmadığından ilgili güvenlik checklist maddesi yeniden açıktır.
 
+Systemd hazırlığı: `deploy/vericon-api@.service` mevcut VPS şablonunun aynısıdır; statik doğrulama PASS. Hazırlanan 0600 environment dosyası yalnız yayımlanmış Supabase publishable anahtarı içerir; QBO/Shopify sırları mevcut `private/` altında kalır. Kalıcı dosyanın kurulması, 8787/8788/8789 süreçlerinin systemd'ye devri ve Nginx reload ayrı canlı onayı gerektirir. Rollback yalnız kod/config içindir; yenilenmiş OAuth tokenlarını eski yedekle geri almak güvenli değildir.
+
 **Guncel tek ana plan: [`TODO.md`](TODO.md), 2026-11-07.** VERICON'un kalici 3 ayagi: **Finance** (fatura/odeme/iade/muhasebe denetimi, AKTIF), **Profit** (urun/stok/maliyet ve gercek karlilik, SONRA) ve **Intelligence** (rakip fiyatlari, yeni urun/firsat ve kanitli ticari tavsiyeler, SONRA). Ilk pazar ABD Shopify + QuickBooks Online. Mevcut Finance gelistirme sirasi korunur; diger ayaklarin kodu, paneli veya altyapisi simdilik kurulmaz. Abonelik ucretinin ekonomik faydasi ayrica olculur, tahmini getiri garanti edilmez. Asagidaki tarihli bulgular tarihsel kayittir; eski 'siradaki is' ifadeleri guncel karar degildir.
 
 **Tarihsel durum: 2026-11-03.** Bu bir **Sandbox prototipidir**, satisa hazir SaaS degildir.

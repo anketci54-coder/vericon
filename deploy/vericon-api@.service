@@ -1,0 +1,18 @@
+[Unit]
+Description=VERICON API port %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/vericon
+EnvironmentFile=/etc/vericon/vericon-api.env
+ExecStart=/usr/bin/python3 -m uvicorn qbo_oauth:app --host 127.0.0.1 --port %i --no-access-log --log-level warning
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
