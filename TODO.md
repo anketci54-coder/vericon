@@ -174,6 +174,17 @@ Teknik borç: hiçbir fonksiyon, kurtarma dosyası, bağımlılık veya eski sü
 
 Dış kaynaklı kararlar: Nginx başlık mirası resmi `ngx_http_headers_module` belgesine göre düzeltildi (https://nginx.org/en/docs/http/ngx_http_headers_module.html#add_header); kurulu 1.26.3 yeni `add_header_inherit merge` direktifini desteklemediği için kullanılmadı. Supabase changelog ve sessions belgesi incelendi (https://supabase.com/changelog.md , https://supabase.com/docs/guides/auth/sessions); imza kontrolü tek başına session iptali sayılmadı, gerçek logout bağımsız tekrarı açık. Shopify sürüm 2026-10 korunur; scope modeli resmi AccessScope belgesiyle (https://shopify.dev/docs/api/admin-graphql/2026-10/objects/AccessScope), kota davranışı resmi dokümanla (https://shopify.dev/docs/apps/build/apis/graphql-admin/rate-limits) karşılaştırıldı. Intuit sınırları resmi belgede realm/app bazında (https://static.developer.intuit.com/output_html/qbo/docs/learn/limits-and-throttles.html); bu, koda kota/retry uygulandığı iddiası değildir. Ek izin veya ücretli servis açılmadı.
 
+
+ASTRA tekrarlanabilir sentetik ölçüm (21 seri tam aritmetik batch/boyut; p99 bu küçük örneklemde gözlenen maksimumdur):
+
+| Kayıt | p50 sn | p95 sn | p99 sn | CPU sn/batch | Tepe RSS MiB | CPU % |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1000 | 0.006828 | 0.010176 | 0.010866 | 0.007166 | 56.9 | 99.2 |
+| 10000 | 0.086016 | 0.094591 | 0.131293 | 0.087685 | 76.4 | 99.4 |
+| 100000 | 0.903851 | 1.008797 | 1.014140 | 0.921593 | 238.4 | 99.6 |
+
+Her boyutta hata oranı 0; beklenen %10 yanlış tutar doğru ID ile bulundu (sentetik FP=0/FN=0), girdi SHA256 değişmedi, sağlayıcı çağrısı 0. Gerçek müşteri hata oranı değildir. CPU-maliyet örneği yalnız 0,05 USD/vCPU-saat varsayımı: 100k batch yaklaşık 0,0000128 USD, kayıt başına 1,28e-10 USD. API, ağ, auth, depolama, sabit VPS/boşta maliyet ve operasyon HARİÇ; fatura/gerçek SaaS maliyeti ölçülmedi. Kaynak `benchmark_invoice_audit.py`, tam sonuç `astra-evidence/performance.json`. Tam Shopify–QBO batch 20 order/100 invoice sınırını halen BLOCK eder; hacim checkboxı bu nedenle açık.
+
 ### 5. Ticari yönetim paneli
 - [ ] Giriş, şirket seçimi ve Shopify/QBO bağlantı yönetimi.
 - [ ] Genel durum ve sipariş–fatura uyuşmazlık ekranları.
