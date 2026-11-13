@@ -772,6 +772,42 @@ def test_finance_invoice_route_cross_tenant_denied_before_qbo(monkeypatch):
     assert e.value.status_code==403
 
 
+def test_tenant_budget_shared_across_instances_and_independent_realms(cfg, monkeypatch):
+    from dataclasses import replace
+    clock = [1000.0]
+    monkeypatch.setattr(q.time, 'time', lambda: clock[0])
+    q._tenant_count_budget(cfg)
+    with pytest.raises(q.HTTPException) as exc:
+        q._tenant_count_budget(replace(cfg))
+    assert exc.value.status_code == 429
+    q._tenant_count_budget(replace(cfg, expected_realm='222'))
+    for i in range(1, 60):
+        clock[0] = 1000 + i * .5
+        q._tenant_count_budget(cfg)
+    clock[0] = 1030.0
+    with pytest.raises(q.HTTPException) as exc:
+        q._tenant_count_budget(cfg)
+    assert exc.value.headers['Retry-After'] == '30'
+    clock[0] = 1060.0
+    q._tenant_count_budget(cfg)
+
+
+@pytest.mark.parametrize('status,cooldown', [(429,60), (503,5)])
+def test_provider_backoff_survives_new_caller_without_retry(cfg, monkeypatch, status, cooldown):
+    user = '11111111-1111-4111-8111-111111111111'
+    q.save_tenant_tokens(cfg, {'access_token':'fake', 'refresh_token':'fake', 'expires_in':3600}, user_id=user)
+    calls = []
+    monkeypatch.setattr(q.requests, 'get', lambda *a, **kw: calls.append(1) or FakeResponse({},status))
+    with pytest.raises(q.HTTPException) as exc:
+        q.read_tenant_invoice_count(cfg, user_id=user)
+    assert exc.value.status_code == status
+    assert exc.value.headers['Retry-After'] == str(cooldown)
+    with pytest.raises(q.HTTPException) as exc:
+        q.read_tenant_invoice_count(cfg, user_id=user)
+    assert exc.value.status_code == 429
+    assert calls == [1]
+
+
 def test_finance_invoice_route_owner_read_only(monkeypatch):
     from starlette.requests import Request
     monkeypatch.setenv('VERICON_PILOT_INVOICE_COUNT_REALMS', '111')

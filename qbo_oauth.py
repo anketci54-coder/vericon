@@ -9,6 +9,7 @@ import argparse
 import json
 import hashlib
 import logging
+import math
 import fcntl
 import os
 import re
@@ -305,14 +306,68 @@ def get_tenant_access_token(config: Config, *, user_id: str) -> tuple[str, str]:
         return updated["access_token"], config.expected_realm
 
 
+def _tenant_count_budget(config: Config, *, cooldown: int = 0) -> None:
+    """Shared on-host budget across API processes, scoped to the provider realm.
+
+    Count probe only: 60/min, at least 0.5s apart. No sleeping workers or queue.
+    A provider refusal persists a cooldown so another worker cannot retry early.
+    """
+    if not config.expected_realm or not re.fullmatch(r"[0-9]{1,32}", config.expected_realm):
+        raise ValueError("Invalid tenant budget realm")
+    _secure_dir(config)
+    path = config.private_dir / ("qbo_count_budget_" + config.expected_realm + ".json")
+    fd = os.open(path.with_suffix('.lock'), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'rb') as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        now = time.time()
+        state = {'start': now, 'used': 0, 'next': 0.0}
+        if path.is_symlink():
+            raise ValueError("Unsafe tenant budget")
+        if path.exists():
+            if not path.is_file() or path.stat().st_mode & 0o077:
+                raise ValueError("Unsafe tenant budget")
+            state = json.loads(path.read_text())
+            if (not isinstance(state, dict) or type(state.get('used')) is not int
+                    or not 0 <= state['used'] <= 60 or any(
+                        type(state.get(k)) not in (int, float) or not math.isfinite(state[k])
+                        or state[k] < 0 for k in ('start', 'next'))):
+                raise ValueError("Invalid tenant budget")
+        if cooldown:
+            state['next'] = max(state['next'], now + cooldown)
+        else:
+            if now - state['start'] >= 60:
+                state.update(start=now, used=0)
+            until = max(state['next'], state['start'] + 60 if state['used'] >= 60 else 0,
+                        state['start'] if now < state['start'] else 0)
+            if until > now:
+                raise HTTPException(429, 'Tenant read rate limited',
+                                    headers={'Retry-After': str(max(1, math.ceil(until - now)))})
+            state['used'] += 1
+            state['next'] = now + 0.5
+        _atomic_write(path, json.dumps(state).encode())
+
+
 def read_tenant_invoice_count(config: Config, *, user_id: str) -> int:
     """Tenant-bound QBO read: realm comes only from verified token storage."""
+    # Check storage ownership before spending budget; reserve before any refresh.
+    load_tenant_tokens(config, user_id=user_id)
+    _tenant_count_budget(config)
     token, realm = get_tenant_access_token(config, user_id=user_id)
     if realm != config.expected_realm:
         raise ValueError("Tenant realm binding mismatch")
-    response = requests.get(f"{SANDBOX_API}/v3/company/{realm}/query",
-        params={"query": "SELECT COUNT(*) FROM Invoice"},
-        headers={"Authorization": "Bearer " + token, "Accept": "application/json"}, timeout=20)
+    try:
+        response = requests.get(f"{SANDBOX_API}/v3/company/{realm}/query",
+            params={"query": "SELECT COUNT(*) FROM Invoice"},
+            headers={"Authorization": "Bearer " + token, "Accept": "application/json"}, timeout=20)
+    except requests.RequestException:
+        _tenant_count_budget(config, cooldown=5)
+        raise HTTPException(503, 'Financial provider unavailable', headers={'Retry-After': '5'}) from None
+    if response.status_code == 429:
+        _tenant_count_budget(config, cooldown=60)
+        raise HTTPException(429, 'Financial provider rate limited', headers={'Retry-After': '60'})
+    if response.status_code >= 500:
+        _tenant_count_budget(config, cooldown=5)
+        raise HTTPException(503, 'Financial provider unavailable', headers={'Retry-After': '5'})
     if response.status_code != 200:
         raise ValueError("Tenant invoice count read refused")
     body = response.json()
@@ -592,10 +647,10 @@ def tenant_finance_invoice_count(request: Request, realm: str) -> dict:
         raise HTTPException(status_code=403, detail="Cross-tenant finance access denied")
     if not _invoice_count_enabled(connection):
         raise HTTPException(status_code=403, detail="Financial read not enabled")
-    config = _tenant_qbo_config(load_saved_setup(), connection["realm"])
     try:
+        config = _tenant_qbo_config(load_saved_setup(), connection["realm"])
         count = read_tenant_invoice_count(config, user_id=connection["user_id"])
-    except (ValueError, requests.RequestException):
+    except (ValueError, OSError, requests.RequestException):
         raise HTTPException(status_code=503, detail="Financial read unavailable") from None
     return {"invoice_count": count, "realm": connection["realm"], "read_only": True}
 
