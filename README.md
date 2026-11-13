@@ -1,5 +1,7 @@
 # VERICON
 
+2026-11-13 bağımsız denetim: ürün ticari kullanıma hazır değildir. Güncel yeniden ölçüm ve bloke işler `TODO.md` içindedir. Güvenlik başlığı düzeltmesi ayrı aday çalışma kopyasında gerçek Nginx ile sınandı; canlı yapılandırma ve servisler onaysız değiştirilmedi. Başlangıç 177 offline test PASS; bu sonuç ticari finans/tenant kabulü değildir.
+
 **Guncel tek ana plan: [`TODO.md`](TODO.md), 2026-11-07.** VERICON'un kalici 3 ayagi: **Finance** (fatura/odeme/iade/muhasebe denetimi, AKTIF), **Profit** (urun/stok/maliyet ve gercek karlilik, SONRA) ve **Intelligence** (rakip fiyatlari, yeni urun/firsat ve kanitli ticari tavsiyeler, SONRA). Ilk pazar ABD Shopify + QuickBooks Online. Mevcut Finance gelistirme sirasi korunur; diger ayaklarin kodu, paneli veya altyapisi simdilik kurulmaz. Abonelik ucretinin ekonomik faydasi ayrica olculur, tahmini getiri garanti edilmez. Asagidaki tarihli bulgular tarihsel kayittir; eski 'siradaki is' ifadeleri guncel karar degildir.
 
 **Tarihsel durum: 2026-11-03.** Bu bir **Sandbox prototipidir**, satisa hazir SaaS degildir.
