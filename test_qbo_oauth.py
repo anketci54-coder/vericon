@@ -29,6 +29,36 @@ def cfg(tmp_path):
     )
 
 
+@pytest.mark.parametrize('user_id', [None, '11111111-1111-4111-8111-111111111111'])
+def test_oauth_state_is_consumed_once_under_concurrent_callbacks(cfg, monkeypatch, user_id):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    state = parse_qs(urlparse(q.create_authorization_url(cfg, user_id=user_id)).query)['state'][0]
+    state_path = q._oauth_state_file(cfg, state, user_id=user_id)
+    both_read = Barrier(2)
+    original_read = Path.read_bytes
+
+    def read_before_consumption(path):
+        data = original_read(path)
+        if path == state_path:
+            both_read.wait(timeout=5)
+        return data
+
+    monkeypatch.setattr(Path, 'read_bytes', read_before_consumption)
+
+    def callback(_):
+        try:
+            q.check_state(cfg, state, user_id=user_id)
+            return 'accepted'
+        except ValueError:
+            return 'rejected'
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(callback, range(2)))
+    assert sorted(results) == ['accepted', 'rejected']
+    assert not state_path.exists()
+
+
 def test_supabase_auth_me_validates_signature_and_identity(monkeypatch):
     """Isolated signing key only; no access to a customer tenant or real account."""
     import uuid

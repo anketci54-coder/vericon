@@ -180,7 +180,12 @@ def check_state(config: Config, supplied: str, *, user_id: str | None = None) ->
         user_id = str(uuid.UUID(user_id))
     if obj.get("user_id") != user_id:
         raise ValueError("OAuth state user binding mismatch")
-    path.unlink(missing_ok=True)  # prevent replay, even on failed token exchange
+    # unlink is atomic: only one callback may consume a state already read by
+    # concurrent workers. Missing state must reject before token exchange.
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        raise ValueError("Missing or invalid OAuth state") from None
     if int(obj.get("expires_at", 0)) < int(time.time()):
         raise ValueError("OAuth state expired")
 
