@@ -29,6 +29,7 @@ Kaynak: `VERICON_Ticari_Urun_Checklist_10_Kasim_2026.pdf` (3 sayfa). Her PDF mad
 - [x] API üzerinden gerçek veri okuma ve temel test altyapısı doğrulandı.
 - [x] VPS ile GitHub kaynak kodları eşitlendi.
 - [ ] Canlı servislerin yeniden başlatma sonrası otomatik çalışması doğrulanacak.
+  - 2026-11-13 DENETIM DALINDA DAR DUZELTME: OAuth callback Nginx access log, yalniz status/upstream_status/request_time tutan metadata-only formata alindi. OAuth code/state/URI loglanmiyor; upstream error_log /dev/null korunuyor, uygulama kategori logu mevcut. Izole nginx -t PASS, 228 pytest PASS; CANLIYA DAGITILMADI, gercek Nginx callback log davranisi henuz kanitlanmadi.
 - [x] Canlı web arayüzü ve Nginx yapılandırması, gizli bilgiler hariç, sürüm kontrolüne alınacak. [2026-11-13 PDF 1-6 KAPANDI]
   - Canlı `/var/www/vericon-app` içindeki dört aktif dosya `web/` altında; HTTPS üzerinden alınan HTML/CSS/JS yanıtlarının her biri SHA-256 olarak birebir eşleşti (HTTP 200).
   - Aktif `/etc/nginx/sites-available/vericon-app.conf`, `deploy/vericon-app.nginx.conf` altında birebir SHA-256 eşleşmesiyle kayıtlı; `nginx -t` PASS. Gizli anahtar ve yedek dosyalar eklenmedi.
