@@ -18,6 +18,7 @@ import tempfile
 import time
 import uuid
 from dataclasses import dataclass, replace
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode, urlparse
@@ -665,6 +666,35 @@ def _shopify_proof_file(config: Config) -> Path:
     return config.private_dir / "shopify_owner_challenge.json"
 
 
+@contextmanager
+def _shopify_proof_lock(path: Path):
+    fd = os.open(path.with_suffix('.lock'), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'rb') as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+
+
+def _read_shopify_proof(path: Path) -> dict:
+    if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077:
+        raise ValueError("Unsafe ownership proof")
+    value = json.loads(path.read_text())
+    if not isinstance(value, dict):
+        raise ValueError("Invalid ownership proof")
+    return value
+
+
+def _write_shopify_proof(path: Path, data: bytes) -> None:
+    with _shopify_proof_lock(path):
+        _atomic_write(path, data)
+
+
+def _consume_shopify_proof(path: Path, expected: dict) -> None:
+    with _shopify_proof_lock(path):
+        if _read_shopify_proof(path) != expected:
+            raise ValueError("Ownership proof replaced")
+        path.unlink()
+
+
 def _shopify_owner(header: str | None) -> str:
     from shopify_read import STORE
     subject = _verified_customer_subject(header)
@@ -692,7 +722,7 @@ def shopify_ownership_start(request: Request) -> dict:
     config = load_saved_setup()
     _secure_dir(config)
     code = secrets.token_urlsafe(24)
-    _atomic_write(_shopify_proof_file(config), json.dumps({
+    _write_shopify_proof(_shopify_proof_file(config), json.dumps({
         "user_id": owner, "store": STORE, "digest": hashlib.sha256(code.encode()).hexdigest(),
         "expires_at": int(time.time()) + 600}).encode())
     return {"challenge": code, "expires_in": 600, "namespace": "vericon", "key": "owner_proof"}
@@ -705,7 +735,7 @@ def shopify_ownership_verify(request: Request) -> dict:
     config = load_saved_setup()
     path = _shopify_proof_file(config)
     try:
-        proof = json.loads(path.read_text())
+        proof = _read_shopify_proof(path)
         if proof.get("user_id") != owner or proof.get("store") != STORE:
             raise ValueError("Owner mismatch")
         if int(proof.get("expires_at", 0)) < time.time():
@@ -714,7 +744,7 @@ def shopify_ownership_verify(request: Request) -> dict:
         if not value or not secrets.compare_digest(
                 hashlib.sha256(value.encode()).hexdigest(), str(proof.get("digest", ""))):
             raise ValueError("Challenge mismatch")
-        path.unlink(missing_ok=True)
+        _consume_shopify_proof(path, proof)
         _atomic_write(config.private_dir / "shopify_owner_verified.json", json.dumps({
             "user_id": owner, "store": STORE, "verified_at": int(time.time()),
             "proof_digest": proof["digest"]}).encode())
@@ -769,7 +799,7 @@ def tenant_shopify_ownership_start(request: Request) -> dict:
     config=load_saved_setup()
     code=secrets.token_urlsafe(24)
     path=_tenant_proof_path(config,context["user_id"],context["store"])
-    _atomic_write(path,json.dumps({"digest":hashlib.sha256(code.encode()).hexdigest(),
+    _write_shopify_proof(path,json.dumps({"digest":hashlib.sha256(code.encode()).hexdigest(),
         "expires_at":int(time.time())+600,"user_id":context["user_id"],"store":context["store"]}).encode())
     return {"challenge":code,"expires_in":600,"store":context["store"],"namespace":"vericon","key":"owner_proof"}
 
@@ -780,14 +810,14 @@ def tenant_shopify_ownership_verify(request: Request) -> dict:
     config=load_saved_setup()
     path=_tenant_proof_path(config,context["user_id"],context["store"])
     try:
-        proof=json.loads(path.read_text())
+        proof=_read_shopify_proof(path)
         if proof.get("user_id")!=context["user_id"] or proof.get("store")!=context["store"] or int(proof.get("expires_at",0))<time.time():
             raise ValueError("Invalid proof")
         from shopify_read import read_tenant_owner_proof
         value=read_tenant_owner_proof(context["user_id"],context["store"])
         if not value or not secrets.compare_digest(hashlib.sha256(value.encode()).hexdigest(),proof["digest"]):
             raise ValueError("Proof mismatch")
-        path.unlink(missing_ok=True)
+        _consume_shopify_proof(path, proof)
         _atomic_write(path.with_suffix(".verified"),json.dumps({"user_id":context["user_id"],
             "store":context["store"],"verified_at":int(time.time())}).encode())
     except (ValueError,OSError,KeyError,requests.RequestException):

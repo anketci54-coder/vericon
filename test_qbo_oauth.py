@@ -575,6 +575,48 @@ def test_shopify_proof_start_requires_verified_pilot_owner(monkeypatch):
     assert exc.value.status_code == 401
 
 
+@pytest.mark.parametrize('tenant', [False, True])
+def test_shopify_proof_single_consumption_and_new_challenge_preserved(cfg, monkeypatch, tenant):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from starlette.requests import Request
+    import shopify_read as s
+    owner = '11111111-1111-4111-8111-111111111111'
+    q._secure_dir(cfg)
+    monkeypatch.setattr(q, 'load_saved_setup', lambda: cfg)
+    monkeypatch.setattr(q, '_shopify_owner', lambda h: owner)
+    monkeypatch.setattr(q, '_tenant_shopify_context', lambda h: {
+        'user_id':owner, 'store':'tenant-b.myshopify.com', 'verified':False})
+    monkeypatch.setattr(s, '_tenant_setup_path', lambda *a: cfg.private_dir / 'unused')
+    monkeypatch.setattr(s, 'load_setup', lambda: None)
+    start = q.tenant_shopify_ownership_start if tenant else q.shopify_ownership_start
+    verify = q.tenant_shopify_ownership_verify if tenant else q.shopify_ownership_verify
+    read = 'read_tenant_owner_proof' if tenant else 'read_owner_proof'
+    req = Request({'type':'http','method':'POST','path':'/proof','headers':[]})
+    code = start(req)['challenge']
+    barrier = Barrier(2)
+    def observed(*args):
+        barrier.wait(timeout=5)
+        return code
+    monkeypatch.setattr(s, read, observed)
+    def call(_):
+        try: return verify(req)['verified']
+        except q.HTTPException as exc: return exc.status_code
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        values=list(pool.map(call, range(2)))
+    assert values.count(True)==1 and values.count(400)==1
+    # An old verification must not consume a newly issued challenge.
+    code = start(req)['challenge']
+    def replaced(*args):
+        start(req)
+        return code
+    monkeypatch.setattr(s, read, replaced)
+    with pytest.raises(q.HTTPException) as exc: verify(req)
+    assert exc.value.status_code==400
+    path = q._tenant_proof_path(cfg,owner,'tenant-b.myshopify.com') if tenant else q._shopify_proof_file(cfg)
+    assert path.exists()
+
+
 def test_shopify_proof_wrong_code_does_not_verify(cfg, monkeypatch):
     import hashlib, json, uuid
     from fastapi import HTTPException
