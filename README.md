@@ -10,6 +10,8 @@ Rollback kanıtları `/root/vericon-completion-20261113/` içinde korunur. Nginx
 
 Finans sayımı, doğrulanmış RLS/sahiplik/realm bağından sonra `financial_access_enabled=true` veya operatörün açık Sandbox realm listesiyle sınırlıdır. Kurulu env mevcut iki pilotun yalnız sayım iznini taşır; genel finans erişimi açılmadı. Alt-sent kayıtlar ve belirsiz yarım-sent politikası BLOCKED; kayıtlı toplamlar tam eşitlik gerektirir. Muhasebe politikası, banka mutabakatı ve muhasebeci etiketli örneklem beklenir.
 
+Aşama 3 tarihsel kullanıcı kabulü korunur: OTP, sahiplik, QBO revoke/reconnect ve logout testi yeniden istenmez. Bu sürümde tüm endpointlerin gerçek A/B negatif matrisi 4.2 kapsamında hâlâ bloke; geçmiş kabul yeni sürüm testi değildir. Aşama 2.5–2.8 için politika, settlement verisi ve etiketli örneklem beklenir.
+
 `python3 -B benchmark_invoice_audit.py` dış API çağırmadan izole sentetik aritmetiği ölçer. 21 batch, p50/p95/p99, CPU/RSS ve ID oracle içerir; CPU maliyeti yalnız açıkça belirtilen fiyat varsayımıdır, gerçek SaaS faturası değildir. Tam Shopify–QBO ingest kapasitesiyle karıştırılmaz.
 
 **Guncel tek ana plan: [`TODO.md`](TODO.md), 2026-11-07.** VERICON'un kalici 3 ayagi: **Finance** (fatura/odeme/iade/muhasebe denetimi, AKTIF), **Profit** (urun/stok/maliyet ve gercek karlilik, SONRA) ve **Intelligence** (rakip fiyatlari, yeni urun/firsat ve kanitli ticari tavsiyeler, SONRA). Ilk pazar ABD Shopify + QuickBooks Online. Mevcut Finance gelistirme sirasi korunur; diger ayaklarin kodu, paneli veya altyapisi simdilik kurulmaz. Abonelik ucretinin ekonomik faydasi ayrica olculur, tahmini getiri garanti edilmez. Asagidaki tarihli bulgular tarihsel kayittir; eski 'siradaki is' ifadeleri guncel karar degildir.
