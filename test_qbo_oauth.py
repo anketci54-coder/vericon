@@ -724,7 +724,7 @@ def test_finance_access_check_uses_authenticated_tenant_and_keeps_finance_closed
                  "headers":[(b"authorization",b"Bearer valid")]})
     monkeypatch.setattr(q,"_authorized_tenant_connection",lambda header:{"user_id":user,"store":"tenant-b.myshopify.com","realm":"12345"} if header=="Bearer valid" else (_ for _ in ()).throw(HTTPException(403)))
     result=q.tenant_finance_access_check(req)
-    assert result=={"authenticated_tenant":True,"shop_domain":"tenant-b.myshopify.com","qbo_realm_id":"12345","financial_access_enabled":False}
+    assert result=={"authenticated_tenant":True,"shop_domain":"tenant-b.myshopify.com","qbo_realm_id":"12345","financial_access_enabled":False,"invoice_count_access_enabled":False}
     assert not any("token" in k for k in result)
     bad=Request({"type":"http","method":"GET","path":"/tenant/finance/access-check","headers":[]})
     with pytest.raises(HTTPException) as exc:q.tenant_finance_access_check(bad)
@@ -774,11 +774,34 @@ def test_finance_invoice_route_cross_tenant_denied_before_qbo(monkeypatch):
 
 def test_finance_invoice_route_owner_read_only(monkeypatch):
     from starlette.requests import Request
+    monkeypatch.setenv('VERICON_PILOT_INVOICE_COUNT_REALMS', '111')
     monkeypatch.setattr(q,"_authorized_tenant_connection",lambda h:{"user_id":"a","realm":"111","store":"a.myshopify.com"})
     monkeypatch.setattr(q,"load_saved_setup",lambda: q.Config("id","secret","https://app.vericon.site/oauth/quickbooks/callback",q.BASE_DIR,"111"))
     monkeypatch.setattr(q,"read_tenant_invoice_count",lambda config,*,user_id: 31 if config.expected_realm=="111" and user_id=="a" else 0)
     req=Request({"type":"http","method":"GET","path":"/tenant/finance/invoice-count","headers":[]})
     assert q.tenant_finance_invoice_count(req,realm="111")=={"invoice_count":31,"realm":"111","read_only":True}
+
+
+@pytest.mark.parametrize('financial,pilot,allowed', [
+    (False, '', False), (None, '', False), ('true', '', False),
+    (True, '', True), (False, '111', True), (False, '222', False)])
+def test_invoice_count_requires_explicit_financial_or_pilot_grant(monkeypatch, financial, pilot, allowed):
+    from starlette.requests import Request
+    monkeypatch.setenv('VERICON_PILOT_INVOICE_COUNT_REALMS', pilot)
+    monkeypatch.setattr(q, '_authorized_tenant_connection', lambda h: {
+        'user_id': 'a', 'realm': '111', 'store': 'a.myshopify.com',
+        'financial_access_enabled': financial})
+    monkeypatch.setattr(q, 'load_saved_setup', lambda: q.Config('id','fake','',q.BASE_DIR,'111'))
+    calls = []
+    monkeypatch.setattr(q, 'read_tenant_invoice_count', lambda *a, **kw: calls.append('read') or 31)
+    req = Request({'type':'http', 'method':'GET', 'path':'/tenant/finance/invoice-count','headers':[]})
+    if allowed:
+        assert q.tenant_finance_invoice_count(req, realm='111')['invoice_count'] == 31
+    else:
+        with pytest.raises(q.HTTPException) as exc:
+            q.tenant_finance_invoice_count(req, realm='111')
+        assert exc.value.status_code == 403
+        assert calls == []
 
 
 def test_tenant_disconnect_revoke_then_delete_only_owner(cfg,monkeypatch):

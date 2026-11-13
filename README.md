@@ -1,5 +1,7 @@
 # VERICON
 
+Finans erişim politikası: sayım endpointi sahipliği doğrulanmış RLS kaydındaki boolean `financial_access_enabled=true` gerektirir. Mevcut Sandbox pilot sayımı, yalnız operatörün `VERICON_PILOT_INVOICE_COUNT_REALMS` virgüllü realm listesi ile istisna alabilir; varsayılan liste boştur. Bu izin diğer finans uçlarını açmaz. Aday env mevcut iki pilotu koruyacak biçimde hazırlanmıştır; genel finans izni DB üzerinde değiştirilmedi.
+
 Finans devamı: USD yarım-sent yuvarlama politikası belirsizse BLOCKED; alt-sent kayıtlı Amount kabul edilmez. Kayıtlı sipariş/fatura toplamları tam eşit karşılaştırılır. 203 test ve mevcut iki Sandbox üzerinde salt-okunur doğrulama PASS; gerçek tahsilat, banka ve müşteri kabulü hâlâ doğrulanmadı.
 
 ASTRA devamı: systemd adayı artık `python3 -B qbo_oauth.py --saved-setup preflight` ile ağsız yapılandırma kontrolü ve 0077 umask kullanır. Hazırlanmış public env gerçek özel yapılandırmayla doğrulandı; boş kalıcı env reddedilir. Kurulum/servis devri yapılmadı; canlı yeniden başlatma hâlâ onay bekler. Preflight provider veya kullanıcı oturumu sağlığını kanıtlamaz.

@@ -538,13 +538,13 @@ def _authorized_tenant_connection(header: str | None) -> dict:
     try:
         response = requests.get(
             SUPABASE_ISSUER.replace("/auth/v1", "/rest/v1") + "/vericon_pilot_connections",
-            params={"select": "user_id,shop_domain,qbo_realm_id,connection_status,ownership_verified",
+            params={"select": "user_id,shop_domain,qbo_realm_id,connection_status,ownership_verified,financial_access_enabled",
                     "user_id": "eq." + subject},
             headers={"apikey": key, "Authorization": header}, timeout=8)
         rows = response.json() if response.status_code == 200 else []
     except (requests.RequestException, ValueError):
         rows = []
-    if not isinstance(rows, list) or len(rows) != 1:
+    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
         raise HTTPException(status_code=403, detail="Tenant connection not authorized")
     row = rows[0]
     realm = row.get("qbo_realm_id")
@@ -554,17 +554,34 @@ def _authorized_tenant_connection(header: str | None) -> dict:
             or not realm.isdigit() or not isinstance(store, str)
             or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,61}\.myshopify\.com", store)):
         raise HTTPException(status_code=403, detail="Tenant connection not authorized")
-    return {"user_id": subject, "realm": realm, "store": store}
+    return {"user_id": subject, "realm": realm, "store": store,
+            "financial_access_enabled": row.get("financial_access_enabled") is True}
+
+
+def _pilot_invoice_count_realms() -> frozenset[str]:
+    """Operator-only, count-only exception for the existing Sandbox pilot."""
+    value = os.environ.get("VERICON_PILOT_INVOICE_COUNT_REALMS", "")
+    if not value:
+        return frozenset()
+    if not re.fullmatch(r"[0-9]{1,32}(,[0-9]{1,32}){0,9}", value, flags=re.ASCII):
+        raise HTTPException(status_code=503, detail="Pilot read authorization unavailable")
+    return frozenset(value.split(","))
+
+
+def _invoice_count_enabled(connection: dict) -> bool:
+    return (connection.get("financial_access_enabled") is True
+            or connection["realm"] in _pilot_invoice_count_realms())
 
 
 @app.get("/tenant/finance/access-check")
 def tenant_finance_access_check(request: Request) -> dict:
     """Verify tenant binding without exposing any financial records or credentials."""
     connection = _authorized_tenant_connection(request.headers.get("authorization"))
-    # Financial data stays disabled until separate explicit enablement and
-    # actual cross-session isolation verification. Never return tokens.
+    # Distinguish the explicit Sandbox count probe from general finance access.
     return {"authenticated_tenant": True, "shop_domain": connection["store"],
-            "qbo_realm_id": connection["realm"], "financial_access_enabled": False}
+            "qbo_realm_id": connection["realm"],
+            "financial_access_enabled": connection.get("financial_access_enabled") is True,
+            "invoice_count_access_enabled": _invoice_count_enabled(connection)}
 
 
 @app.get("/tenant/finance/invoice-count")
@@ -573,6 +590,8 @@ def tenant_finance_invoice_count(request: Request, realm: str) -> dict:
     connection = _authorized_tenant_connection(request.headers.get("authorization"))
     if realm != connection["realm"]:
         raise HTTPException(status_code=403, detail="Cross-tenant finance access denied")
+    if not _invoice_count_enabled(connection):
+        raise HTTPException(status_code=403, detail="Financial read not enabled")
     config = _tenant_qbo_config(load_saved_setup(), connection["realm"])
     try:
         count = read_tenant_invoice_count(config, user_id=connection["user_id"])
