@@ -3,7 +3,8 @@
 Run: python3 -B benchmark_invoice_audit.py
 Financial chain: python3 -B benchmark_invoice_audit.py --financial
 Outputs JSON to stdout. Limits each worker to 1 GiB and 45 CPU seconds.
-The full Shopify-QBO pipeline remains limited to 20 orders/100 invoices.
+Read adapters cap at 5 Shopify orders/100 QBO entities; the engine caps a
+financial window at 20 orders. Neither mode benchmarks external ingestion.
 21 sequential batches per size; p95/p99 are empirical, not a capacity guarantee.
 Cost uses VERICON_BENCHMARK_VCPU_HOUR_USD (default illustrative $0.05/vCPU-hour).
 It excludes all providers, storage, network, auth, idle time and operations.
@@ -114,8 +115,10 @@ def financial_workload(n):
     return {'scope': 'offline financial chain in independent 20-order windows; no ingest/auth/provider/persistence',
         'n': n, 'documents': 4 * n, 'windows': len(samples), 'window_size_max': 20,
         'wall_seconds_including_generation_hash_oracle': wall, 'cpu_seconds': cpu,
+        'one_core_cpu_percent': 100 * cpu / wall,
         'audit_seconds': sum(samples), 'window_p50_seconds': percentile(.5),
         'window_p95_seconds': percentile(.95), 'window_p99_seconds': percentile(.99),
+        'percentile_scope': 'empirical 20-order audit windows, not full-run or API latency',
         'peak_rss_mib': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,
         'checked_orders': checked, 'verified_zero_cash_offsets': offsets,
         'expected_one_cent_balance_errors': balance_errors, 'expected_wrong_customer_errors': customer_errors,
@@ -183,7 +186,7 @@ elif len(sys.argv)>1:
         'cost_assumption_vcpu_hour_usd':hourly,
         'cost_scope':'illustrative CPU-only model, not billed cost; excludes API/auth/network/storage/idle/operations',
         'oracle':'PASS','expected_review':(n+9)//10,'batch_status':batch['status'],
-        'external_api_calls':0,'scope':'local invoice arithmetic only; full Shopify-QBO pipeline has 20-order/100-invoice limits'}))
+        'external_api_calls':0,'scope':'local invoice arithmetic only; read adapters cap at 5 Shopify orders/100 QBO entities; engine window cap is 20 orders'}))
 else:
     results=[]
     for n in (10,100,1000,10000,100000):

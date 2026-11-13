@@ -1,5 +1,9 @@
 # VERICON
 
+Güncel Stage 4 sonucu: 4.2 gerçek A/B oturumu nedeniyle BLOKE; 4.3 ticari merchant onboarding/CLI ingest kota kapsamı AÇIK; 4.4 mevcut pilot için kuyruk kurmama kararı KAPALI; 4.5 sentetik ölçüm tamam, dış kapasite AÇIK. 372 pytest PASS; kaynak değişiklikleri kontrollü dağıtıldı. Tek canlı checklist ve tüm route/kanıt tablosu [`TODO.md`](TODO.md) içindedir.
+
+Yeni sentetik finans zinciri ölçümü: 1k/10k/100k sipariş için 0,322/3,543/31,559 sn; 100k CPU 31,191 sn, RSS 55,71 MiB, 20-order pencere p50/p95/p99 4,371/6,115/6,692 ms. Oracle ve değişmeyen girdi hashı PASS, dış API 0. 0,05 USD/vCPU-saat ile ~0,000433 USD yalnız CPU varsayımıdır. Aritmetik 100k ayrı ölçümünde 21 batch p50 1,163 sn ve RSS 236,10 MiB. Mevcut ingest sınırı 5 Shopify test order/100 QBO entity, motor penceresi 20 order; bunlar dış 100k uçtan uca kapasite kanıtı değildir. Aşağıdaki daha eski sayılar tarihsel ölçümlerdir.
+
 Stage 4.4: mevcut elle başlatılan pilot için kuyruk gerekmiyor. Sekiz ayrı process'te tek refresh, count/proof için 1 kabul/7 ret ve kalıcı soğuma doğrulandı. OAuth callback'i artık refresh/disconnect ile aynı tenant kilidini paylaşır; yeni tokenın eski işlem tarafından kaybedilmesi yarışı kapatıldı. 372 pytest PASS ve kontrollü üç servis dağıtımı doğrulandı. Bu karar tam ingest/checkpoint veya ticari kapasite kabulü değildir; aşama 4'te yalnız 4.1 ve bu dar 4.4 kriteri kapalıdır.
 
 Stage 4.3: QBO yetki reddi artık geçici servis hatasından ayrılır; 409 ve 60 sn ortak soğuma, token koruma ve panelde yeniden yetkilendirme/bekleme mesajı vardır. Shopify proof okumaları mağaza başına 60/dakika ve 0,5 sn aralıkla sınırlı; provider hataları ortak soğumaya girer. Son suite 367 PASS; ticari merchant onboarding ve CLI ingest kota kapsamı hâlâ açık. Ölçümler ve güncel tek checklist `TODO.md` içindedir.
