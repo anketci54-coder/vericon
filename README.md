@@ -6,6 +6,8 @@ Aday finans düzeltmesi: fatura/ödeme grafiği artık eksik veya farklı müşt
 
 Aday satır hesabında ±1 sent fark artık REVIEW olur; kesirli miktar hesabı korunur. Son suite 186 test PASS. Büyük veri ölçümü yalnız yerel aritmetik katmanını değerlendirir; mevcut Shopify–QBO batch sınırları ticari kapasiteyi karşılamaz.
 
+Aday Nginx callback yapılandırması OAuth query parametrelerini access log dışında tutar; ayrı gerçek Nginx'te sentetik kodla doğrulandı. Aktif logda geçmiş sızıntı kanıtı bulunmadı; canlı reload bekliyor.
+
 **Guncel tek ana plan: [`TODO.md`](TODO.md), 2026-11-07.** VERICON'un kalici 3 ayagi: **Finance** (fatura/odeme/iade/muhasebe denetimi, AKTIF), **Profit** (urun/stok/maliyet ve gercek karlilik, SONRA) ve **Intelligence** (rakip fiyatlari, yeni urun/firsat ve kanitli ticari tavsiyeler, SONRA). Ilk pazar ABD Shopify + QuickBooks Online. Mevcut Finance gelistirme sirasi korunur; diger ayaklarin kodu, paneli veya altyapisi simdilik kurulmaz. Abonelik ucretinin ekonomik faydasi ayrica olculur, tahmini getiri garanti edilmez. Asagidaki tarihli bulgular tarihsel kayittir; eski 'siradaki is' ifadeleri guncel karar degildir.
 
 **Tarihsel durum: 2026-11-03.** Bu bir **Sandbox prototipidir**, satisa hazir SaaS degildir.
