@@ -7,6 +7,35 @@ import pytest
 import invoice_audit as a
 
 
+@pytest.mark.parametrize('invoice_customer,payment_customer', [
+    ('customer-A', 'customer-B'), (None, 'customer-A'),
+    ('customer-A', None), ('', ''), (None, None),
+])
+def test_payment_graph_rejects_wrong_or_unproven_customer(invoice_customer, payment_customer):
+    inv = {'Id': '1', 'CustomerRef': {'value': invoice_customer},
+           'CurrencyRef': {'value': 'USD'}, 'TotalAmt': 100, 'Balance': 0,
+           'LinkedTxn': [{'TxnType': 'Payment', 'TxnId': '2'}]}
+    pay = {'Id': '2', 'CustomerRef': {'value': payment_customer},
+           'CurrencyRef': {'value': 'USD'}, 'TotalAmt': 100,
+           'Line': [{'Amount': 100, 'LinkedTxn': [{'TxnType': 'Invoice', 'TxnId': '1'}]}]}
+    result = a.audit_payment_links([inv], [pay])
+    assert result['status'] == 'BLOCKED_INVOICE_PAYMENT_CUSTOMER'
+    assert result['cash_received_verified'] is False
+
+
+def test_payment_graph_accepts_matching_customer_without_claiming_cash():
+    inv = {'Id': '1', 'CustomerRef': {'value': 'same'},
+           'CurrencyRef': {'value': 'USD'}, 'TotalAmt': 100, 'Balance': 0,
+           'LinkedTxn': [{'TxnType': 'Payment', 'TxnId': '2'}]}
+    pay = {'Id': '2', 'CustomerRef': {'value': 'same'},
+           'CurrencyRef': {'value': 'USD'}, 'TotalAmt': 100,
+           'Line': [{'Amount': 100, 'LinkedTxn': [{'TxnType': 'Invoice', 'TxnId': '1'}]}]}
+    result = a.audit_payment_links([inv], [pay])
+    assert result['status'] == 'GRAPH_LINKS_VERIFIED'
+    assert result['verified_edges'] == 1
+    assert result['cash_received_verified'] is False
+
+
 def invoice(*lines, currency="USD"):
     return {"Id": "I-1", "CurrencyRef": {"value": currency}, "Line": list(lines)}
 
@@ -197,6 +226,7 @@ def test_financial_summary_counts_components_without_claiming_legal_tax_correctn
 
 def graph_invoice(iid, total, balance, payment_ids=(), extra_refs=()):
     return {"Id": str(iid), "CurrencyRef": {"value": "USD"},
+            "CustomerRef": {"value": "C1"},
             "TotalAmt": total, "Balance": balance,
             "LinkedTxn": [{"TxnType": "Payment", "TxnId": str(pid)} for pid in payment_ids]
                          + list(extra_refs)}
@@ -204,6 +234,7 @@ def graph_invoice(iid, total, balance, payment_ids=(), extra_refs=()):
 
 def graph_payment(pid, links, total=None):
     return {"Id": str(pid), "CurrencyRef": {"value": "USD"},
+            "CustomerRef": {"value": "C1"},
             "TotalAmt": total, "Line": [
                 {"Amount": amt, "LinkedTxn": [{"TxnType": kind, "TxnId": str(iid)}]}
                 for kind, iid, amt in links]}

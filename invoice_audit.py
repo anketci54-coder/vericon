@@ -477,6 +477,13 @@ def audit_payment_links(invoices: list[dict], payments: list[dict], credit_memos
                     "payment_only_edges": len(set(payment_edges) - invoice_edges)}
         if any(iid not in invoice_index or pid not in payment_index for iid, pid in payment_edges):
             return {**base, "status": "BLOCKED_MISSING_GRAPH_NODE"}
+        for iid, pid in payment_edges:
+            invoice_customer = (invoice_index[iid].get("CustomerRef") or {}).get("value")
+            payment_customer = (payment_index[pid].get("CustomerRef") or {}).get("value")
+            if (not isinstance(invoice_customer, str) or not invoice_customer.strip()
+                    or not isinstance(payment_customer, str) or not payment_customer.strip()
+                    or invoice_customer != payment_customer):
+                return {**base, "status": "BLOCKED_INVOICE_PAYMENT_CUSTOMER"}
         allocated = {iid: Decimal(0) for iid in invoice_index}
         paid_link_counts = {iid: 0 for iid in invoice_index}
         for (iid, pid), amount in payment_edges.items():
