@@ -4,7 +4,9 @@
 
 Nginx başlıkları, IP başına 5 istek/sn + 10 burst ve callback metadata logu canlıya dağıtıldı. HTTP yönlendirmesindeki callback log açığı sentetik istekle kanıtlandı; rollback ardından HTTP callback de korundu. İzole 502 hata testi ve canlı 301/400/429 kontrollerinde code/state loglara girmiyor; callback yalnız status/upstream/elapsed kaydediyor. Canlı 32 istekte 11 normal ret/21 hız sınırı, beş güvenlik başlığı, sağlık/statik 200. Sağlayıcıya yük gönderilmedi.
 
-Dört `web/` dosyası kaynak/disk/HTTPS olarak birebir; aktif Nginx `deploy/vericon-app.nginx.conf` ile eşit. Git dışı dosyaların uyumu ayrıca ölçüldü; kaynak SHA eşitliği tüm VPS için eşitlik iddiası değildir. Son suite 228 pytest PASS. Güncel madde durumları ve kalan engeller yalnız `TODO.md` ana checklist'indedir; eski kabul testleri yeni sürüm testi diye sunulmaz. Ürün ticari kullanıma hazır değildir.
+Dört `web/` dosyası kaynak/disk/HTTPS olarak birebir; aktif Nginx `deploy/vericon-app.nginx.conf` ile eşit. Git dışı dosyaların uyumu ayrıca ölçüldü; kaynak SHA eşitliği tüm VPS için eşitlik iddiası değildir. Son suite 231 pytest PASS. Aşama 1: 6/6, aşama 2: 4/8, aşama 3: tarihsel dar kabul 8/8, aşama 4: 1/5. Güncel madde durumları ve kalan engeller yalnız `TODO.md` ana checklist'indedir; eski kabul testleri yeni sürüm testi diye sunulmaz. Ürün ticari kullanıma hazır değildir.
+
+Sayım kotası token yenileme hatalarını da kapsar: refresh 429 için 60 sn, 5xx/bağlantı hatası için 5 sn ortak bekleme ve Retry-After. Üç RED→GREEN test, gerçek localhost HTTP ve ayrı süreç kontrolü, ardından üç API kontrollü restart/health/anon kontrolleri PASS. Gerçek sağlayıcıya hata/yük gönderilmedi.
 
 Rollback kanıtları `/root/vericon-completion-20261113/` içinde korunur. Nginx hatasında önceki config'i geri koy, `nginx -t` ardından yalnız Nginx reload yap. Kod/unit geri dönüşünde çalışan public Auth env ve GÜNCEL `private/` dosyalarını koru; eski boş env veya OAuth token arşivini otomatik geri yükleme. Diğer VPS projelerine dokunma.
 

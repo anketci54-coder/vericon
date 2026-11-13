@@ -194,6 +194,13 @@ def check_state(config: Config, supplied: str, *, user_id: str | None = None) ->
         raise ValueError("OAuth state expired")
 
 
+class _TokenExchangeRefused(ValueError):
+    """Retain only the HTTP status, never a provider body or credential."""
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+        super().__init__(f"Intuit token exchange refused (HTTP {status_code})")
+
+
 def _exchange(config: Config, params: dict[str, str]) -> dict:
     response = requests.post(
         TOKEN_URL,
@@ -203,7 +210,7 @@ def _exchange(config: Config, params: dict[str, str]) -> dict:
         timeout=20,
     )
     if response.status_code != 200:
-        raise ValueError(f"Intuit token exchange refused (HTTP {response.status_code})")
+        raise _TokenExchangeRefused(response.status_code)
     payload = response.json()
     if not payload.get("access_token") or not payload.get("refresh_token"):
         raise ValueError("Intuit response has no complete token pair")
@@ -353,13 +360,21 @@ def read_tenant_invoice_count(config: Config, *, user_id: str) -> int:
     # Check storage ownership before spending budget; reserve before any refresh.
     load_tenant_tokens(config, user_id=user_id)
     _tenant_count_budget(config)
-    token, realm = get_tenant_access_token(config, user_id=user_id)
-    if realm != config.expected_realm:
-        raise ValueError("Tenant realm binding mismatch")
     try:
+        token, realm = get_tenant_access_token(config, user_id=user_id)
+        if realm != config.expected_realm:
+            raise ValueError("Tenant realm binding mismatch")
         response = requests.get(f"{SANDBOX_API}/v3/company/{realm}/query",
             params={"query": "SELECT COUNT(*) FROM Invoice"},
             headers={"Authorization": "Bearer " + token, "Accept": "application/json"}, timeout=20)
+    except _TokenExchangeRefused as exc:
+        if exc.status_code == 429:
+            _tenant_count_budget(config, cooldown=60)
+            raise HTTPException(429, 'Financial provider rate limited', headers={'Retry-After': '60'}) from None
+        if exc.status_code >= 500:
+            _tenant_count_budget(config, cooldown=5)
+            raise HTTPException(503, 'Financial provider unavailable', headers={'Retry-After': '5'}) from None
+        raise
     except requests.RequestException:
         _tenant_count_budget(config, cooldown=5)
         raise HTTPException(503, 'Financial provider unavailable', headers={'Retry-After': '5'}) from None

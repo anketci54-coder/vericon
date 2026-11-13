@@ -850,6 +850,43 @@ def test_provider_backoff_survives_new_caller_without_retry(cfg, monkeypatch, st
     assert calls == [1]
 
 
+@pytest.mark.parametrize('failure,expected,cooldown', [(429, 429, 60), (503, 503, 5),
+                                                      ('timeout', 503, 5)])
+def test_expired_token_refresh_failure_shares_count_cooldown(cfg, monkeypatch, failure, expected, cooldown):
+    from dataclasses import replace
+    user = '11111111-1111-4111-8111-111111111111'
+    clock = [1000.0]
+    monkeypatch.setattr(q.time, 'time', lambda: clock[0])
+    q.save_tenant_tokens(cfg, {'access_token': 'synthetic', 'refresh_token': 'synthetic',
+                             'expires_in': -1}, user_id=user)
+    token_path = q._tenant_token_path(cfg, user_id=user)
+    before = token_path.read_bytes()
+    calls = []
+    def refresh(*args, **kwargs):
+        calls.append(1)
+        if failure == 'timeout':
+            raise q.requests.Timeout('synthetic timeout')
+        return FakeResponse({}, failure)
+    monkeypatch.setattr(q.requests, 'post', refresh)
+    monkeypatch.setattr(q.requests, 'get', lambda *args, **kwargs: pytest.fail('No query after failed refresh'))
+    with pytest.raises(q.HTTPException) as exc:
+        q.read_tenant_invoice_count(cfg, user_id=user)
+    assert exc.value.status_code == expected
+    assert exc.value.headers['Retry-After'] == str(cooldown)
+    # Beyond the ordinary half-second gate, a new caller still must not refresh.
+    clock[0] += 1
+    with pytest.raises(q.HTTPException) as exc:
+        q.read_tenant_invoice_count(replace(cfg), user_id=user)
+    assert exc.value.status_code == 429
+    assert exc.value.headers['Retry-After'] == str(cooldown - 1)
+    assert calls == [1] and token_path.read_bytes() == before
+    # The provider can be attempted again only after the declared cooldown.
+    clock[0] = 1000 + cooldown
+    with pytest.raises(q.HTTPException):
+        q.read_tenant_invoice_count(cfg, user_id=user)
+    assert calls == [1, 1] and token_path.read_bytes() == before
+
+
 def test_finance_invoice_route_owner_read_only(monkeypatch):
     from starlette.requests import Request
     monkeypatch.setenv('VERICON_PILOT_INVOICE_COUNT_REALMS', '111')
