@@ -12,6 +12,8 @@ Finans sayımı, doğrulanmış RLS/sahiplik/realm bağından sonra `financial_a
 
 Aşama 3 tarihsel kullanıcı kabulü korunur: OTP, sahiplik, QBO revoke/reconnect ve logout testi yeniden istenmez. Bu sürümde tüm endpointlerin gerçek A/B negatif matrisi 4.2 kapsamında hâlâ bloke; geçmiş kabul yeni sürüm testi değildir. Aşama 2.5–2.8 için politika, settlement verisi ve etiketli örneklem beklenir.
 
+`python3 -B benchmark_invoice_audit.py --financial` mevcut finans zincirini 20 siparişlik bağımsız sentetik pencerelerle ölçer. 1.000/10.000/100.000 işlemde 0,273/3,124/28,279 sn; son ölçümde RSS 55,85 MiB. Bakiye ve yanlış müşteri oracle'ı PASS, tüm tahsilatlar incelemede; veri çekme/tenant kapasitesi veya gerçek SaaS maliyeti ölçümü değildir.
+
 `python3 -B benchmark_invoice_audit.py` dış API çağırmadan izole sentetik aritmetiği ölçer. 21 batch, p50/p95/p99, CPU/RSS ve ID oracle içerir; CPU maliyeti yalnız açıkça belirtilen fiyat varsayımıdır, gerçek SaaS faturası değildir. Tam Shopify–QBO ingest kapasitesiyle karıştırılmaz.
 
 **Guncel tek ana plan: [`TODO.md`](TODO.md), 2026-11-07.** VERICON'un kalici 3 ayagi: **Finance** (fatura/odeme/iade/muhasebe denetimi, AKTIF), **Profit** (urun/stok/maliyet ve gercek karlilik, SONRA) ve **Intelligence** (rakip fiyatlari, yeni urun/firsat ve kanitli ticari tavsiyeler, SONRA). Ilk pazar ABD Shopify + QuickBooks Online. Mevcut Finance gelistirme sirasi korunur; diger ayaklarin kodu, paneli veya altyapisi simdilik kurulmaz. Abonelik ucretinin ekonomik faydasi ayrica olculur, tahmini getiri garanti edilmez. Asagidaki tarihli bulgular tarihsel kayittir; eski 'siradaki is' ifadeleri guncel karar degildir.

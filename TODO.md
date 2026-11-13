@@ -117,6 +117,9 @@ Kaynak: `VERICON_Ticari_Urun_Checklist_10_Kasim_2026.pdf` (3 sayfa). Her PDF mad
 - [ ] Bağlanma/ayrılma akışları ve API kota sınırları uygulanacak.
 - [ ] Kuyruk ve yeniden deneme yalnız ölçülen ihtiyaca göre kurulacak.
 - [ ] 1.000, 10.000 ve 100.000 işlemde performans, bütünlük ve maliyet ölçülecek.
+  - 2026-11-13 DEVAM: önceki aritmetik ölçüm tekrar edilmedi; `benchmark_invoice_audit.py --financial` ile üretimdeki sipariş→fatura→refund→CreditMemo→Payment→rapor fonksiyonları izole sentetik 20-order pencerelerde çalıştırıldı. 1.000/10.000/100.000 işlem (4.000/40.000/400.000 belge), toplam süre 0,273/3,124/28,279 sn; CPU 0,273/3,109/28,199 sn, RSS 55,42/55,79/55,85 MiB. 20-order pencere p95 4,51/5,79/5,43 ms. 100.000'de 80.000 geçerli sıfır-nakit mahsup, 10.000 kasıtlı 1 sent bakiye farkı ve 10.000 yanlış müşteri reddi ID bazında doğru; 100.000 raporun tamamı tahsilat incelemesinde. Girdilerin hashı değişmedi, dış ağ socket/requests düzeyinde yasak, dış API 0. Bu fixture'da yanlış pozitif/negatif 0; müşteri örneklemine genellenmez.
+  - 0,05 USD/vCPU-saat varsayımıyla 100.000 işlem CPU tahmini 0,000392 USD; faturalanmış maliyet değil, API/Auth/DB/ağ/idle/operasyon hariç. Kanıt `/root/vericon-completion-20261113/financial-performance.json`. 4.5 AÇIK: bu seri sentetik motor ölçümüdür; provider pagination/incremental ingest, atomik snapshot, pencereler arası duplicate ve gerçek oturumlu eşzamanlı SaaS maliyeti uygulanmış/ölçülmüş değildir. Büyük yük gerçek sağlayıcıya gönderilmedi.
+
 
 ### 2026-11-13 ASTRA devamı: son doğrulama ve onay kapısı
 
