@@ -577,6 +577,9 @@ def test_shopify_proof_start_requires_verified_pilot_owner(monkeypatch):
 
 @pytest.mark.parametrize('tenant', [False, True])
 def test_shopify_proof_single_consumption_and_new_challenge_preserved(cfg, monkeypatch, tenant):
+    # Exercise atomic proof consumption independently of the separately tested
+    # admission budget, which otherwise rejects before the provider barrier.
+    monkeypatch.setattr(q, '_shared_read_budget', lambda *a, **kw: None)
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
     from starlette.requests import Request
@@ -1340,8 +1343,10 @@ def test_stage4_http_tenant_proof_binding(stage4_http, actor, fault):
     result = h['client'].request('POST', '/tenant/shopify/ownership/verify', headers=headers)
     assert result.status_code == (200 if fault == 'none' else 400)
     if fault != 'none':
-        assert h['snapshot']() == before
-        if fault != 'wrong_code': assert h['calls'] == []
+        after = h['snapshot']()
+        assert all(after[key] == value for key, value in before.items())
+        if fault != 'wrong_code':
+            assert after == before and h['calls'] == []
     else:
         assert not path.exists() and path.with_suffix('.verified').is_file()
         assert result.json()['financial_access_enabled'] is False
@@ -1385,3 +1390,106 @@ def test_stage4_http_invalid_tenant_binding(stage4_http, actor, field):
                                 headers={'Authorization': 'Bearer fixture-' + actor})
         assert r.status_code == 403, path
     assert h['calls'] == [] and h['snapshot']() == before
+
+
+@pytest.mark.parametrize('failure', ['invalid_grant', 'query_401'])
+def test_stage43_reconnect_error_is_distinct_and_cools_down(stage4_http, monkeypatch, failure):
+    from types import SimpleNamespace
+    h = stage4_http; row = h['rows']['A']; cfg = h['cfg']
+    now = [time.time()]
+    monkeypatch.setattr(q, 'time', SimpleNamespace(time=lambda: now[0]))
+    if failure == 'invalid_grant':
+        q.save_tenant_tokens(cfg, {'access_token': 'fake', 'refresh_token': 'fake', 'expires_in': 0}, user_id=row['user_id'])
+    calls = []
+    original_get = q.requests.get
+    def get(url, **kwargs):
+        if url.endswith('/query'):
+            calls.append('query'); return FakeResponse({'secret': 'MUST_NOT_ESCAPE'}, 401)
+        return original_get(url, **kwargs)
+    def post(url, **kwargs):
+        assert url == q.TOKEN_URL
+        calls.append('refresh')
+        return FakeResponse({'error': 'invalid_grant', 'error_description': 'MUST_NOT_ESCAPE'}, 400)
+    monkeypatch.setattr(q.requests, 'get', get)
+    monkeypatch.setattr(q.requests, 'post', post)
+    token_path = q._tenant_token_path(cfg, user_id=row['user_id']); before = token_path.read_bytes()
+    def request():
+        return h['client'].request('GET', '/tenant/finance/invoice-count', params={'realm': cfg.expected_realm},
+                                    headers={'Authorization': 'Bearer fixture-A'})
+    first = request()
+    assert first.status_code == 409
+    assert ('reconnection required' if failure == 'invalid_grant' else 'renewal or reconnection needed') in first.text
+    assert first.headers['Retry-After'] == '60' and 'MUST_NOT_ESCAPE' not in first.text
+    now[0] += 1
+    second = request()
+    assert second.status_code == 429 and second.headers['Retry-After'] == '59'
+    assert calls == (['refresh'] if failure == 'invalid_grant' else ['query'])
+    assert token_path.read_bytes() == before
+
+
+@pytest.mark.parametrize('payload', [None, [], {'QueryResponse': []}, {'QueryResponse': {'totalCount': True}}])
+def test_stage43_malformed_count_response_fails_closed(stage4_http, monkeypatch, payload):
+    h = stage4_http; original = q.requests.get
+    monkeypatch.setattr(q.requests, 'get', lambda url, **kw:
+        FakeResponse(payload) if url.endswith('/query') else original(url, **kw))
+    r = h['client'].request('GET', '/tenant/finance/invoice-count', params={'realm': '12345'},
+                            headers={'Authorization': 'Bearer fixture-A'})
+    assert r.status_code == 503 and r.json() == {'detail': 'Financial read unavailable'}
+
+
+@pytest.mark.parametrize('pilot', [False, True])
+@pytest.mark.parametrize('failure', ['wrong_proof', 'timeout', 'provider_error'])
+def test_stage43_shopify_proof_read_budget_and_cooldown(stage4_http, monkeypatch, pilot, failure):
+    import shopify_read as s
+    from types import SimpleNamespace
+    h = stage4_http; row = h['rows']['A']; row['ownership_verified'] = False
+    if pilot: row['shop_domain'] = s.STORE
+    prefix = '/shopify' if pilot else '/tenant/shopify'
+    headers = {'Authorization': 'Bearer fixture-A'}
+    now = [time.time()]
+    monkeypatch.setattr(q, 'time', SimpleNamespace(time=lambda: now[0]))
+    assert h['client'].request('POST', prefix + '/ownership/start', headers=headers).status_code == 200
+    calls = []
+    def provider(*args):
+        calls.append('read')
+        if failure == 'timeout': raise q.requests.Timeout('private provider context')
+        if failure == 'provider_error': raise ValueError('private provider context')
+        return 'wrong-proof'
+    monkeypatch.setattr(s, 'read_owner_proof' if pilot else 'read_tenant_owner_proof', provider)
+    before = h['snapshot']()
+    first = h['client'].request('POST', prefix + '/ownership/verify', headers=headers)
+    assert first.status_code == (400 if failure == 'wrong_proof' else 503)
+    assert 'private provider context' not in first.text
+    if failure != 'wrong_proof':
+        assert first.headers['Retry-After'] == ('5' if failure == 'timeout' else '60')
+        now[0] += 1
+    second = h['client'].request('POST', prefix + '/ownership/verify', headers=headers)
+    assert second.status_code == 429 and int(second.headers['Retry-After']) > 0
+    assert calls == ['read']
+    after = h['snapshot']()
+    assert all(after[key] == value for key, value in before.items())
+    # A different store keeps its own admission budget.
+    h['rows']['B']['ownership_verified'] = False
+    b = {'Authorization': 'Bearer fixture-B'}
+    assert h['client'].request('POST', '/tenant/shopify/ownership/start', headers=b).status_code == 200
+    assert h['client'].request('POST', '/tenant/shopify/ownership/verify', headers=b).status_code in (400, 503)
+
+
+@pytest.mark.parametrize('failure', ['timeout', '429', 'missing_pair', 'malformed'])
+def test_stage43_callback_failure_requires_fresh_state_without_retry(stage4_http, monkeypatch, failure):
+    h = stage4_http; headers = {'Authorization': 'Bearer fixture-A'}
+    started = h['client'].request('POST', '/tenant/quickbooks/start', headers=headers)
+    state = parse_qs(urlparse(started.json()['authorization_url']).query)['state'][0]
+    calls = []
+    def exchange(url, **kwargs):
+        assert url == q.TOKEN_URL; calls.append('exchange')
+        if failure == 'timeout': raise q.requests.Timeout('MUST_NOT_ESCAPE')
+        return FakeResponse([] if failure == 'malformed' else {}, 429 if failure == '429' else 200)
+    monkeypatch.setattr(q.requests, 'post', exchange)
+    token_path = q._tenant_token_path(h['cfg'], user_id=h['ids']['A']); before = token_path.read_bytes()
+    params = {'state': state, 'code': 'fake-code', 'realmId': h['cfg'].expected_realm}
+    for _ in range(2):
+        result = h['client'].request('GET', '/oauth/quickbooks/callback', params=params)
+        assert result.status_code == 400 and 'MUST_NOT_ESCAPE' not in result.text
+    assert calls == ['exchange'] and token_path.read_bytes() == before
+    assert h['client'].request('POST', '/tenant/quickbooks/start', headers=headers).status_code == 200

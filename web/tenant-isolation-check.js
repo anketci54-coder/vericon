@@ -2,6 +2,14 @@
   const button = document.getElementById('tenant-isolation-check');
   const output = document.getElementById('tenant-isolation-result');
   if (!button || !output) return;
+  const failureMessage = (response, fallback) => {
+    if (response.status === 409) return 'QuickBooks yetkisi yenilenmeli. QuickBooks Sandbox hesabını yetkilendir düğmesini kullanın.';
+    const delay = response.headers.get('Retry-After');
+    if ((response.status === 429 || response.status === 503) && /^\d+$/.test(delay || '')) {
+      return 'Bağlantı geçici olarak beklemede. ' + delay + ' saniye sonra yeniden deneyin.';
+    }
+    return fallback + ': HTTP ' + response.status;
+  };
   const disconnect = document.getElementById('qbo-disconnect');
   const disconnectResult = document.getElementById('qbo-disconnect-result');
   if (disconnect && disconnectResult) {
@@ -16,7 +24,7 @@
         const session = JSON.parse(localStorage.getItem(keys[0]));
         if (!session?.access_token) throw Error('Aktif oturum bulunamadı');
         const r = await fetch('/tenant/quickbooks/disconnect', {method:'POST', headers:{Authorization:'Bearer ' + session.access_token}, cache:'no-store'});
-        if (!r.ok) throw Error('Yetki iptali doğrulanamadı: HTTP ' + r.status);
+        if (!r.ok) throw Error(failureMessage(r, 'Yetki iptali doğrulanamadı'));
         disconnectResult.textContent = 'QuickBooks yetkisi iptal edildi. Yeniden bağlanmak için QuickBooks Sandbox hesabını yetkilendir düğmesini kullanın.';
       } catch(e) { disconnectResult.textContent = e.message; }
       finally { disconnect.disabled = false; }
@@ -33,12 +41,13 @@
       if (!session?.access_token) throw Error('Aktif oturum bulunamadı');
       const headers = {Authorization: 'Bearer ' + session.access_token};
       const identity = await fetch('/tenant/finance/access-check', {headers, cache:'no-store'});
-      if (!identity.ok) throw Error('Oturum yetkisi reddedildi: HTTP ' + identity.status);
+      if (!identity.ok) throw Error(failureMessage(identity, 'Oturum yetkisi reddedildi'));
       const own = await identity.json();
       const known = ['9341458613758425', '9341458641399133'];
       if (!known.includes(own.qbo_realm_id)) throw Error('Tanımsız pilot şirket');
       const other = known.find(x => x !== own.qbo_realm_id);
       const ownResponse = await fetch('/tenant/finance/invoice-count?realm=' + encodeURIComponent(own.qbo_realm_id), {headers,cache:'no-store'});
+      if (!ownResponse.ok) throw Error(failureMessage(ownResponse, 'Finans okuması tamamlanamadı'));
       const ownData = ownResponse.ok ? await ownResponse.json() : null;
       const otherResponse = await fetch('/tenant/finance/invoice-count?realm=' + encodeURIComponent(other), {headers,cache:'no-store'});
       const pass = ownResponse.status === 200 && ownData?.realm === own.qbo_realm_id && Number.isInteger(ownData?.invoice_count) && otherResponse.status === 403;

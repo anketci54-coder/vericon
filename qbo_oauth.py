@@ -196,8 +196,9 @@ def check_state(config: Config, supplied: str, *, user_id: str | None = None) ->
 
 class _TokenExchangeRefused(ValueError):
     """Retain only the HTTP status, never a provider body or credential."""
-    def __init__(self, status_code: int):
+    def __init__(self, status_code: int, *, invalid_grant: bool = False):
         self.status_code = status_code
+        self.invalid_grant = invalid_grant
         super().__init__(f"Intuit token exchange refused (HTTP {status_code})")
 
 
@@ -210,9 +211,16 @@ def _exchange(config: Config, params: dict[str, str]) -> dict:
         timeout=20,
     )
     if response.status_code != 200:
-        raise _TokenExchangeRefused(response.status_code)
+        invalid_grant = False
+        if response.status_code == 400 and params.get('grant_type') == 'refresh_token':
+            try:
+                error = response.json()
+                invalid_grant = isinstance(error, dict) and error.get('error') == 'invalid_grant'
+            except ValueError:
+                pass
+        raise _TokenExchangeRefused(response.status_code, invalid_grant=invalid_grant)
     payload = response.json()
-    if not payload.get("access_token") or not payload.get("refresh_token"):
+    if not isinstance(payload, dict) or not payload.get("access_token") or not payload.get("refresh_token"):
         raise ValueError("Intuit response has no complete token pair")
     return payload
 
@@ -315,15 +323,18 @@ def get_tenant_access_token(config: Config, *, user_id: str) -> tuple[str, str]:
 
 
 def _tenant_count_budget(config: Config, *, cooldown: int = 0) -> None:
-    """Shared on-host budget across API processes, scoped to the provider realm.
-
-    Count probe only: 60/min, at least 0.5s apart. No sleeping workers or queue.
-    A provider refusal persists a cooldown so another worker cannot retry early.
-    """
+    """Preserve the existing realm budget and its on-disk format."""
     if not config.expected_realm or not re.fullmatch(r"[0-9]{1,32}", config.expected_realm):
         raise ValueError("Invalid tenant budget realm")
+    _shared_read_budget(config, 'qbo_count_budget_' + config.expected_realm, cooldown=cooldown)
+
+
+def _shared_read_budget(config: Config, bucket: str, *, cooldown: int = 0) -> None:
+    """On-host 60/min, 0.5s spacing and persisted cooldown; no sleeping/retry."""
+    if not re.fullmatch(r'[a-z0-9_-]{1,100}', bucket):
+        raise ValueError('Invalid read budget bucket')
     _secure_dir(config)
-    path = config.private_dir / ("qbo_count_budget_" + config.expected_realm + ".json")
+    path = config.private_dir / (bucket + '.json')
     fd = os.open(path.with_suffix('.lock'), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'rb') as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
@@ -355,6 +366,22 @@ def _tenant_count_budget(config: Config, *, cooldown: int = 0) -> None:
         _atomic_write(path, json.dumps(state).encode())
 
 
+def _read_shopify_proof_with_budget(config: Config, store: str, read):
+    """Both proof routes share a store budget, after ownership/expiry validation."""
+    bucket = 'shopify_proof_budget_' + hashlib.sha256(store.encode()).hexdigest()
+    _shared_read_budget(config, bucket)
+    try:
+        return read()
+    except requests.RequestException:
+        _shared_read_budget(config, bucket, cooldown=5)
+        raise HTTPException(503, 'Shopify proof provider unavailable', headers={'Retry-After': '5'}) from None
+    except ValueError:
+        # Existing Shopify readers sanitize refusals (including throttling) as
+        # ValueError; use a conservative cooldown without parsing error text.
+        _shared_read_budget(config, bucket, cooldown=60)
+        raise HTTPException(503, 'Shopify proof provider unavailable', headers={'Retry-After': '60'}) from None
+
+
 def read_tenant_invoice_count(config: Config, *, user_id: str) -> int:
     """Tenant-bound QBO read: realm comes only from verified token storage."""
     # Check storage ownership before spending budget; reserve before any refresh.
@@ -368,6 +395,10 @@ def read_tenant_invoice_count(config: Config, *, user_id: str) -> int:
             params={"query": "SELECT COUNT(*) FROM Invoice"},
             headers={"Authorization": "Bearer " + token, "Accept": "application/json"}, timeout=20)
     except _TokenExchangeRefused as exc:
+        if exc.invalid_grant:
+            _tenant_count_budget(config, cooldown=60)
+            raise HTTPException(409, 'QuickBooks reconnection required',
+                                headers={'Retry-After': '60'}) from None
         if exc.status_code == 429:
             _tenant_count_budget(config, cooldown=60)
             raise HTTPException(429, 'Financial provider rate limited', headers={'Retry-After': '60'}) from None
@@ -378,6 +409,12 @@ def read_tenant_invoice_count(config: Config, *, user_id: str) -> int:
     except requests.RequestException:
         _tenant_count_budget(config, cooldown=5)
         raise HTTPException(503, 'Financial provider unavailable', headers={'Retry-After': '5'}) from None
+    if response.status_code == 401:
+        # A rejected access token is not proof of a revoked refresh token.
+        # Preserve credentials and avoid a blind forced refresh/retry loop.
+        _tenant_count_budget(config, cooldown=60)
+        raise HTTPException(409, 'QuickBooks access token rejected; renewal or reconnection needed',
+                            headers={'Retry-After': '60'})
     if response.status_code == 429:
         _tenant_count_budget(config, cooldown=60)
         raise HTTPException(429, 'Financial provider rate limited', headers={'Retry-After': '60'})
@@ -387,8 +424,10 @@ def read_tenant_invoice_count(config: Config, *, user_id: str) -> int:
     if response.status_code != 200:
         raise ValueError("Tenant invoice count read refused")
     body = response.json()
-    count = (body.get("QueryResponse") or {}).get("totalCount")
-    if body.get("Fault") or type(count) is not int or count < 0:
+    if not isinstance(body, dict) or body.get("Fault") or not isinstance(body.get("QueryResponse"), dict):
+        raise ValueError("Tenant invoice count invalid")
+    count = body["QueryResponse"].get("totalCount")
+    if type(count) is not int or count < 0:
         raise ValueError("Tenant invoice count invalid")
     return count
 
@@ -757,7 +796,7 @@ def shopify_ownership_verify(request: Request) -> dict:
             raise ValueError("Owner mismatch")
         if int(proof.get("expires_at", 0)) < time.time():
             raise ValueError("Expired")
-        value = read_owner_proof(load_setup())
+        value = _read_shopify_proof_with_budget(config, STORE, lambda: read_owner_proof(load_setup()))
         if not value or not secrets.compare_digest(
                 hashlib.sha256(value.encode()).hexdigest(), str(proof.get("digest", ""))):
             raise ValueError("Challenge mismatch")
@@ -831,7 +870,8 @@ def tenant_shopify_ownership_verify(request: Request) -> dict:
         if proof.get("user_id")!=context["user_id"] or proof.get("store")!=context["store"] or int(proof.get("expires_at",0))<time.time():
             raise ValueError("Invalid proof")
         from shopify_read import read_tenant_owner_proof
-        value=read_tenant_owner_proof(context["user_id"],context["store"])
+        value = _read_shopify_proof_with_budget(config, context['store'],
+            lambda: read_tenant_owner_proof(context['user_id'], context['store']))
         if not value or not secrets.compare_digest(hashlib.sha256(value.encode()).hexdigest(),proof["digest"]):
             raise ValueError("Proof mismatch")
         _consume_shopify_proof(path, proof)
