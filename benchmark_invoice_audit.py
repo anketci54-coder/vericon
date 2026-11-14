@@ -2,9 +2,10 @@
 
 Run: python3 -B benchmark_invoice_audit.py
 Financial chain: python3 -B benchmark_invoice_audit.py --financial
+Snapshot ingest: python3 -B benchmark_invoice_audit.py --snapshot
 Outputs JSON to stdout. Limits each worker to 1 GiB and 45 CPU seconds.
-Read adapters cap at 5 Shopify orders/100 QBO entities; the engine caps a
-financial window at 20 orders. Neither mode benchmarks external ingestion.
+Live read adapters cap at 5 Shopify orders/100 QBO entities. Snapshot mode
+stages fixture provider pages on disk; it never calls an external provider.
 21 sequential batches per size; p95/p99 are empirical, not a capacity guarantee.
 Cost uses VERICON_BENCHMARK_VCPU_HOUR_USD (default illustrative $0.05/vCPU-hour).
 It excludes all providers, storage, network, auth, idle time and operations.
@@ -129,7 +130,154 @@ def financial_workload(n):
         'limitations': 'single process; synthetic fixed pilot SKU; no cross-window duplicate detection or atomic snapshot'}
 
 
-if sys.argv[1:] == ['--financial']:
+def snapshot_workload(n):
+    """Provider-shaped JSON -> durable checkpoints -> integrity -> invoice audit.
+
+    Two complete fixture snapshots, cross-page duplicate references, interruption
+    and page replay. No source consistency/customer accuracy/capacity claim.
+    """
+    import socket
+    import tempfile
+    import invoice_audit as a
+    from snapshot_ingest import SnapshotStore
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Snapshot benchmark must not access a network')
+    socket.socket.connect = forbidden
+    socket.create_connection = forbidden
+    a.requests.sessions.Session.request = forbidden
+    assert 1 <= n <= 100000
+    hourly = float(os.environ.get('VERICON_BENCHMARK_VCPU_HOUR_USD', '0.05'))
+    assert math.isfinite(hourly) and hourly >= 0
+    canonical = lambda value: json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+    money = lambda cents: f'{cents // 100}.{cents % 100:02d}'
+    scope = {'tenant_id': '11111111-1111-4111-8111-111111111111',
+        'provider': 'qbo_sandbox', 'source_id': '12345', 'entity': 'Invoice',
+        'window_start': '2026-01-01T00:00:00+00:00', 'window_end': '2026-02-01T00:00:00+00:00',
+        'snapshot_id': f'fixture-{n}', 'evidence_kind': 'synthetic_fixture'}
+    shop_scope = {**scope, 'provider': 'shopify', 'source_id': 'fixture.myshopify.com', 'entity': 'Order'}
+    wall_start, cpu_start = time.perf_counter(), time.process_time()
+    input_hash = [hashlib.sha256(), hashlib.sha256()]
+    page_times = []
+    with tempfile.TemporaryDirectory(prefix='vericon-snapshot-bench-') as temp:
+        root = pathlib.Path(temp)
+        invoice_store = SnapshotStore(root / 'invoices.sqlite', scope, expected_count=n)
+        order_stores = []
+        replay_count = 0
+        for page, start in enumerate(range(0, n, 250)):
+            invoices, orders = [], []
+            end = min(start + 250, n)
+            partition = start // 25000
+            partition_start = partition * 25000
+            partition_end = min(partition_start + 25000, n)
+            shop_page = (start - partition_start) // 250
+            if start == partition_start:
+                shop_scope = {**shop_scope, 'snapshot_id': f'fixture-{n}-part-{partition}',
+                    'window_start': f'2026-01-{1 + partition * 7:02d}T00:00:00+00:00',
+                    'window_end': f'2026-01-{8 + partition * 7:02d}T00:00:00+00:00'}
+                order_store = SnapshotStore(root / f'orders-{partition}.sqlite', shop_scope,
+                                            expected_count=partition_end - partition_start)
+                order_stores.append(order_store)
+            updated = f'2026-01-{2 + partition * 7:02d}T00:00:00Z'
+            for ident in range(start + 1, end + 1):
+                cents = 500 + ident % 97
+                ref = ident - 999 if ident % 1000 == 0 else ident
+                invoices.append({'Id': str(ident), 'MetaData': {'LastUpdatedTime': updated},
+                    'CurrencyRef': {'value': 'USD'}, 'TotalAmt': money(2 * cents),
+                    'TxnTaxDetail': {'TotalTax': 0},
+                    'CustomField': [{'Name': 'Shopify Order ID', 'StringValue': str(ref)}],
+                    'Line': [{'DetailType': 'SalesItemLineDetail',
+                              'Amount': money(2 * cents + (ident % 10 == 0)),
+                              'SalesItemLineDetail': {'Qty': 2, 'UnitPrice': money(cents),
+                                                     'ItemRef': {'name': f'SYNTHETIC-{ident % 50}'}}},
+                             {'DetailType': 'SubTotalLineDetail', 'Amount': money(2 * cents)}]})
+                orders.append({'id': f'gid://shopify/Order/{ident}', 'name': f'#{ident}', 'test': True,
+                    'updatedAt': updated,
+                    'totalPriceSet': {'shopMoney': {'amount': money(2 * cents), 'currencyCode': 'USD'}},
+                    'lineItems': {'nodes': [{'sku': f'SYNTHETIC-{ident % 50}', 'quantity': 2}],
+                                  'pageInfo': {'hasNextPage': False}}, 'refunds': []})
+            qbo = {'QueryResponse': {'Invoice': invoices, 'startPosition': start + 1, 'maxResults': len(invoices)}}
+            shop = {'data': {'shop': {'myshopifyDomain': shop_scope['source_id']},
+                'orders': {'nodes': orders, 'pageInfo': {'hasNextPage': end < partition_end, 'endCursor': f'cursor-{end}'}}}}
+            before = hashlib.sha256(canonical([qbo, shop])).digest()
+            for digest, rows in zip(input_hash, (invoices, orders)):
+                for record in rows:
+                    digest.update(canonical(record))
+            begin = time.perf_counter()
+            # JSON serialization/parsing represents actual provider payload boundaries.
+            invoice_store.add_qbo_page(scope, page, start + 1, json.loads(canonical(qbo)))
+            order_store.add_shopify_page(shop_scope, shop_page, None if shop_page == 0 else f'cursor-{start}', json.loads(canonical(shop)))
+            page_times.append(time.perf_counter() - begin)
+            if page == 1:
+                # Release all handles, reopen the durable checkpoint, replay once.
+                invoice_store = SnapshotStore(root / 'invoices.sqlite', scope, expected_count=n)
+                order_store = SnapshotStore(root / f'orders-{partition}.sqlite', shop_scope,
+                                            expected_count=partition_end - partition_start)
+                order_stores[-1] = order_store
+                assert invoice_store.add_qbo_page(scope, page, start + 1, qbo)['replayed']
+                assert order_store.add_shopify_page(shop_scope, shop_page, f'cursor-{start}', shop)['replayed']
+                replay_count += 2
+            assert hashlib.sha256(canonical([qbo, shop])).digest() == before
+        ingest_seconds = time.perf_counter() - wall_start
+        qsummary = invoice_store.summary()
+        ssummaries = [store.summary() for store in order_stores]
+        assert qsummary['complete'] and all(s['complete'] for s in ssummaries)
+        assert qsummary['duplicate_reference_groups'] == n // 1000
+        assert all(s['duplicate_reference_groups'] == 0 for s in ssummaries)
+        reviewed = checked = 0
+        output_hash = [hashlib.sha256(), hashlib.sha256()]
+        for ident, inv in enumerate(invoice_store.iter_records(), 1):
+            assert inv['Id'] == str(ident)
+            output_hash[0].update(canonical(inv))
+            result = a.audit_invoice(inv)
+            expected = 'REVIEW_LINE_AMOUNT' if ident % 10 == 0 else 'LINE_AMOUNTS_MATCH'
+            assert result['status'] == expected
+            reviewed += result['status'] == 'REVIEW_LINE_AMOUNT'
+            checked += 1
+        ident = 0
+        for store in order_stores:
+            for order in store.iter_records():
+                ident += 1
+                assert order['id'] == f'gid://shopify/Order/{ident}'
+                output_hash[1].update(canonical(order))
+        assert checked == n and reviewed == n // 10
+        assert [x.hexdigest() for x in input_hash] == [x.hexdigest() for x in output_hash]
+        storage_bytes = sum(p.stat().st_size for p in root.iterdir() if p.is_file())
+        payload_bytes = qsummary['bytes'] + sum(s['bytes'] for s in ssummaries)
+    cpu, wall = time.process_time() - cpu_start, time.perf_counter() - wall_start
+    percentile = lambda p: sorted(page_times)[math.ceil(len(page_times) * p) - 1]
+    return {'scope': 'offline fixture provider pages, durable snapshot ingest and invoice arithmetic',
+        'orders': n, 'invoices': n, 'records': 2 * n, 'page_size_max': 250,
+        'provider_shaped_pages': 2 * len(page_times), 'idempotent_replays': replay_count,
+        'shopify_disjoint_windows': len(order_stores),
+        'wall_seconds': wall, 'cpu_seconds': cpu, 'ingest_seconds': ingest_seconds,
+        'page_pair_p50_seconds': percentile(.5), 'page_pair_p95_seconds': percentile(.95),
+        'page_pair_p99_seconds': percentile(.99),
+        'percentile_scope': 'empirical pairs of <=250-record pages; one full run per size',
+        'peak_rss_mib': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,
+        'storage_bytes': storage_bytes, 'payload_bytes': payload_bytes,
+        'reviewed_invoices': reviewed, 'cross_page_duplicate_reference_groups': n // 1000,
+        'input_equals_stored_sha256': [x.hexdigest() for x in input_hash],
+        'synthetic_false_positives': 0, 'synthetic_false_negatives': 0,
+        'oracle': 'PASS', 'external_api_calls': 0, 'source_snapshot_verified': False,
+        'cost_assumption_vcpu_hour_usd': hourly, 'illustrative_cpu_only_usd': cpu * hourly / 3600,
+        'cost_scope': 'assumption, not bill; storage measured in bytes, provider/idle/auth/ops excluded',
+        'limitations': 'fixture-only acceptance; mutable provider snapshot, merchant ingest and real SaaS capacity unverified'}
+
+
+if sys.argv[1:] == ['--snapshot']:
+    results = []
+    for n in (1000, 10000, 100000):
+        child = subprocess.run([sys.executable, '-B', __file__, '--snapshot-worker', str(n)],
+            capture_output=True, text=True, timeout=90)
+        if child.returncode:
+            raise RuntimeError(f'Snapshot benchmark failed at {n}; exit={child.returncode}')
+        results.append(json.loads(child.stdout))
+    print(json.dumps(results, indent=2))
+elif len(sys.argv) == 3 and sys.argv[1] == '--snapshot-worker':
+    resource.setrlimit(resource.RLIMIT_AS, (1024**3, 1024**3))
+    resource.setrlimit(resource.RLIMIT_CPU, (60, 60))
+    print(json.dumps(snapshot_workload(int(sys.argv[2]))))
+elif sys.argv[1:] == ['--financial']:
     results = []
     for n in (1000, 10000, 100000):
         child = subprocess.run([sys.executable, '-B', __file__, '--financial-worker', str(n)],
