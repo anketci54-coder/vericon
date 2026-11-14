@@ -749,6 +749,109 @@ def audit_order_invoice_batch(orders: list[dict], invoices: list[dict]) -> dict:
             "results": results, "bank_settlement_verified": False}
 
 
+def propose_order_document_policy(order: dict, evidence: dict | None = None, *,
+                                  context: dict | None = None,
+                                  sync_grace_seconds: int = 86400) -> dict:
+    """Offline, test-only generic proposal; never merchant approval or an alert.
+
+    Evidence is an explicit caller-supplied contract, NOT inferred provider data:
+    scope/order/time binding, complete order/Invoice/SalesReceipt snapshots,
+    payment_timing (immediate/deferred), capture/fulfillment observations, and
+    document_expected_at (the workflow trigger, not necessarily order creation).
+    A complete order snapshot includes cancellation, refund and capture history.
+    This helper validates the contract, not the authenticity of those assertions.
+    Current readers cannot supply it; no adapter, API or CLI calls this helper.
+
+    The configurable 24h grace is a proposed review delay, not a legal deadline.
+    No document matching, missing-document finding or bank settlement is proven.
+    The existing externally approved missing-invoice gate remains separate.
+    """
+    base = {'status': 'BLOCKED_POLICY_PROPOSAL_EVIDENCE', 'verified': False,
+            'verification_source': 'generic_policy_proposal',
+            'merchant_policy_approved': False, 'alert_eligible': False,
+            'candidate_count': 0, 'candidates': [], 'missing_sale_proven': False,
+            'proposed_document_type': None, 'sync_grace_seconds': sync_grace_seconds,
+            'cash_received_verified': False, 'bank_settlement_verified': False}
+    if (not isinstance(order, dict) or not isinstance(evidence, dict)
+            or not isinstance(context, dict) or type(sync_grace_seconds) is not int
+            or not 0 <= sync_grace_seconds <= 604800):
+        return base
+    if order.get('test') is not True:
+        return {**base, 'status': 'BLOCKED_NONTEST_ORDER_SCOPE'}
+    try:
+        import uuid
+        scope = evidence.get('scope')
+        order_id = order.get('id')
+        if (not isinstance(scope, dict)
+                or set(scope) != {'tenant_id', 'shop_domain', 'qbo_realm'}
+                or context.get('scope') != scope
+                or str(uuid.UUID(scope['tenant_id'])) != scope['tenant_id']
+                or not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,61}\.myshopify\.com', scope['shop_domain'])
+                or not re.fullmatch(r'[0-9]{1,32}', scope['qbo_realm'])
+                or not isinstance(order_id, str)
+                or not re.fullmatch(r'gid://shopify/Order/[0-9]+', order_id)
+                or evidence.get('shopify_order_id') != order_id):
+            return {**base, 'status': 'BLOCKED_POLICY_PROPOSAL_SCOPE'}
+    except (ValueError, TypeError, AttributeError, KeyError):
+        return {**base, 'status': 'BLOCKED_POLICY_PROPOSAL_SCOPE'}
+    if not all(evidence.get(key) is True for key in (
+            'order_snapshot_complete', 'invoice_snapshot_complete', 'sales_receipt_snapshot_complete')):
+        return {**base, 'status': 'BLOCKED_INCOMPLETE_POLICY_SNAPSHOTS'}
+    financial = order.get('displayFinancialStatus')
+    captured = evidence.get('capture_observed')
+    fulfilled = evidence.get('fulfillment_observed')
+    if (financial not in ('PAID', 'AUTHORIZED', 'PENDING', 'PARTIALLY_PAID',
+                          'PARTIALLY_REFUNDED', 'REFUNDED', 'VOIDED', 'EXPIRED')
+            or 'cancelledAt' not in order or not isinstance(order.get('refunds'), list)
+            or type(captured) is not bool or type(fulfilled) is not bool):
+        return base
+
+    def timestamp(value):
+        if not isinstance(value, str):
+            raise ValueError('Missing evidence timestamp')
+        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        if parsed.tzinfo is None:
+            raise ValueError('Evidence timestamp needs timezone')
+        return parsed
+
+    try:
+        observed = timestamp(context.get('observed_at'))
+        created = timestamp(order.get('createdAt'))
+        if timestamp(evidence.get('observed_at')) != observed or created > observed:
+            return {**base, 'status': 'BLOCKED_POLICY_PROPOSAL_TIME'}
+        cancelled = order['cancelledAt']
+        if cancelled is not None and not created <= timestamp(cancelled) <= observed:
+            return {**base, 'status': 'BLOCKED_POLICY_PROPOSAL_TIME'}
+    except (ValueError, TypeError):
+        return {**base, 'status': 'BLOCKED_POLICY_PROPOSAL_TIME'}
+
+    # Cancellation alone cannot erase an observed capture, fulfillment or refund.
+    if cancelled is not None:
+        if (captured or fulfilled or order['refunds']
+                or financial in ('PAID', 'PARTIALLY_PAID', 'PARTIALLY_REFUNDED', 'REFUNDED')):
+            return {**base, 'status': 'REVIEW_CANCELLED_REFUND_OR_OFFSET'}
+        return {**base, 'status': 'EXCLUDED_CANCELLED_NO_CAPTURE_OR_FULFILLMENT'}
+    if order['refunds'] or financial in ('PARTIALLY_REFUNDED', 'REFUNDED'):
+        return {**base, 'status': 'REVIEW_REFUND_OR_OFFSET'}
+    timing = evidence.get('payment_timing')
+    if timing not in ('immediate', 'deferred'):
+        return {**base, 'status': 'REVIEW_PAYMENT_TIMING_UNVERIFIED'}
+    if (financial in ('VOIDED', 'EXPIRED')
+            or (timing == 'immediate' and (financial != 'PAID' or not captured))):
+        return {**base, 'status': 'REVIEW_PAYMENT_STATE'}
+    try:
+        trigger = timestamp(evidence.get('document_expected_at'))
+        if not created <= trigger <= observed:
+            return {**base, 'status': 'BLOCKED_POLICY_PROPOSAL_TIME'}
+    except (ValueError, TypeError):
+        return {**base, 'status': 'BLOCKED_POLICY_PROPOSAL_TIME'}
+    # Deferred payment can be a legitimate receivable before any capture.
+    # Even PAID does not identify payment timing or prove bank settlement.
+    return {**base, 'proposed_document_type': 'SalesReceipt' if timing == 'immediate' else 'Invoice',
+            'status': 'REVIEW_SYNC_GRACE' if (observed - trigger).total_seconds() < sync_grace_seconds
+            else 'REVIEW_POLICY_PROPOSAL'}
+
+
 def audit_missing_invoice_candidates(orders: list[dict], invoices: list[dict],
                                      policy: dict | None = None, *, context: dict | None = None) -> dict:
     """Only propose missing invoices after external accounting-workflow evidence.

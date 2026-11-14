@@ -663,6 +663,167 @@ def missing_policy_fixture():
     return policy, context
 
 
+def document_policy_fixture():
+    # Normalized, synthetic evidence; no provider adapter or merchant approval.
+    _, context = missing_policy_fixture()
+    order = {'id': 'gid://shopify/Order/123', 'test': True,
+             'createdAt': '2026-01-01T00:00:00Z', 'cancelledAt': None,
+             'displayFinancialStatus': 'PAID', 'refunds': []}
+    evidence = {'scope': dict(context['scope']), 'shopify_order_id': order['id'],
+                'observed_at': context['observed_at'],
+                'order_snapshot_complete': True, 'invoice_snapshot_complete': True,
+                'sales_receipt_snapshot_complete': True,
+                'payment_timing': 'immediate', 'capture_observed': True,
+                'fulfillment_observed': False,
+                'document_expected_at': '2026-01-02T00:00:00Z'}
+    return order, evidence, context
+
+
+def propose_document_policy(order, evidence, context, **kwargs):
+    propose = getattr(a, 'propose_order_document_policy', None)
+    assert callable(propose), 'Missing standalone, non-alerting document policy proposal'
+    result = propose(order, evidence, context=context, **kwargs)
+    assert result['verification_source'] == 'generic_policy_proposal'
+    assert result['merchant_policy_approved'] is False
+    assert result['alert_eligible'] is False and result['candidate_count'] == 0
+    assert result['verified'] is False and result['missing_sale_proven'] is False
+    assert result['cash_received_verified'] is False
+    assert result['bank_settlement_verified'] is False
+    return result
+
+
+@pytest.mark.parametrize('timing,financial,captured,document,status', [
+    ('immediate', 'PAID', True, 'SalesReceipt', 'REVIEW_POLICY_PROPOSAL'),
+    ('deferred', 'PENDING', False, 'Invoice', 'REVIEW_POLICY_PROPOSAL'),
+    ('deferred', 'AUTHORIZED', False, 'Invoice', 'REVIEW_POLICY_PROPOSAL'),
+    ('deferred', 'PARTIALLY_PAID', True, 'Invoice', 'REVIEW_POLICY_PROPOSAL'),
+    ('deferred', 'PAID', True, 'Invoice', 'REVIEW_POLICY_PROPOSAL'),
+    ('immediate', 'AUTHORIZED', False, None, 'REVIEW_PAYMENT_STATE'),
+    ('immediate', 'PENDING', False, None, 'REVIEW_PAYMENT_STATE'),
+    ('immediate', 'PARTIALLY_PAID', True, None, 'REVIEW_PAYMENT_STATE'),
+    ('immediate', 'VOIDED', False, None, 'REVIEW_PAYMENT_STATE'),
+    ('immediate', 'EXPIRED', False, None, 'REVIEW_PAYMENT_STATE'),
+    ('immediate', 'PAID', False, None, 'REVIEW_PAYMENT_STATE'),
+    (None, 'PAID', True, None, 'REVIEW_PAYMENT_TIMING_UNVERIFIED'),
+])
+def test_document_policy_proposal_distinguishes_receipt_and_receivable(
+        timing, financial, captured, document, status):
+    order, evidence, context = document_policy_fixture()
+    order['displayFinancialStatus'] = financial
+    evidence.update(payment_timing=timing, capture_observed=captured)
+    result = propose_document_policy(order, evidence, context)
+    assert result['proposed_document_type'] == document
+    assert result['status'] == status
+
+
+@pytest.mark.parametrize('cancelled,captured,fulfilled,financial,refunds,status', [
+    (True, False, False, 'AUTHORIZED', [], 'EXCLUDED_CANCELLED_NO_CAPTURE_OR_FULFILLMENT'),
+    (True, False, False, 'PENDING', [], 'EXCLUDED_CANCELLED_NO_CAPTURE_OR_FULFILLMENT'),
+    (True, True, False, 'PAID', [], 'REVIEW_CANCELLED_REFUND_OR_OFFSET'),
+    (True, False, True, 'PENDING', [], 'REVIEW_CANCELLED_REFUND_OR_OFFSET'),
+    (True, False, False, 'PAID', [], 'REVIEW_CANCELLED_REFUND_OR_OFFSET'),
+    (True, False, False, 'REFUNDED', [], 'REVIEW_CANCELLED_REFUND_OR_OFFSET'),
+    (False, True, True, 'PARTIALLY_REFUNDED', [], 'REVIEW_REFUND_OR_OFFSET'),
+    (False, True, True, 'REFUNDED', [], 'REVIEW_REFUND_OR_OFFSET'),
+    (False, True, True, 'PAID', [{'id': 'synthetic-refund'}], 'REVIEW_REFUND_OR_OFFSET'),
+])
+def test_document_policy_proposal_handles_cancellation_and_refund(
+        cancelled, captured, fulfilled, financial, refunds, status):
+    order, evidence, context = document_policy_fixture()
+    order.update(cancelledAt='2026-01-02T01:00:00Z' if cancelled else None,
+                 displayFinancialStatus=financial, refunds=refunds)
+    evidence.update(capture_observed=captured, fulfillment_observed=fulfilled)
+    result = propose_document_policy(order, evidence, context)
+    assert result['status'] == status and result['proposed_document_type'] is None
+
+
+@pytest.mark.parametrize('fault', [
+    'no_evidence', 'no_context', 'tenant', 'shop', 'realm', 'order_id', 'snapshot_time',
+    'order_snapshot_complete', 'invoice_snapshot_complete', 'sales_receipt_snapshot_complete',
+    'capture_observed', 'fulfillment_observed', 'cancelledAt', 'refunds', 'createdAt',
+    'document_expected_at', 'future_trigger', 'trigger_before_order', 'naive_time',
+    'future_cancel', 'bad_cancel', 'unknown_status', 'nontest', 'bad_scope',
+])
+def test_document_policy_proposal_blocks_missing_or_mismatched_evidence(fault):
+    order, evidence, context = document_policy_fixture()
+    if fault == 'no_evidence': evidence = None
+    elif fault == 'no_context': context = None
+    elif fault == 'tenant': evidence['scope']['tenant_id'] = '22222222-2222-4222-8222-222222222222'
+    elif fault == 'shop': evidence['scope']['shop_domain'] = 'other.myshopify.com'
+    elif fault == 'realm': evidence['scope']['qbo_realm'] = '67890'
+    elif fault == 'order_id': evidence['shopify_order_id'] = 'gid://shopify/Order/999'
+    elif fault == 'snapshot_time': evidence['observed_at'] = '2026-01-02T00:00:00Z'
+    elif fault.endswith('_complete'): evidence[fault] = False
+    elif fault in ('capture_observed', 'fulfillment_observed'): evidence[fault] = None
+    elif fault in ('cancelledAt', 'refunds', 'createdAt'): order.pop(fault)
+    elif fault == 'document_expected_at': evidence.pop(fault)
+    elif fault == 'future_trigger': evidence['document_expected_at'] = '2026-01-04T00:00:00Z'
+    elif fault == 'trigger_before_order': evidence['document_expected_at'] = '2025-12-31T00:00:00Z'
+    elif fault == 'naive_time': evidence['document_expected_at'] = '2026-01-02T00:00:00'
+    elif fault == 'future_cancel': order['cancelledAt'] = '2026-01-04T00:00:00Z'
+    elif fault == 'bad_cancel': order['cancelledAt'] = ''
+    elif fault == 'unknown_status': order['displayFinancialStatus'] = 'UNKNOWN'
+    elif fault == 'nontest': order['test'] = False
+    elif fault == 'bad_scope': context['scope'] = evidence['scope'] = {'tenant_id': 'invalid'}
+    result = propose_document_policy(order, evidence, context)
+    assert result['status'].startswith('BLOCKED_')
+    assert result['proposed_document_type'] is None
+
+
+@pytest.mark.parametrize('observed,grace,status', [
+    ('2026-01-02T23:59:59Z', 86400, 'REVIEW_SYNC_GRACE'),
+    ('2026-01-03T00:00:00Z', 86400, 'REVIEW_POLICY_PROPOSAL'),
+    ('2026-01-03T00:00:01Z', 86400, 'REVIEW_POLICY_PROPOSAL'),
+    ('2026-01-02T01:00:00Z', 3600, 'REVIEW_POLICY_PROPOSAL'),
+    ('2026-01-03T00:00:00+02:00', 86400, 'REVIEW_SYNC_GRACE'),
+    ('2026-01-02T00:00:00Z', 0, 'REVIEW_POLICY_PROPOSAL'),
+])
+def test_document_policy_proposal_grace_uses_explicit_trigger(observed, grace, status):
+    order, evidence, context = document_policy_fixture()
+    context['observed_at'] = evidence['observed_at'] = observed
+    kwargs = {} if grace == 86400 else {'sync_grace_seconds': grace}
+    result = propose_document_policy(order, evidence, context, **kwargs)
+    assert result['sync_grace_seconds'] == grace
+    assert result['status'] == status and result['proposed_document_type'] == 'SalesReceipt'
+
+
+@pytest.mark.parametrize('grace', [True, -1, 604801, 86400.0, '86400', None])
+def test_document_policy_proposal_rejects_invalid_grace(grace):
+    order, evidence, context = document_policy_fixture()
+    result = propose_document_policy(order, evidence, context, sync_grace_seconds=grace)
+    assert result['status'].startswith('BLOCKED_')
+
+
+def test_document_policy_proposal_never_satisfies_legacy_approval_gate(monkeypatch):
+    import copy
+    import socket
+
+    def no_network(*args, **kwargs):
+        pytest.fail('Policy proposal must not access any provider')
+
+    monkeypatch.setattr(socket, 'socket', no_network)
+    monkeypatch.setattr(a.requests.sessions.Session, 'request', no_network)
+    order, evidence, context = document_policy_fixture()
+    before = copy.deepcopy((order, evidence, context))
+    proposal = propose_document_policy(order, evidence, context)
+    assert (order, evidence, context) == before
+    assert propose_document_policy(order, evidence, context) == proposal
+    for policy in (None, proposal):
+        scan = a.audit_missing_invoice_candidates([order], [], policy, context=context)
+        assert scan['status'] == 'BLOCKED_ACCOUNTING_METHOD_UNVERIFIED'
+        assert scan['candidate_count'] == 0
+    # A generic proposal cannot repair expired or cross-tenant merchant approval.
+    policy, _ = missing_policy_fixture()
+    policy['proposal'] = proposal
+    policy['effective_until'] = context['observed_at']
+    assert a.audit_missing_invoice_candidates([order], [], policy, context=context)[
+        'status'] == 'BLOCKED_ACCOUNTING_POLICY_WINDOW'
+    policy['effective_until'] = '2026-02-01T00:00:00Z'
+    policy['scope']['qbo_realm'] = '67890'
+    assert a.audit_missing_invoice_candidates([order], [], policy, context=context)[
+        'status'] == 'BLOCKED_ACCOUNTING_POLICY_SCOPE'
+
+
 def test_missing_invoice_policy_cannot_ignore_expiry():
     order = {'id': 'gid://shopify/Order/123', 'name': '#123', 'test': True,
              'totalPriceSet': {'shopMoney': {'amount': '100', 'currencyCode': 'USD'}}}
