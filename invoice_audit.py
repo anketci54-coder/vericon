@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 from decimal import Decimal, DecimalException, InvalidOperation, ROUND_HALF_UP
 from collections import Counter
+from datetime import datetime
 
 import requests
 from fastapi import HTTPException
@@ -398,6 +399,106 @@ def audit_supplier_po_bills(purchase_orders: list[dict], bills: list[dict]) -> d
     return result
 
 
+def classify_payment_accounting(payment: dict) -> dict:
+    """Separate recorded payments, credit offsets and mixtures; never prove cash.
+
+    Supported two-decimal USD/TRY ledger equation only. A mixed payment does not
+    reveal the cash/credit split per invoice; no bank/provider evidence exists.
+    """
+    base = {'status': 'BLOCKED_PAYMENT_CLASSIFICATION', 'cash_received_verified': False,
+            'bank_settlement_verified': False, 'actual_cash_received': None,
+            'per_invoice_cash_allocation_verified': False}
+    try:
+        currency = (payment.get('CurrencyRef') or {}).get('value')
+        if currency not in ('USD', 'TRY'):
+            return base
+        def money(value):
+            amount = number(value)
+            if amount < 0 or amount != amount.quantize(Decimal('0.01')):
+                raise ValueError('Unverified payment amount')
+            return amount
+        recorded = money(payment.get('TotalAmt'))
+        unapplied = money(payment.get('UnappliedAmt'))
+        lines = payment.get('Line')
+        if not isinstance(lines, list) or not 1 <= len(lines) <= 100:
+            return base
+        applied = {'Invoice': Decimal(0), 'CreditMemo': Decimal(0)}
+        seen = set()
+        for line in lines:
+            refs = line.get('LinkedTxn')
+            if not isinstance(refs, list) or len(refs) != 1 or not isinstance(refs[0], dict):
+                return base
+            kind, ident = refs[0].get('TxnType'), refs[0].get('TxnId')
+            if kind not in applied or not isinstance(ident, str) or not ident or (kind, ident) in seen:
+                return base
+            seen.add((kind, ident))
+            applied[kind] += money(line.get('Amount'))
+        if applied['Invoice'] <= 0:
+            return base
+        if applied['Invoice'] + unapplied != recorded + applied['CreditMemo']:
+            return {**base, 'status': 'BLOCKED_PAYMENT_COMPONENT_EQUATION'}
+        if recorded == 0 and applied['CreditMemo'] > 0 and unapplied == 0:
+            status = 'ACCOUNTING_CREDIT_OFFSET_ONLY'
+        elif recorded > 0:
+            status = 'MIXED_PAYMENT_AND_CREDIT_UNSETTLED' if applied['CreditMemo'] else 'RECORDED_PAYMENT_UNSETTLED'
+        else:
+            return base
+        return {**base, 'status': status, 'currency': currency,
+                'recorded_payment_amount': str(recorded), 'credit_offset_amount': str(applied['CreditMemo']),
+                'invoice_applied_amount': str(applied['Invoice']), 'unapplied_amount': str(unapplied),
+                'basis': 'qbo_ledger_components_only'}
+    except (ValueError, TypeError, AttributeError, DecimalException):
+        return base
+
+
+def measure_labeled_findings(predictions: list[dict], labels: list[dict], *,
+                             evidence_kind: str, sample_reference: str) -> dict:
+    """Measure one explicitly labeled sample; abstention is never a true negative.
+
+    Provenance is supplied by the caller. This does not authenticate an accountant
+    or establish customer-wide accuracy, even for an accountant-labeled sample.
+    """
+    blocked = {'status': 'BLOCKED_LABEL_EVIDENCE', 'customer_accuracy_verified': False}
+    if (evidence_kind not in ('synthetic_fixture', 'accountant_labeled_sample')
+            or not isinstance(sample_reference, str) or not sample_reference.strip()
+            or len(sample_reference) > 200 or not isinstance(predictions, list)
+            or not isinstance(labels, list) or not 1 <= len(predictions) == len(labels) <= 100000):
+        return blocked
+    try:
+        actual = {row['id']: row['issue'] for row in labels}
+        predicted = {row['id']: row['decision'] for row in predictions}
+        if (len(actual) != len(labels) or len(predicted) != len(predictions)
+                or actual.keys() != predicted.keys()
+                or any(not isinstance(key, str) or not key or len(key) > 256 for key in actual)
+                or any(type(value) is not bool for value in actual.values())
+                or any(value not in ('review', 'clear', 'blocked') for value in predicted.values())):
+            return blocked
+    except (TypeError, KeyError):
+        return blocked
+    counts = dict.fromkeys(('true_positive', 'false_positive', 'false_negative',
+                            'true_negative', 'abstained_positive', 'abstained_negative'), 0)
+    for ident, issue in actual.items():
+        decision = predicted[ident]
+        if decision == 'blocked':
+            key = 'abstained_positive' if issue else 'abstained_negative'
+        elif decision == 'review':
+            key = 'true_positive' if issue else 'false_positive'
+        else:
+            key = 'false_negative' if issue else 'true_negative'
+        counts[key] += 1
+    tp, fp, fn, tn, ap, an = counts.values()
+    divide = lambda numerator, denominator: numerator / denominator if denominator else None
+    return {'status': 'SYNTHETIC_LABEL_MEASUREMENT' if evidence_kind == 'synthetic_fixture'
+            else 'LABELED_SAMPLE_MEASUREMENT', 'customer_accuracy_verified': False,
+            'evidence_kind': evidence_kind, 'sample_reference': sample_reference,
+            'sample_size': len(actual), 'counts': counts,
+            'decision_coverage': (tp + fp + fn + tn) / len(actual),
+            'false_positive_rate': divide(fp, fp + tn), 'false_negative_rate': divide(fn, fn + tp),
+            'accuracy_on_decided': divide(tp + tn, tp + fp + fn + tn),
+            'end_to_end_recall': divide(tp, tp + fn + ap),
+            'rate_scope': 'FP/FN rates exclude abstentions; end-to-end recall includes positive abstentions'}
+
+
 def audit_payment_links(invoices: list[dict], payments: list[dict], credit_memos: list[dict] | None = None) -> dict:
     """Validate typed invoice-payment edges without confusing credit with cash.
 
@@ -540,6 +641,8 @@ def audit_payment_links(invoices: list[dict], payments: list[dict], credit_memos
                   "credit_memo_related_payment_ids": sorted(credit_related),
                   "credit_memo_endpoints_verified": credit_endpoints_verified,
                   "credit_memo_reference_count": len(credit_edges),
+                  "payment_accounting": [{"payment_id": pid, **classify_payment_accounting(pay)}
+                                         for pid, pay in payment_index.items()],
                   "invoice_balance_mismatch_ids": sorted(mismatches)}
         return result
     except (KeyError, TypeError, AttributeError, ValueError):
@@ -647,7 +750,7 @@ def audit_order_invoice_batch(orders: list[dict], invoices: list[dict]) -> dict:
 
 
 def audit_missing_invoice_candidates(orders: list[dict], invoices: list[dict],
-                                     policy: dict | None = None) -> dict:
+                                     policy: dict | None = None, *, context: dict | None = None) -> dict:
     """Only propose missing invoices after external accounting-workflow evidence.
 
     This function never proves a lost sale, and its policy is not inferred from
@@ -666,10 +769,52 @@ def audit_missing_invoice_candidates(orders: list[dict], invoices: list[dict],
         policy.get("sync_window_elapsed") is True,
     )):
         return base
+    # A merchant assertion alone must not apply to another tenant or time window.
+    # This validates the supplied contract, not the authenticity of an approval.
+    def timestamp(value):
+        if not isinstance(value, str):
+            raise ValueError('Missing policy timestamp')
+        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        if parsed.tzinfo is None:
+            raise ValueError('Policy timestamp needs timezone')
+        return parsed
+    try:
+        import uuid
+        scope = policy.get('scope')
+        if (not isinstance(context, dict) or not isinstance(scope, dict)
+                or set(scope) != {'tenant_id', 'shop_domain', 'qbo_realm'}
+                or context.get('scope') != scope
+                or str(uuid.UUID(scope['tenant_id'])) != scope['tenant_id']
+                or not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,61}\.myshopify\.com', scope['shop_domain'])
+                or not re.fullmatch(r'[0-9]{1,32}', scope['qbo_realm'])):
+            return {**base, 'status': 'BLOCKED_ACCOUNTING_POLICY_SCOPE'}
+        approval = policy.get('approval_reference')
+        grace = policy.get('sync_grace_seconds')
+        if (not isinstance(approval, str) or not approval.strip() or len(approval) > 200
+                or type(grace) is not int or not 0 <= grace <= 604800
+                or policy.get('invoice_trigger') != 'order_created_at'
+                or policy.get('exception_handling') != 'review'):
+            return base
+        effective = timestamp(policy.get('effective_from'))
+        until = timestamp(policy.get('effective_until'))
+        observed = timestamp(context.get('observed_at'))
+        if not effective <= observed < until:
+            return {**base, 'status': 'BLOCKED_ACCOUNTING_POLICY_WINDOW'}
+    except (ValueError, TypeError, AttributeError, KeyError):
+        return base
     candidates = []
     for order, link in zip(orders, checked["results"]):
         if order.get("test") is not True:
             return {**base, "status": "BLOCKED_NONTEST_ORDER_SCOPE"}
+        try:
+            created = timestamp(order.get('createdAt'))
+            if not effective <= created <= observed or (observed - created).total_seconds() < grace:
+                return {**base, 'status': 'BLOCKED_INVOICE_SYNC_WINDOW'}
+        except (ValueError, TypeError):
+            return {**base, 'status': 'BLOCKED_INVOICE_SYNC_WINDOW'}
+        if ('cancelledAt' not in order or order['cancelledAt'] is not None
+                or order.get('displayFinancialStatus') != 'PAID'):
+            return {**base, 'status': 'BLOCKED_ORDER_POLICY_EXCEPTION'}
         status = link.get("status")
         if status == "BLOCKED_NO_VERIFIED_ORDER_REFERENCE":
             candidates.append({"shopify_order_id": order["id"],

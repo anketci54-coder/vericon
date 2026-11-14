@@ -36,6 +36,67 @@ def test_payment_graph_accepts_matching_customer_without_claiming_cash():
     assert result['cash_received_verified'] is False
 
 
+@pytest.mark.parametrize('cash,credit,unapplied,status', [
+    ('0', '100', '0', 'ACCOUNTING_CREDIT_OFFSET_ONLY'),
+    ('100', '0', '0', 'RECORDED_PAYMENT_UNSETTLED'),
+    ('60', '40', '0', 'MIXED_PAYMENT_AND_CREDIT_UNSETTLED'),
+    ('110', '0', '10', 'RECORDED_PAYMENT_UNSETTLED'),
+    ('99.99', '0', '0', 'BLOCKED_PAYMENT_COMPONENT_EQUATION'),
+    ('100.001', '0', '0', 'BLOCKED_PAYMENT_CLASSIFICATION'),
+])
+def test_payment_classification_never_promotes_ledger_to_settlement(cash, credit, unapplied, status):
+    payment = {'Id': 'P1', 'CurrencyRef': {'value': 'USD'}, 'TotalAmt': cash, 'UnappliedAmt': unapplied,
+               'Line': [{'Amount': 100, 'LinkedTxn': [{'TxnType': 'Invoice', 'TxnId': 'I1'}]}]}
+    if credit != '0':
+        payment['Line'].append({'Amount': credit, 'LinkedTxn': [{'TxnType': 'CreditMemo', 'TxnId': 'C1'}]})
+    result = a.classify_payment_accounting(payment)
+    assert result['status'] == status and result['cash_received_verified'] is False
+    assert result['bank_settlement_verified'] is False and result['actual_cash_received'] is None
+
+
+@pytest.mark.parametrize('fault', ['missing_unapplied', 'unsupported_link', 'duplicate_link', 'negative', 'currency'])
+def test_payment_classification_unknown_is_blocked(fault):
+    payment = {'Id': 'P1', 'CurrencyRef': {'value': 'USD'}, 'TotalAmt': 100, 'UnappliedAmt': 0,
+               'Line': [{'Amount': 100, 'LinkedTxn': [{'TxnType': 'Invoice', 'TxnId': 'I1'}]}]}
+    if fault == 'missing_unapplied': payment.pop('UnappliedAmt')
+    if fault == 'unsupported_link': payment['Line'][0]['LinkedTxn'][0]['TxnType'] = 'JournalEntry'
+    if fault == 'duplicate_link': payment['Line'] *= 2
+    if fault == 'negative': payment['TotalAmt'] = -100
+    if fault == 'currency': payment['CurrencyRef']['value'] = 'UNKNOWN'
+    assert a.classify_payment_accounting(payment)['status'].startswith('BLOCKED_')
+
+
+def test_labeled_measurement_counts_false_results_and_abstentions_separately():
+    predictions = [{'id': str(i), 'decision': decision} for i, decision in enumerate(
+        ['review', 'review', 'clear', 'clear', 'blocked', 'blocked'])]
+    labels = [{'id': str(i), 'issue': issue} for i, issue in enumerate([True, False, True, False, True, False])]
+    result = a.measure_labeled_findings(predictions, labels, evidence_kind='synthetic_fixture',
+                                       sample_reference='fixture-confusion-matrix')
+    assert result['counts'] == {'true_positive': 1, 'false_positive': 1, 'false_negative': 1,
+        'true_negative': 1, 'abstained_positive': 1, 'abstained_negative': 1}
+    assert result['false_positive_rate'] == result['false_negative_rate'] == .5
+    assert result['decision_coverage'] == 4 / 6 and result['end_to_end_recall'] == 1 / 3
+    assert result['customer_accuracy_verified'] is False
+
+
+@pytest.mark.parametrize('fault', ['none', 'duplicate', 'missing', 'unknown_decision', 'boolean_label', 'provenance'])
+def test_labeled_measurement_never_counts_blocked_as_correct(fault):
+    predictions = [{'id': '1', 'decision': 'blocked'}]
+    labels = [{'id': '1', 'issue': True}]
+    if fault == 'duplicate': predictions *= 2
+    if fault == 'missing': labels = []
+    if fault == 'unknown_decision': predictions[0]['decision'] = 'probably_ok'
+    if fault == 'boolean_label': labels[0]['issue'] = 'true'
+    result = a.measure_labeled_findings(predictions, labels, evidence_kind='synthetic_fixture',
+                                       sample_reference='' if fault == 'provenance' else 'fixture')
+    if fault == 'none':
+        assert result['false_negative_rate'] is None and result['accuracy_on_decided'] is None
+        assert result['decision_coverage'] == 0 and result['end_to_end_recall'] == 0
+    else:
+        assert result['status'] == 'BLOCKED_LABEL_EVIDENCE'
+    assert result['customer_accuracy_verified'] is False
+
+
 def invoice(*lines, currency="USD"):
     return {"Id": "I-1", "CurrencyRef": {"value": currency}, "Line": list(lines)}
 
@@ -587,33 +648,82 @@ def test_multiple_orders_require_distinct_explicit_invoice_links(monkeypatch):
     assert doc_only["orders_verified"] == 0 and doc_only["verified"] is False
 
 
+def missing_policy_fixture():
+    scope = {'tenant_id': '11111111-1111-4111-8111-111111111111',
+             'shop_domain': 'fixture.myshopify.com', 'qbo_realm': '12345'}
+    policy = {'accounting_method': 'one_invoice_per_shopify_order',
+              'verification_source': 'merchant_workflow_approval',
+              'order_to_invoice_reference': 'shopify_order_id_custom_field',
+              'invoice_snapshot_complete': True, 'sync_window_elapsed': True,
+              'approval_reference': 'SYNTHETIC-POLICY-1', 'scope': scope,
+              'effective_from': '2026-01-01T00:00:00Z', 'effective_until': '2026-02-01T00:00:00Z',
+              'sync_grace_seconds': 3600, 'invoice_trigger': 'order_created_at',
+              'exception_handling': 'review'}
+    context = {'scope': dict(scope), 'observed_at': '2026-01-03T00:00:00Z'}
+    return policy, context
+
+
+def test_missing_invoice_policy_cannot_ignore_expiry():
+    order = {'id': 'gid://shopify/Order/123', 'name': '#123', 'test': True,
+             'totalPriceSet': {'shopMoney': {'amount': '100', 'currencyCode': 'USD'}}}
+    policy, _ = missing_policy_fixture()
+    policy['effective_until'] = '2025-01-01T00:00:00Z'
+    assert a.audit_missing_invoice_candidates([order], [], policy)['candidate_count'] == 0
+
+
 def test_missing_invoice_needs_explicit_workflow_evidence():
     order = {"id": "gid://shopify/Order/123", "name": "#123", "test": True,
+             'createdAt': '2026-01-02T00:00:00Z', 'cancelledAt': None, 'displayFinancialStatus': 'PAID',
              "totalPriceSet": {"shopMoney": {"amount": "100", "currencyCode": "USD"}}}
-    policy = {"accounting_method": "one_invoice_per_shopify_order",
-              "verification_source": "merchant_workflow_approval",
-              "order_to_invoice_reference": "shopify_order_id_custom_field",
-              "invoice_snapshot_complete": True, "sync_window_elapsed": True}
+    policy, context = missing_policy_fixture()
     unknown = a.audit_missing_invoice_candidates([order], [])
     assert unknown["status"] == "BLOCKED_ACCOUNTING_METHOD_UNVERIFIED"
     assert unknown["candidate_count"] == 0 and unknown["missing_sale_proven"] is False
     for key in policy:
         incomplete = dict(policy)
         del incomplete[key]
-        assert a.audit_missing_invoice_candidates([order], [], incomplete)["candidate_count"] == 0
-    candidate = a.audit_missing_invoice_candidates([order], [], policy)
+        assert a.audit_missing_invoice_candidates([order], [], incomplete, context=context)["candidate_count"] == 0
+    candidate = a.audit_missing_invoice_candidates([order], [], policy, context=context)
     assert candidate["status"] == "REVIEW_MISSING_INVOICE_CANDIDATES"
     assert candidate["candidate_count"] == 1 and candidate["missing_sale_proven"] is False
     invoice = {"Id": "11", "DocNumber": "200", "TotalAmt": 100,
                "CurrencyRef": {"value": "USD"},
                "CustomField": [{"Name": "Shopify Order ID", "StringValue": "123"}]}
     # An incomplete line-item check cannot be promoted to a confirmed match.
-    ambiguous = a.audit_missing_invoice_candidates([order], [invoice], policy)
+    ambiguous = a.audit_missing_invoice_candidates([order], [invoice], policy, context=context)
     assert ambiguous["status"] == "BLOCKED_AMBIGUOUS_INVOICE_EVIDENCE"
     fake = dict(invoice)
     fake["Id"] = "12"
-    assert a.audit_missing_invoice_candidates([order], [invoice, fake], policy)["status"] == "BLOCKED_AMBIGUOUS_INVOICE_EVIDENCE"
-    assert a.audit_missing_invoice_candidates([dict(order, test=False)], [], policy)["status"] == "BLOCKED_NONTEST_ORDER_SCOPE"
+    assert a.audit_missing_invoice_candidates([order], [invoice, fake], policy, context=context)["status"] == "BLOCKED_AMBIGUOUS_INVOICE_EVIDENCE"
+    assert a.audit_missing_invoice_candidates([dict(order, test=False)], [], policy, context=context)["status"] == "BLOCKED_NONTEST_ORDER_SCOPE"
+
+
+@pytest.mark.parametrize('fault', ['none', 'tenant', 'shop', 'realm', 'expired', 'future', 'grace', 'boolean_grace',
+                                  'cancelled', 'refund', 'missing_time', 'naive_time', 'approval'])
+def test_missing_invoice_scoped_policy_and_sync_gate(fault):
+    policy, context = missing_policy_fixture()
+    order = {'id': 'gid://shopify/Order/1', 'name': '#1', 'test': True,
+             'totalPriceSet': {'shopMoney': {'amount': '100', 'currencyCode': 'USD'}},
+             'createdAt': '2026-01-02T00:00:00Z',
+             'displayFinancialStatus': 'PAID', 'cancelledAt': None}
+    if fault == 'tenant': context['scope']['tenant_id'] = '22222222-2222-4222-8222-222222222222'
+    if fault == 'shop': context['scope']['shop_domain'] = 'another.myshopify.com'
+    if fault == 'realm': context['scope']['qbo_realm'] = '67890'
+    if fault == 'expired': context['observed_at'] = '2026-02-02T00:00:00Z'
+    if fault == 'future': policy['effective_from'] = '2026-01-04T00:00:00Z'
+    if fault == 'grace': context['observed_at'] = '2026-01-02T00:59:59Z'
+    if fault == 'boolean_grace': policy['sync_grace_seconds'] = True
+    if fault == 'cancelled': order['cancelledAt'] = '2026-01-02T12:00:00Z'
+    if fault == 'refund': order['displayFinancialStatus'] = 'REFUNDED'
+    if fault == 'missing_time': order.pop('createdAt')
+    if fault == 'naive_time': order['createdAt'] = '2026-01-02T00:00:00'
+    if fault == 'approval': policy['approval_reference'] = ''
+    result = a.audit_missing_invoice_candidates([order], [], policy, context=context)
+    if fault == 'none':
+        assert result['candidate_count'] == 1 and result['missing_sale_proven'] is False
+        return
+    assert result['status'].startswith('BLOCKED_') and result['candidate_count'] == 0
+    assert result['missing_sale_proven'] is False
 
 
 def test_duplicate_invoice_references_require_explicit_shared_source():
