@@ -3,6 +3,7 @@
 Run: python3 -B benchmark_invoice_audit.py
 Financial chain: python3 -B benchmark_invoice_audit.py --financial
 Snapshot ingest: python3 -B benchmark_invoice_audit.py --snapshot
+Labeled synthetic arithmetic: python3 -B benchmark_invoice_audit.py --labeled
 Outputs JSON to stdout. Limits each worker to 1 GiB and 45 CPU seconds.
 Live read adapters cap at 5 Shopify orders/100 QBO entities. Snapshot mode
 stages fixture provider pages on disk; it never calls an external provider.
@@ -264,7 +265,82 @@ def snapshot_workload(n):
         'limitations': 'fixture-only acceptance; mutable provider snapshot, merchant ingest and real SaaS capacity unverified'}
 
 
-if sys.argv[1:] == ['--snapshot']:
+def labeled_workload():
+    """Fixed-seed USD line arithmetic sample; labels from integer cents only.
+
+    Ten balanced strata are deliberately constructed, not a merchant population
+    or accountant sample. Missing fields hide truth AFTER labels are computed.
+    No statutory tax, settlement, document-policy or customer accuracy claim.
+    """
+    import random, socket
+    def forbid_network(*args, **kwargs):
+        raise AssertionError('Labeled sample must not access the network')
+    socket.socket.connect = forbid_network
+    socket.create_connection = forbid_network
+    import invoice_audit as a
+    a.requests.sessions.Session.request = forbid_network
+    rng = random.Random(20261114)
+    cents = lambda value: f'{value // 100}.{value % 100:02d}'
+    names = ('clean_single', 'clean_multiple', 'clean_zero_price', 'clean_fractional_quantity',
+             'plus_one_cent', 'minus_one_cent', 'multiple_plus', 'multiple_minus',
+             'hidden_positive_missing_qty', 'hidden_negative_missing_price')
+    predictions, labels, strata = [], [], {name: ([], []) for name in names}
+    fingerprint = hashlib.sha256()
+    start = time.perf_counter()
+    for i in range(2000):
+        category = i % len(names)
+        quantity = rng.randint(1, 100) * 100
+        unit = rng.randint(1, 100000) * 4
+        if category == 2:
+            unit = 0
+        if category == 3:
+            quantity = rng.randint(1, 100) * 25
+        expected = quantity * unit // 100
+        assert quantity * unit % 100 == 0
+        delta = {4: 1, 5: -1, 6: 37, 7: -43, 8: 1}.get(category, 0)
+        recorded = expected + delta
+        detail = {'Qty': cents(quantity), 'UnitPrice': cents(unit)}
+        lines = [{'DetailType': 'SalesItemLineDetail', 'Amount': cents(recorded),
+                  'SalesItemLineDetail': detail}]
+        if category in (1, 6, 7):
+            lines.append({'DetailType': 'SalesItemLineDetail', 'Amount': '12.50',
+                          'SalesItemLineDetail': {'Qty': '2.50', 'UnitPrice': '5.00'}})
+        # Ground truth predates the deliberate removal of evidence.
+        label = {'id': str(i), 'issue': recorded != expected}
+        if category == 8:
+            detail.pop('Qty')
+        if category == 9:
+            detail.pop('UnitPrice')
+        row = {'Id': str(i), 'CurrencyRef': {'value': 'USD'}, 'Line': lines}
+        encoded = json.dumps(row, sort_keys=True, separators=(',', ':')).encode()
+        fingerprint.update(encoded)
+        result = a.audit_invoice(row)
+        status = result['status']
+        decision = ('review' if status == 'REVIEW_LINE_AMOUNT' else
+                    'clear' if status == 'LINE_AMOUNTS_MATCH' else 'blocked')
+        assert decision == ('blocked' if category in (8, 9) else 'review' if delta else 'clear')
+        assert json.dumps(row, sort_keys=True, separators=(',', ':')).encode() == encoded
+        prediction = {'id': str(i), 'decision': decision}
+        predictions.append(prediction)
+        labels.append(label)
+        strata[names[category]][0].append(prediction)
+        strata[names[category]][1].append(label)
+    measured = a.measure_labeled_findings(predictions, labels, evidence_kind='synthetic_fixture',
+                                         sample_reference='integer-cents-seed-20261114-v1')
+    measured['strata'] = {name: a.measure_labeled_findings(p, l, evidence_kind='synthetic_fixture',
+        sample_reference=name) for name, (p, l) in strata.items()}
+    return {**measured, 'oracle': 'PASS', 'external_api_calls': 0,
+            'input_sha256_unchanged': fingerprint.hexdigest(),
+            'elapsed_seconds': time.perf_counter() - start,
+            'scope': '2000 constructed USD line-arithmetic cases; 200 per stratum; integer-cents oracle',
+            'limitations': 'synthetic balanced strata, not merchant prevalence; no accountant labels, tax law, policy or settlement accuracy'}
+
+
+if sys.argv[1:] == ['--labeled']:
+    resource.setrlimit(resource.RLIMIT_AS, (1024**3, 1024**3))
+    resource.setrlimit(resource.RLIMIT_CPU, (20, 20))
+    print(json.dumps(labeled_workload(), indent=2))
+elif sys.argv[1:] == ['--snapshot']:
     results = []
     for n in (1000, 10000, 100000):
         child = subprocess.run([sys.executable, '-B', __file__, '--snapshot-worker', str(n)],

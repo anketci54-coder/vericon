@@ -659,7 +659,14 @@ def missing_policy_fixture():
               'effective_from': '2026-01-01T00:00:00Z', 'effective_until': '2026-02-01T00:00:00Z',
               'sync_grace_seconds': 3600, 'invoice_trigger': 'order_created_at',
               'exception_handling': 'review'}
-    context = {'scope': dict(scope), 'observed_at': '2026-01-03T00:00:00Z'}
+    import hashlib, json
+    context = {'scope': dict(scope), 'observed_at': '2026-01-03T00:00:00Z',
+        'policy_acceptance': {'scope': dict(scope), 'approval_reference': policy['approval_reference'],
+            'policy_sha256': hashlib.sha256(json.dumps(policy, sort_keys=True,
+                separators=(',', ':'), allow_nan=False).encode()).hexdigest(),
+            'approver_role': 'accountant', 'approver_reference': 'SYNTHETIC-ACCOUNTANT',
+            'approved_at': '2026-01-01T00:00:00Z', 'source_verified': True,
+            'evidence_kind': 'synthetic_fixture'}}
     return policy, context
 
 
@@ -834,7 +841,7 @@ def test_missing_invoice_policy_cannot_ignore_expiry():
 
 def test_missing_invoice_needs_explicit_workflow_evidence():
     order = {"id": "gid://shopify/Order/123", "name": "#123", "test": True,
-             'createdAt': '2026-01-02T00:00:00Z', 'cancelledAt': None, 'displayFinancialStatus': 'PAID',
+             'createdAt': '2026-01-02T00:00:00Z', 'cancelledAt': None, 'displayFinancialStatus': 'PAID', 'refunds': [],
              "totalPriceSet": {"shopMoney": {"amount": "100", "currencyCode": "USD"}}}
     policy, context = missing_policy_fixture()
     unknown = a.audit_missing_invoice_candidates([order], [])
@@ -866,7 +873,7 @@ def test_missing_invoice_scoped_policy_and_sync_gate(fault):
     order = {'id': 'gid://shopify/Order/1', 'name': '#1', 'test': True,
              'totalPriceSet': {'shopMoney': {'amount': '100', 'currencyCode': 'USD'}},
              'createdAt': '2026-01-02T00:00:00Z',
-             'displayFinancialStatus': 'PAID', 'cancelledAt': None}
+             'displayFinancialStatus': 'PAID', 'cancelledAt': None, 'refunds': []}
     if fault == 'tenant': context['scope']['tenant_id'] = '22222222-2222-4222-8222-222222222222'
     if fault == 'shop': context['scope']['shop_domain'] = 'another.myshopify.com'
     if fault == 'realm': context['scope']['qbo_realm'] = '67890'
@@ -1462,3 +1469,203 @@ def test_duplicate_explicit_shopify_references_block_even_if_first_matches():
         assert a.audit_shopify_invoice_link(order,[{**tagged,"PrivateNote":invalid}])["status"]=="BLOCKED_INVALID_QBO_ORDER_REFERENCE"
     conflicting={**tagged,"CustomField":[{"Name":"Shopify Order ID","StringValue":"999"}]}
     assert a.audit_shopify_invoice_link(order,[conflicting])["status"]=="BLOCKED_INVALID_QBO_ORDER_REFERENCE"
+
+
+def test_policy_reference_alone_cannot_authorize_missing_document():
+    policy, context = missing_policy_fixture()
+    context.pop('policy_acceptance', None)
+    order = {'id': 'gid://shopify/Order/123', 'test': True, 'name': '#123',
+        'totalPriceSet': {'shopMoney': {'amount': '100', 'currencyCode': 'USD'}},
+        'createdAt': '2026-01-02T00:00:00Z', 'cancelledAt': None, 'displayFinancialStatus': 'PAID', 'refunds': []}
+    result = a.audit_missing_invoice_candidates([order], [], policy, context=context)
+    assert result['candidate_count'] == 0
+    assert result['status'] == 'BLOCKED_POLICY_ACCEPTANCE_EVIDENCE'
+
+
+def test_labeled_metrics_expose_denominators_and_abstention_risk():
+    result = a.measure_labeled_findings(
+        [{'id': '1', 'decision': 'blocked'}, {'id': '2', 'decision': 'clear'}],
+        [{'id': '1', 'issue': True}, {'id': '2', 'issue': False}],
+        evidence_kind='accountant_labeled_sample', sample_reference='UNAUTHENTICATED-CALLER-CLAIM')
+    assert result.get('abstention_rate') == .5
+    assert result.get('positive_support') == result.get('negative_support') == 1
+    assert result.get('precision') is None
+    assert result.get('provenance_authenticated') is False
+    assert result['customer_accuracy_verified'] is False
+
+
+def settlement_fixture():
+    import copy, hashlib, json
+    _, ctx = missing_policy_fixture()
+    ctx['max_settlement_delay_seconds'] = 172800
+    processor = {'scope': copy.deepcopy(ctx['scope']), 'source_kind': 'processor_export',
+        'evidence_kind': 'synthetic_fixture', 'source_reference': 'SYNTHETIC-PROCESSOR',
+        'observed_at': ctx['observed_at'], 'complete': True,
+        'payout': {'id': 'P1', 'currency': 'USD', 'net': '76.00', 'status': 'paid',
+                   'issued_at': '2026-01-02T00:00:00Z'},
+        'transactions': [
+            {'id': 'T1', 'payout_id': 'P1', 'kind': 'charge', 'test': True, 'currency': 'USD',
+             'amount': '100.00', 'fee': '3.00', 'net': '97.00', 'processed_at': '2026-01-01T00:00:00Z'},
+            {'id': 'T2', 'payout_id': 'P1', 'kind': 'refund', 'test': True, 'currency': 'USD',
+             'amount': '-20.00', 'fee': '1.00', 'net': '-21.00', 'processed_at': '2026-01-01T01:00:00Z'}]}
+    bank = {'scope': copy.deepcopy(ctx['scope']), 'source_kind': 'bank_statement',
+        'evidence_kind': 'synthetic_fixture', 'source_reference': 'SYNTHETIC-BANK',
+        'observed_at': ctx['observed_at'], 'entry': {'id': 'B1', 'payout_id': 'P1',
+        'currency': 'USD', 'amount': '76.00', 'status': 'posted', 'posted_at': '2026-01-03T00:00:00Z'}}
+    bind_settlement_sources(ctx, processor, bank)
+    return processor, bank, ctx
+
+
+def bind_settlement_sources(context, *sources):
+    import hashlib, json
+    context['verified_source_sha256'] = {s['source_reference']:
+        hashlib.sha256(json.dumps(s, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+        for s in sources}
+
+
+def test_settlement_matching_is_offline_and_never_synthetic_bank_pass(monkeypatch):
+    import copy
+    processor, bank, context = settlement_fixture()
+    before = copy.deepcopy((processor, bank, context))
+    monkeypatch.setattr(a.requests.sessions.Session, 'request', lambda *args, **kwargs: pytest.fail('network'))
+    match = getattr(a, 'audit_settlement_evidence', None)
+    assert callable(match), 'Missing deterministic supplied-evidence settlement matcher'
+    result = match(processor, bank, context=context)
+    assert result['status'] == 'SYNTHETIC_SETTLEMENT_MATCH'
+    assert result['supplied_evidence_matched'] is True
+    assert result['bank_settlement_verified'] is False and result['cash_received_verified'] is False
+    assert result['actual_cash_received'] is None
+    assert result['gross_amount'] == '80.00' and result['fee_amount'] == '4.00'
+    assert result['net_amount'] == '76.00' and result['settlement_delay_seconds'] == 86400
+    assert (processor, bank, context) == before
+
+
+@pytest.mark.parametrize('fault', ['digest', 'role', 'reference', 'approver', 'scope', 'unverified',
+                                  'future', 'naive', 'proposal', 'changed_policy'])
+def test_policy_acceptance_cannot_be_reused_or_inferred(fault):
+    policy, context = missing_policy_fixture()
+    approval = context['policy_acceptance']
+    if fault == 'digest': approval['policy_sha256'] = '0' * 64
+    if fault == 'role': approval['approver_role'] = 'model'
+    if fault == 'reference': approval['approval_reference'] = 'another-approval'
+    if fault == 'approver': approval['approver_reference'] = ''
+    if fault == 'scope': approval['scope']['qbo_realm'] = '67890'
+    if fault == 'unverified': approval['source_verified'] = False
+    if fault == 'future': approval['approved_at'] = '2026-01-04T00:00:00Z'
+    if fault == 'naive': approval['approved_at'] = '2026-01-01T00:00:00'
+    if fault == 'proposal': approval['evidence_kind'] = 'generic_policy_proposal'
+    if fault == 'changed_policy': policy['sync_grace_seconds'] = 0
+    order = {'id': 'gid://shopify/Order/123', 'test': True, 'name': '#123',
+        'totalPriceSet': {'shopMoney': {'amount': '100', 'currencyCode': 'USD'}},
+        'createdAt': '2026-01-02T00:00:00Z', 'cancelledAt': None, 'displayFinancialStatus': 'PAID', 'refunds': []}
+    result = a.audit_missing_invoice_candidates([order], [], policy, context=context)
+    assert result['status'] == 'BLOCKED_POLICY_ACCEPTANCE_EVIDENCE'
+    assert result['candidate_count'] == 0
+
+
+@pytest.mark.parametrize('fault,expected', [
+    ('scope', 'BLOCKED_SETTLEMENT_SCOPE'), ('bank_scope', 'BLOCKED_SETTLEMENT_SCOPE'),
+    ('missing_pin', 'BLOCKED_SETTLEMENT_SOURCE'), ('altered_source', 'BLOCKED_SETTLEMENT_SOURCE'),
+    ('ledger_as_bank', 'BLOCKED_SETTLEMENT_SOURCE'), ('same_source', 'BLOCKED_SETTLEMENT_SOURCE'),
+    ('mixed_kind', 'BLOCKED_SETTLEMENT_SOURCE'), ('unverified_kind', 'BLOCKED_SETTLEMENT_SOURCE'),
+    ('incomplete', 'BLOCKED_SETTLEMENT_EVIDENCE'), ('empty', 'BLOCKED_SETTLEMENT_EVIDENCE'),
+    ('duplicate', 'BLOCKED_SETTLEMENT_LINK'), ('wrong_payout', 'BLOCKED_SETTLEMENT_LINK'),
+    ('same_amount_wrong_bank_link', 'BLOCKED_SETTLEMENT_LINK'),
+    ('currency', 'BLOCKED_SETTLEMENT_CURRENCY'), ('bank_currency', 'BLOCKED_SETTLEMENT_CURRENCY'),
+    ('unknown_currency', 'BLOCKED_SETTLEMENT_CURRENCY'),
+    ('subcent', 'BLOCKED_SETTLEMENT_EVIDENCE'), ('nonfinite', 'BLOCKED_SETTLEMENT_EVIDENCE'),
+    ('fee_missing', 'BLOCKED_SETTLEMENT_EVIDENCE'), ('negative_fee', 'BLOCKED_SETTLEMENT_COMPONENT'),
+    ('adjustment', 'BLOCKED_SETTLEMENT_COMPONENT'), ('refund_sign', 'BLOCKED_SETTLEMENT_COMPONENT'),
+    ('row_equation', 'REVIEW_SETTLEMENT_COMPONENT_MISMATCH'), ('payout_net', 'REVIEW_PAYOUT_TOTAL_MISMATCH'),
+    ('bank_amount', 'REVIEW_BANK_AMOUNT_MISMATCH'), ('pending', 'REVIEW_PAYOUT_NOT_PAID'),
+    ('bank_pending', 'REVIEW_BANK_NOT_POSTED'), ('future', 'BLOCKED_SETTLEMENT_TIME'),
+    ('transaction_after_payout', 'BLOCKED_SETTLEMENT_TIME'), ('bank_before_payout', 'BLOCKED_SETTLEMENT_TIME'),
+    ('naive', 'BLOCKED_SETTLEMENT_EVIDENCE'), ('late', 'REVIEW_SETTLEMENT_DELAY'),
+    ('no_delay_policy', 'BLOCKED_SETTLEMENT_TIME_POLICY'), ('test_mode', 'BLOCKED_SETTLEMENT_TEST_MODE'),
+])
+def test_settlement_unknown_or_conflicting_evidence_never_matches(fault, expected):
+    import copy
+    processor, bank, context = settlement_fixture()
+    tx = processor['transactions'][0]
+    if fault == 'scope': processor['scope']['qbo_realm'] = '67890'
+    if fault == 'bank_scope': bank['scope']['tenant_id'] = '22222222-2222-4222-8222-222222222222'
+    if fault == 'missing_pin': context['verified_source_sha256'] = {}
+    if fault == 'altered_source': tx['fee'] = '2.00'
+    if fault == 'ledger_as_bank': bank['source_kind'] = 'qbo_deposit'
+    if fault == 'same_source': bank['source_reference'] = processor['source_reference']
+    if fault == 'mixed_kind': bank['evidence_kind'] = 'authorized_export'
+    if fault == 'unverified_kind': processor['evidence_kind'] = bank['evidence_kind'] = 'unknown'
+    if fault == 'incomplete': processor['complete'] = False
+    if fault == 'empty': processor['transactions'] = []
+    if fault == 'duplicate': processor['transactions'].append(copy.deepcopy(tx))
+    if fault == 'wrong_payout': tx['payout_id'] = 'P2'
+    if fault == 'same_amount_wrong_bank_link': bank['entry']['payout_id'] = 'P2'
+    if fault == 'currency': tx['currency'] = 'TRY'
+    if fault == 'bank_currency': bank['entry']['currency'] = 'TRY'
+    if fault == 'unknown_currency': processor['payout']['currency'] = 'XXX'
+    if fault == 'subcent': tx['fee'] = '3.001'
+    if fault == 'nonfinite': tx['fee'] = 'NaN'
+    if fault == 'fee_missing': tx.pop('fee')
+    if fault == 'negative_fee': tx['fee'] = '-3'
+    if fault == 'adjustment': tx['kind'] = 'adjustment'
+    if fault == 'refund_sign': tx['kind'] = 'refund'
+    if fault == 'row_equation': tx['net'] = '96.99'
+    if fault == 'payout_net': processor['payout']['net'] = '76.01'
+    if fault == 'bank_amount': bank['entry']['amount'] = '76.01'
+    if fault == 'pending': processor['payout']['status'] = 'scheduled'
+    if fault == 'bank_pending': bank['entry']['status'] = 'pending'
+    if fault == 'future': processor['observed_at'] = '2026-01-04T00:00:00Z'
+    if fault == 'transaction_after_payout': tx['processed_at'] = '2026-01-02T00:00:01Z'
+    if fault == 'bank_before_payout': bank['entry']['posted_at'] = '2026-01-01T23:59:59Z'
+    if fault == 'naive': tx['processed_at'] = '2026-01-01T00:00:00'
+    if fault == 'late': context['max_settlement_delay_seconds'] = 86399
+    if fault == 'no_delay_policy': context.pop('max_settlement_delay_seconds')
+    if fault == 'test_mode': tx['test'] = False
+    # Re-attest structural faults so validation is exercised beyond the hash gate.
+    if fault not in ('missing_pin', 'altered_source'):
+        bind_settlement_sources(context, processor, bank)
+    result = a.audit_settlement_evidence(processor, bank, context=context)
+    assert result['status'] == expected
+    assert result['supplied_evidence_matched'] is False
+    assert result['cash_received_verified'] is False and result['bank_settlement_verified'] is False
+
+
+@pytest.mark.parametrize('kind', ['synthetic_fixture', 'sandbox_export', 'authorized_export'])
+def test_settlement_processor_only_and_untrusted_caller_cannot_prove_bank(kind):
+    processor, bank, context = settlement_fixture()
+    for source in (processor, bank): source['evidence_kind'] = kind
+    for row in processor['transactions']: row['test'] = kind != 'authorized_export'
+    bind_settlement_sources(context, processor, bank)
+    result = a.audit_settlement_evidence(processor, None, context=context)
+    assert result['status'] == 'PROCESSOR_PAYOUT_MATCH_BANK_UNVERIFIED'
+    result = a.audit_settlement_evidence(processor, bank, context=context)
+    assert result['supplied_evidence_matched'] is True
+    assert result['status'] == ('SYNTHETIC_SETTLEMENT_MATCH' if kind == 'synthetic_fixture'
+                                else 'SUPPLIED_SETTLEMENT_MATCH_REQUIRES_REVIEW')
+    assert result['source_authenticity_verified'] is False
+    assert result['bank_settlement_verified'] is False and result['cash_received_verified'] is False
+
+
+def test_labeled_benchmark_has_reproducible_integer_oracle_and_abstentions():
+    import subprocess, sys, json
+    run = subprocess.run([sys.executable, '-B', str(Path(a.__file__).with_name('benchmark_invoice_audit.py')),
+                          '--labeled'], capture_output=True, text=True, timeout=20)
+    assert run.returncode == 0, run.stderr
+    result = json.loads(run.stdout)
+    assert result['sample_size'] == 2000 and result['oracle'] == 'PASS'
+    assert result['counts'] == {'true_positive': 800, 'false_positive': 0, 'true_negative': 800,
+                              'false_negative': 0, 'abstained_positive': 200, 'abstained_negative': 200}
+    assert result['abstention_rate'] == .2 and result['end_to_end_recall'] == .8
+    assert result['customer_accuracy_verified'] is False and result['external_api_calls'] == 0
+    assert len(result['strata']) == 10
+
+
+@pytest.mark.parametrize('refunds', [None, [{'id': 'SYNTHETIC-REFUND'}]])
+def test_missing_invoice_policy_requires_known_empty_refund_history(refunds):
+    policy, context = missing_policy_fixture()
+    order = {'id': 'gid://shopify/Order/123', 'test': True, 'name': '#123',
+        'totalPriceSet': {'shopMoney': {'amount': '100', 'currencyCode': 'USD'}},
+        'createdAt': '2026-01-02T00:00:00Z', 'cancelledAt': None,
+        'displayFinancialStatus': 'PAID', 'refunds': refunds}
+    result = a.audit_missing_invoice_candidates([order], [], policy, context=context)
+    assert result['status'] == 'BLOCKED_ORDER_POLICY_EXCEPTION' and result['candidate_count'] == 0

@@ -1787,3 +1787,18 @@ def test_stage44_callback_serializes_with_inflight_token_change(cfg, monkeypatch
             release.set()
             prior.result(timeout=5); callback.result(timeout=5)
     assert q.load_tenant_tokens(cfg, user_id=uid)['refresh_token'] == 'reconnected-refresh'
+
+
+@pytest.mark.parametrize('entity', ['Deposit', 'SalesReceipt'])
+def test_stage2_read_only_document_queries_share_existing_sandbox_guard(cfg, monkeypatch, entity):
+    calls = []
+    monkeypatch.setattr(q.requests, 'get', lambda *args, **kwargs:
+                        calls.append((args, kwargs)) or FakeResponse({'QueryResponse': {'totalCount': 0}}))
+    response = q.bounded_query_get(q.SANDBOX_API + '/v3/company/12345/query',
+        params={'query': f'SELECT COUNT(*) FROM {entity}'}, headers={}, budget_dir=cfg.private_dir)
+    assert response.status_code == 200
+    assert len(calls) == 1 and calls[0][1]['allow_redirects'] is False
+    with pytest.raises(ValueError):
+        q.bounded_query_get(q.SANDBOX_API.replace('sandbox-', '') + '/v3/company/12345/query',
+            params={'query': f'SELECT * FROM {entity}'}, headers={}, budget_dir=cfg.private_dir)
+    assert len(calls) == 1

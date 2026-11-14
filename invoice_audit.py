@@ -451,6 +451,150 @@ def classify_payment_accounting(payment: dict) -> dict:
         return base
 
 
+def audit_settlement_evidence(processor: dict, bank: dict | None = None, *,
+                              context: dict | None = None) -> dict:
+    """Reconcile ONE supplied payout and optional posted bank credit, offline.
+
+    Normalized signed amounts use amount - fee = net (USD/TRY exact cents).
+    Only charges/refunds and a positive payout are supported. Every source is
+    scoped and pinned by SHA256 in independent caller context. That pin is an
+    attestation contract, not authentication: this helper never proves real cash,
+    imports bank credentials, infers links from amounts or enables an alert.
+    QBO Deposit/Payment are ledger records, never independent bank evidence.
+    """
+    base = {'status': 'BLOCKED_SETTLEMENT_EVIDENCE', 'supplied_evidence_matched': False,
+            'source_attestations_matched': False, 'source_authenticity_verified': False,
+            'cash_received_verified': False, 'bank_settlement_verified': False,
+            'actual_cash_received': None, 'alert_eligible': False}
+
+    def timestamp(value):
+        if not isinstance(value, str):
+            raise ValueError('Missing time')
+        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        if parsed.tzinfo is None:
+            raise ValueError('Missing timezone')
+        return parsed
+
+    def ident(value):
+        return isinstance(value, str) and 1 <= len(value.strip()) <= 200
+
+    def money(value):
+        amount = number(value)
+        if abs(amount) > Decimal('1000000000000') or amount != amount.quantize(Decimal('0.01')):
+            raise ValueError('Unsupported monetary precision/range')
+        return amount
+
+    try:
+        import uuid
+        if not isinstance(context, dict):
+            return base
+        scope = context.get('scope')
+        if (not isinstance(scope, dict) or set(scope) != {'tenant_id', 'shop_domain', 'qbo_realm'}
+                or str(uuid.UUID(scope['tenant_id'])) != scope['tenant_id']
+                or not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,61}\.myshopify\.com', scope['shop_domain'])
+                or not re.fullmatch(r'[0-9]{1,32}', scope['qbo_realm'])):
+            return {**base, 'status': 'BLOCKED_SETTLEMENT_SCOPE'}
+        observed = timestamp(context.get('observed_at'))
+        delay_limit = context.get('max_settlement_delay_seconds')
+        if type(delay_limit) is not int or not 0 <= delay_limit <= 2592000:
+            return {**base, 'status': 'BLOCKED_SETTLEMENT_TIME_POLICY'}
+        pins = context.get('verified_source_sha256')
+        sources = [(processor, 'processor_export')]
+        if bank is not None:
+            sources.append((bank, 'bank_statement'))
+        refs, kinds, source_times = set(), set(), []
+        for source, source_kind in sources:
+            if not isinstance(source, dict) or source.get('scope') != scope:
+                return {**base, 'status': 'BLOCKED_SETTLEMENT_SCOPE'}
+            reference = source.get('source_reference')
+            digest = hashlib.sha256(json.dumps(source, sort_keys=True, separators=(',', ':'),
+                                               allow_nan=False).encode()).hexdigest()
+            if (source.get('source_kind') != source_kind or not ident(reference)
+                    or reference in refs or not isinstance(pins, dict) or pins.get(reference) != digest):
+                return {**base, 'status': 'BLOCKED_SETTLEMENT_SOURCE'}
+            refs.add(reference)
+            kind = source.get('evidence_kind')
+            if kind not in ('synthetic_fixture', 'sandbox_export', 'authorized_export'):
+                return {**base, 'status': 'BLOCKED_SETTLEMENT_SOURCE'}
+            kinds.add(kind)
+            captured = timestamp(source.get('observed_at'))
+            if captured > observed:
+                return {**base, 'status': 'BLOCKED_SETTLEMENT_TIME'}
+            source_times.append(captured)
+        if len(kinds) != 1:
+            return {**base, 'status': 'BLOCKED_SETTLEMENT_SOURCE'}
+        evidence_kind = kinds.pop()
+        payout = processor['payout']
+        rows = processor['transactions']
+        if (processor.get('complete') is not True or not isinstance(rows, list)
+                or not 1 <= len(rows) <= 100 or not ident(payout.get('id'))):
+            return base
+        currency = payout.get('currency')
+        if currency not in ('USD', 'TRY'):
+            return {**base, 'status': 'BLOCKED_SETTLEMENT_CURRENCY'}
+        issued = timestamp(payout.get('issued_at'))
+        if issued > source_times[0]:
+            return {**base, 'status': 'BLOCKED_SETTLEMENT_TIME'}
+        gross, fees, net = Decimal(0), Decimal(0), Decimal(0)
+        seen = set()
+        for row in rows:
+            txid = row.get('id')
+            if not ident(txid) or txid in seen or row.get('payout_id') != payout['id']:
+                return {**base, 'status': 'BLOCKED_SETTLEMENT_LINK'}
+            seen.add(txid)
+            if row.get('currency') != currency:
+                return {**base, 'status': 'BLOCKED_SETTLEMENT_CURRENCY'}
+            if (type(row.get('test')) is not bool
+                    or (evidence_kind == 'authorized_export' and row['test'] is not False)
+                    or (evidence_kind != 'authorized_export' and row['test'] is not True)):
+                return {**base, 'status': 'BLOCKED_SETTLEMENT_TEST_MODE'}
+            if timestamp(row.get('processed_at')) > issued:
+                return {**base, 'status': 'BLOCKED_SETTLEMENT_TIME'}
+            amount, fee, row_net = (money(row.get(key)) for key in ('amount', 'fee', 'net'))
+            if (row.get('kind') not in ('charge', 'refund') or fee < 0
+                    or (row['kind'] == 'charge' and amount <= 0)
+                    or (row['kind'] == 'refund' and amount >= 0)):
+                return {**base, 'status': 'BLOCKED_SETTLEMENT_COMPONENT'}
+            if amount - fee != row_net:
+                return {**base, 'status': 'REVIEW_SETTLEMENT_COMPONENT_MISMATCH'}
+            gross += amount
+            fees += fee
+            net += row_net
+        payout_net = money(payout.get('net'))
+        if payout_net <= 0:
+            return {**base, 'status': 'BLOCKED_SETTLEMENT_COMPONENT'}
+        if net != payout_net:
+            return {**base, 'status': 'REVIEW_PAYOUT_TOTAL_MISMATCH'}
+        summary = {**base, 'source_attestations_matched': True, 'evidence_kind': evidence_kind,
+                   'currency': currency, 'transaction_count': len(rows),
+                   'gross_amount': format(gross, '.2f'), 'fee_amount': format(fees, '.2f'),
+                   'net_amount': format(net, '.2f')}
+        if payout.get('status') != 'paid':
+            return {**summary, 'status': 'REVIEW_PAYOUT_NOT_PAID'}
+        if bank is None:
+            return {**summary, 'status': 'PROCESSOR_PAYOUT_MATCH_BANK_UNVERIFIED'}
+        entry = bank['entry']
+        if not ident(entry.get('id')) or entry.get('payout_id') != payout['id']:
+            return {**base, 'status': 'BLOCKED_SETTLEMENT_LINK'}
+        if entry.get('currency') != currency:
+            return {**base, 'status': 'BLOCKED_SETTLEMENT_CURRENCY'}
+        posted = timestamp(entry.get('posted_at'))
+        if posted < issued or posted > source_times[1]:
+            return {**base, 'status': 'BLOCKED_SETTLEMENT_TIME'}
+        if entry.get('status') != 'posted':
+            return {**summary, 'status': 'REVIEW_BANK_NOT_POSTED'}
+        delay = (posted - issued).total_seconds()
+        if delay > delay_limit:
+            return {**summary, 'status': 'REVIEW_SETTLEMENT_DELAY'}
+        if money(entry.get('amount')) != payout_net:
+            return {**summary, 'status': 'REVIEW_BANK_AMOUNT_MISMATCH'}
+        return {**summary, 'status': 'SYNTHETIC_SETTLEMENT_MATCH' if evidence_kind == 'synthetic_fixture'
+                else 'SUPPLIED_SETTLEMENT_MATCH_REQUIRES_REVIEW',
+                'supplied_evidence_matched': True, 'settlement_delay_seconds': delay}
+    except (ValueError, TypeError, AttributeError, KeyError, DecimalException, OverflowError):
+        return base
+
+
 def measure_labeled_findings(predictions: list[dict], labels: list[dict], *,
                              evidence_kind: str, sample_reference: str) -> dict:
     """Measure one explicitly labeled sample; abstention is never a true negative.
@@ -491,7 +635,11 @@ def measure_labeled_findings(predictions: list[dict], labels: list[dict], *,
     return {'status': 'SYNTHETIC_LABEL_MEASUREMENT' if evidence_kind == 'synthetic_fixture'
             else 'LABELED_SAMPLE_MEASUREMENT', 'customer_accuracy_verified': False,
             'evidence_kind': evidence_kind, 'sample_reference': sample_reference,
-            'sample_size': len(actual), 'counts': counts,
+            'sample_size': len(actual), 'counts': counts, 'provenance_authenticated': False,
+            'positive_support': tp + fn + ap, 'negative_support': fp + tn + an,
+            'abstention_rate': (ap + an) / len(actual),
+            'precision': divide(tp, tp + fp),
+            'negative_predictive_value': divide(tn, tn + fn),
             'decision_coverage': (tp + fp + fn + tn) / len(actual),
             'false_positive_rate': divide(fp, fp + tn), 'false_negative_rate': divide(fn, fn + tp),
             'accuracy_on_decided': divide(tp + tn, tp + fp + fn + tn),
@@ -905,6 +1053,25 @@ def audit_missing_invoice_candidates(orders: list[dict], invoices: list[dict],
             return {**base, 'status': 'BLOCKED_ACCOUNTING_POLICY_WINDOW'}
     except (ValueError, TypeError, AttributeError, KeyError):
         return base
+    # Independent caller evidence must bind the exact policy, not just repeat a
+    # free-text approval reference. This offline contract cannot authenticate a
+    # merchant/accountant; no runtime acceptance store or alert path exists.
+    try:
+        acceptance = context.get('policy_acceptance')
+        digest = hashlib.sha256(json.dumps(policy, sort_keys=True, separators=(',', ':'),
+                                           allow_nan=False).encode()).hexdigest()
+        if (not isinstance(acceptance, dict) or acceptance.get('scope') != scope
+                or acceptance.get('policy_sha256') != digest
+                or acceptance.get('approval_reference') != approval
+                or acceptance.get('approver_role') not in ('merchant', 'accountant')
+                or not isinstance(acceptance.get('approver_reference'), str)
+                or not 1 <= len(acceptance['approver_reference'].strip()) <= 200
+                or acceptance.get('source_verified') is not True
+                or acceptance.get('evidence_kind') not in ('synthetic_fixture', 'external_approval')
+                or timestamp(acceptance.get('approved_at')) > observed):
+            return {**base, 'status': 'BLOCKED_POLICY_ACCEPTANCE_EVIDENCE'}
+    except (ValueError, TypeError, AttributeError, KeyError):
+        return {**base, 'status': 'BLOCKED_POLICY_ACCEPTANCE_EVIDENCE'}
     candidates = []
     for order, link in zip(orders, checked["results"]):
         if order.get("test") is not True:
@@ -916,7 +1083,8 @@ def audit_missing_invoice_candidates(orders: list[dict], invoices: list[dict],
         except (ValueError, TypeError):
             return {**base, 'status': 'BLOCKED_INVOICE_SYNC_WINDOW'}
         if ('cancelledAt' not in order or order['cancelledAt'] is not None
-                or order.get('displayFinancialStatus') != 'PAID'):
+                or order.get('displayFinancialStatus') != 'PAID'
+                or not isinstance(order.get('refunds'), list) or order['refunds']):
             return {**base, 'status': 'BLOCKED_ORDER_POLICY_EXCEPTION'}
         status = link.get("status")
         if status == "BLOCKED_NO_VERIFIED_ORDER_REFERENCE":
@@ -926,7 +1094,9 @@ def audit_missing_invoice_candidates(orders: list[dict], invoices: list[dict],
             return {**base, "status": "BLOCKED_AMBIGUOUS_INVOICE_EVIDENCE"}
     return {**base, "status": "REVIEW_MISSING_INVOICE_CANDIDATES" if candidates
             else "NO_MISSING_INVOICE_CANDIDATES", "scope": "explicit_policy_test_only",
-            "candidate_count": len(candidates), "candidates": candidates}
+            "candidate_count": len(candidates), "candidates": candidates,
+            "acceptance_evidence_kind": acceptance['evidence_kind'],
+            "approval_authenticated": False, "alert_eligible": False}
 
 
 def audit_multi_credit_applications(invoice: dict, credits: list[dict],

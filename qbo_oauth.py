@@ -386,7 +386,7 @@ def bounded_query_get(url: str, *, params: dict, headers: dict, timeout: int = 2
     match = re.fullmatch(re.escape(SANDBOX_API) + r'/v3/company/([0-9]{1,32})/query', url)
     query = params.get('query')
     if (not match or not isinstance(query, str) or not re.match(
-            r'^SELECT (?:\*|COUNT\(\*\)) FROM (?:Invoice|Payment|CreditMemo|PurchaseOrder|Bill|Item|Preferences)\b', query)
+            r'^SELECT (?:\*|COUNT\(\*\)) FROM (?:Invoice|SalesReceipt|Payment|CreditMemo|Deposit|PurchaseOrder|Bill|Item|Preferences)\b', query)
             or any(c in query for c in (';', '\n', '\r'))
             or set(params) - {'query', 'minorversion', 'include'}):
         raise ValueError('Only approved Sandbox GET /query reads are allowed')
