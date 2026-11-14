@@ -147,7 +147,40 @@ def test_guard_invoice_reader_only_uses_get_and_oauth_read():
     api_calls=[(n.func.value.id,n.func.attr) for n in ast.walk(tree)
                if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute)
                and isinstance(n.func.value,ast.Name) and n.func.value.id=="requests"]
-    assert api_calls == [("requests","get")] * 4
+    assert api_calls == []  # all data GETs go through bounded_query_get
+
+
+@pytest.mark.parametrize('enhanced_fields', [True, False])
+def test_pilot_details_use_only_bounded_query_and_never_infer_reference(tmp_path, monkeypatch, enhanced_fields):
+    import json
+    import qbo_oauth as q
+    from types import SimpleNamespace
+    vault = tmp_path / 'private' / 'qbo_try_32e0'
+    vault.mkdir(parents=True, mode=0o700)
+    vault.parent.chmod(0o700)
+    (vault / 'qbo_setup.json').write_text(json.dumps({
+        'VERICON_QBO_CLIENT_ID': 'fixture', 'VERICON_QBO_CLIENT_SECRET': 'fixture',
+        'VERICON_QBO_REDIRECT_URI': 'https://example.test/oauth/quickbooks/callback',
+        'VERICON_QBO_EXPECTED_REALM': '9341458641399133'}))
+    monkeypatch.setattr(a, '__file__', str(tmp_path / 'invoice_audit.py'))
+    monkeypatch.setattr(q, 'BASE_DIR', tmp_path)
+    monkeypatch.setattr(a, 'get_access_token', lambda cfg: ('fixture', cfg.expected_realm))
+    clock = [1000.0]
+    monkeypatch.setattr(q, 'time', SimpleNamespace(time=lambda: clock[0],
+        sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds)))
+    calls = []
+    def get(url, **kwargs):
+        assert url.endswith('/query') and kwargs['allow_redirects'] is False
+        query = kwargs['params']['query']; calls.append(query)
+        row = {'Id': '145', 'DocNumber': '123'}
+        if enhanced_fields:
+            row['CustomField'] = [{'Name': 'Shopify Order ID', 'StringValue': '123'}]
+        payload = {'totalCount': 1} if 'COUNT(*)' in query else {'Invoice': [row]}
+        return SimpleNamespace(status_code=200, json=lambda: {'QueryResponse': payload})
+    monkeypatch.setattr(q.requests, 'get', get)
+    rows = a.read_try_pilot_invoices()
+    assert len(calls) == 3 and len(rows) == 1
+    assert bool(a._invoice_shopify_order_ref(rows[0])) is enhanced_fields
 
 
 def test_reader_blocks_incomplete_counts_and_duplicate_records(monkeypatch):

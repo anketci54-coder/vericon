@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+from fastapi import HTTPException
 
 ROOT = Path(__file__).resolve().parent
 PRIVATE = ROOT / "private"
@@ -91,6 +92,51 @@ def _ensure_private() -> None:
     PRIVATE.mkdir(parents=True, mode=0o700, exist_ok=True)
     if stat.S_IMODE(PRIVATE.stat().st_mode) != 0o700 or PRIVATE.is_symlink():
         raise PermissionError("private/ must be an ordinary directory with mode 0700")
+
+
+def _post_read(url: str, **kwargs):
+    """Bound all Shopify token/query reads by canonical store, including CLI."""
+    import math
+    from qbo_oauth import Config as BudgetConfig, _shared_read_budget
+    match = re.fullmatch(r'https://([a-z0-9][a-z0-9-]{0,61}\.myshopify\.com)/admin/(oauth/access_token|api/'
+                         + re.escape(API_VERSION) + r'/graphql\.json)', url)
+    if not match:
+        raise ValueError('Unapproved Shopify read URL')
+    if match[2] == 'oauth/access_token':
+        if kwargs.get('data', {}).get('grant_type') != 'client_credentials':
+            raise ValueError('Unapproved Shopify token grant')
+    else:
+        query = kwargs.get('json', {}).get('query')
+        if not isinstance(query, str) or not query.lstrip().startswith('query ') or re.search(r'\bmutation\b', query):
+            raise ValueError('Only Shopify GraphQL queries are allowed')
+    config = BudgetConfig('', '', '', PRIVATE, None)
+    bucket = 'shopify_proof_budget_' + __import__('hashlib').sha256(match[1].encode()).hexdigest()
+    _shared_read_budget(config, bucket, wait_spacing=True)
+    try:
+        response = requests.post(url, allow_redirects=False, **kwargs)
+    except requests.RequestException:
+        _shared_read_budget(config, bucket, cooldown=5)
+        raise ValueError('Shopify read unavailable') from None
+    delay = 60 if response.status_code in (401, 403, 429) else 5 if response.status_code >= 500 else 0
+    if response.status_code == 200 and match[2] != 'oauth/access_token':
+        try:
+            body = response.json()
+            cost = (body.get('extensions') or {}).get('cost') or {}
+            throttle = cost.get('throttleStatus') or {}
+            requested, available, restore = (cost.get('requestedQueryCost'),
+                throttle.get('currentlyAvailable'), throttle.get('restoreRate'))
+            if all(type(x) in (int, float) and math.isfinite(x) for x in (requested, available, restore)):
+                if requested > available and restore > 0:
+                    delay = max(delay, min(3600, math.ceil((requested - available) / restore)))
+                elif requested > available:
+                    delay = 60
+            if body.get('errors'):
+                delay = max(delay, 60)
+        except (ValueError, TypeError, AttributeError):
+            delay = max(delay, 5)
+    if delay:
+        _shared_read_budget(config, bucket, cooldown=delay)
+    return response
 
 
 def _atomic_save(path: Path, data: dict) -> None:
@@ -184,7 +230,7 @@ def verify_tenant_store(user_id: str, store: str) -> dict:
     config = load_tenant_setup(user_id, store)
     if config.store != store:
         raise ValueError("Tenant store mismatch")
-    response = requests.post(
+    response = _post_read(
         f"https://{store}/admin/oauth/access_token",
         data={"grant_type": "client_credentials", "client_id": config.client_id,
               "client_secret": config.client_secret},
@@ -195,7 +241,7 @@ def verify_tenant_store(user_id: str, store: str) -> dict:
     scopes = frozenset(x.strip() for x in str(body.get("scope", "")).split(","))
     if not REQUIRED_SCOPES.issubset(scopes) or not body.get("access_token"):
         raise ValueError("Tenant Shopify read permissions missing")
-    identity = requests.post(
+    identity = _post_read(
         f"https://{store}/admin/api/{API_VERSION}/graphql.json",
         json={"query": "query { shop { myshopifyDomain } }"},
         headers={"X-Shopify-Access-Token": str(body["access_token"]),
@@ -211,7 +257,7 @@ def verify_tenant_store(user_id: str, store: str) -> dict:
 def read_tenant_owner_proof(user_id: str, store: str) -> str | None:
     """Read the store-owned challenge without writing Shopify data."""
     config = load_tenant_setup(user_id, store)
-    token_response = requests.post(f"https://{store}/admin/oauth/access_token",
+    token_response = _post_read(f"https://{store}/admin/oauth/access_token",
         data={"grant_type":"client_credentials","client_id":config.client_id,"client_secret":config.client_secret},
         timeout=20)
     if token_response.status_code != 200:
@@ -220,7 +266,7 @@ def read_tenant_owner_proof(user_id: str, store: str) -> str | None:
     scopes = set(str(token_data.get("scope", "")).split(","))
     if not REQUIRED_SCOPES.issubset(scopes) or not token_data.get("access_token"):
         raise ValueError("Tenant token lacks permissions")
-    response = requests.post(f"https://{store}/admin/api/{API_VERSION}/graphql.json",
+    response = _post_read(f"https://{store}/admin/api/{API_VERSION}/graphql.json",
         json={"query":'query { shop { myshopifyDomain metafield(namespace:"vericon",key:"owner_proof") { value } } }'},
         headers={"X-Shopify-Access-Token":token_data["access_token"]}, timeout=20)
     if response.status_code != 200:
@@ -234,7 +280,7 @@ def read_tenant_owner_proof(user_id: str, store: str) -> str | None:
 def get_access_token(config: Config) -> str:
     if config.store != STORE:
         raise ValueError("Shopify store is not the approved store")
-    r = requests.post(
+    r = _post_read(
         f"https://{STORE}/admin/oauth/access_token",
         data={"grant_type": "client_credentials",
               "client_id": config.client_id,
@@ -256,7 +302,7 @@ def get_access_token(config: Config) -> str:
 def verify_installed_store(config: Config) -> dict:
     """Verify the app token targets the approved shop; not customer ownership proof."""
     token = get_access_token(config)
-    response = requests.post(
+    response = _post_read(
         f"https://{STORE}/admin/api/{API_VERSION}/graphql.json",
         json={"query": "query { shop { myshopifyDomain } }"},
         headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"},
@@ -273,7 +319,7 @@ def verify_installed_store(config: Config) -> dict:
 def read_owner_proof(config: Config) -> str | None:
     """Read only the shop-level VERICON challenge, never mutate the shop."""
     token = get_access_token(config)
-    response = requests.post(f"https://{STORE}/admin/api/{API_VERSION}/graphql.json",
+    response = _post_read(f"https://{STORE}/admin/api/{API_VERSION}/graphql.json",
         json={"query": 'query { shop { myshopifyDomain metafield(namespace:"vericon",key:"owner_proof") { value } } }'},
         headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"}, timeout=20)
     if response.status_code != 200:
@@ -291,7 +337,7 @@ def read_stock(config: Config, sku: str) -> dict:
     if not SKU_PATTERN.fullmatch(sku):
         raise ValueError("Invalid SKU; refusing unsafe inventory query")
     token = get_access_token(config)
-    response = requests.post(
+    response = _post_read(
         f"https://{STORE}/admin/api/{API_VERSION}/graphql.json",
         json={"query": STOCK_QUERY, "variables": {"search": f"sku:{sku}"}},
         headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"},
@@ -436,7 +482,7 @@ def check_many(skus: list[str]) -> dict:
 def read_shopify_test_orders() -> list[dict]:
     """Read at most five recent test orders; block an incomplete result window."""
     token = get_access_token(load_setup())
-    response = requests.post(
+    response = _post_read(
         f"https://{STORE}/admin/api/{API_VERSION}/graphql.json",
         json={"query": BATCH_ORDER_QUERY},
         headers={"X-Shopify-Access-Token": token}, timeout=20)
@@ -462,7 +508,7 @@ def read_shopify_test_orders() -> list[dict]:
 def read_shopify_test_order() -> dict:
     """Read only pilot order #1001, without customer information or writes."""
     token = get_access_token(load_setup())
-    response = requests.post(
+    response = _post_read(
         f"https://{STORE}/admin/api/{API_VERSION}/graphql.json",
         json={"query": PILOT_ORDER_QUERY}, headers={"X-Shopify-Access-Token": token}, timeout=20)
     response.raise_for_status()
@@ -521,5 +567,7 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
+    except HTTPException as exc:
+        raise SystemExit(f"BLOCKED: provider read budget; retry after {(exc.headers or {}).get('Retry-After', 'unknown')} seconds") from None
     except (ValueError, PermissionError, FileExistsError, requests.RequestException) as exc:
         raise SystemExit(f"BLOCKED: {exc}") from None

@@ -16,6 +16,45 @@ class FakeResponse:
         return self._body
 
 
+@pytest.fixture(autouse=True)
+def isolated_read_budget(tmp_path, monkeypatch):
+    monkeypatch.setattr(s, 'PRIVATE', tmp_path / 'private')
+    monkeypatch.setattr(s, 'CONFIG_FILE', tmp_path / 'private' / 'shopify_setup.json')
+
+
+@pytest.mark.parametrize('failure', ['throttle', 'cost', 'timeout', 'redirect'])
+def test_all_shopify_reads_share_bounded_transport(monkeypatch, failure):
+    import qbo_oauth as q
+    clock = [1000.0]
+    monkeypatch.setattr(q.time, 'time', lambda: clock[0])
+    monkeypatch.setattr(q.time, 'sleep', lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    calls = []
+    def post(url, **kwargs):
+        assert kwargs['allow_redirects'] is False
+        calls.append(url)
+        if failure == 'timeout':
+            raise s.requests.Timeout('PRIVATE')
+        return FakeResponse(status=429 if failure == 'throttle' else 302 if failure == 'redirect' else 200,
+            body={'data': {'shop': {}}, 'extensions': {'cost': {'requestedQueryCost': 50,
+                'throttleStatus': {'currentlyAvailable': 0, 'restoreRate': 10}}}})
+    monkeypatch.setattr(s.requests, 'post', post)
+    url = f'https://{s.STORE}/admin/api/{s.API_VERSION}/graphql.json'
+    if failure == 'timeout':
+        with pytest.raises(ValueError, match='unavailable'):
+            s._post_read(url, json={'query': 'query { shop { id } }'})
+    else:
+        s._post_read(url, json={'query': 'query { shop { id } }'})
+    if failure != 'redirect':
+        with pytest.raises(q.HTTPException) as exc:
+            s._post_read(url, json={'query': 'query { shop { id } }'})
+        assert exc.value.status_code == 429
+    with pytest.raises(ValueError):
+        s._post_read(url, json={'query': 'mutation { anything }'})
+    with pytest.raises(ValueError):
+        s._post_read('https://unapproved.example/admin/oauth/access_token', data={})
+    assert len(calls) == 1
+
+
 @pytest.fixture()
 def cred():
     return s.Config(client_id="fake-id", client_secret="fake-not-real")
@@ -58,7 +97,7 @@ def records():
 def install_fake_requests(monkeypatch, stock_response):
     seen = []
 
-    def post(url, *, data=None, json=None, headers=None, timeout=None):
+    def post(url, *, data=None, json=None, headers=None, timeout=None, allow_redirects=False):
         seen.append({"url": url, "data": data, "json": json, "headers": headers, "timeout": timeout})
         if url.endswith("/oauth/access_token"):
             return FakeResponse(body={"access_token": "NON_REAL_TEST_TOKEN",
@@ -82,7 +121,7 @@ def test_get_token_only_approved_store_and_read_scopes(cred, monkeypatch):
 
 def test_installed_store_verification_is_not_user_ownership(cred, monkeypatch):
     seen = []
-    def post(url, *, data=None, json=None, headers=None, timeout=None):
+    def post(url, *, data=None, json=None, headers=None, timeout=None, allow_redirects=False):
         seen.append(url)
         if url.endswith('/oauth/access_token'):
             return FakeResponse(body={"access_token":"FAKE", "scope":"read_products,read_inventory,read_locations"})
@@ -91,7 +130,7 @@ def test_installed_store_verification_is_not_user_ownership(cred, monkeypatch):
     result = s.verify_installed_store(cred)
     assert result == {"store":s.STORE,"app_access_verified":True,"user_ownership_verified":False}
     assert len(seen) == 2
-    def wrong(url, *, data=None, json=None, headers=None, timeout=None):
+    def wrong(url, *, data=None, json=None, headers=None, timeout=None, allow_redirects=False):
         if url.endswith('/oauth/access_token'):
             return FakeResponse(body={"access_token":"FAKE", "scope":"read_products,read_inventory,read_locations"})
         return FakeResponse(body={"data":{"shop":{"myshopifyDomain":"other.myshopify.com"}}})
@@ -297,9 +336,7 @@ def test_shopify_source_has_no_graphql_mutation_calls():
                 continue
             if isinstance(call.func.value, ast.Name) and call.func.value.id == "requests":
                 outbound.add((fn.name, call.func.attr))
-    assert outbound == {("get_access_token", "post"), ("verify_installed_store", "post"), ("read_stock", "post"), ("read_owner_proof", "post"), ("verify_tenant_store", "post"), ("read_tenant_owner_proof", "post"),
-                        ("read_shopify_test_order", "post"),
-                        ("read_shopify_test_orders", "post")}
+    assert outbound == {("_post_read", "post")}
     assert s.STOCK_QUERY.lstrip().startswith("query ")
     assert "mutation" not in s.STOCK_QUERY.lower()
     assert s.PILOT_ORDER_QUERY.lstrip().startswith("query ")
@@ -391,7 +428,7 @@ def test_verify_tenant_store_uses_only_tenant_domain(tmp_path, monkeypatch):
     owner=str(uuid.uuid4()); store="tenant-b.myshopify.com"
     s.save_tenant_setup(owner,store,"TEST_B_ID","TEST_B_SECRET")
     urls=[]
-    def fake_post(url, *, data=None, json=None, headers=None, timeout=None):
+    def fake_post(url, *, data=None, json=None, headers=None, timeout=None, allow_redirects=False):
         urls.append(url)
         assert store in url and s.STORE not in url
         if url.endswith("/oauth/access_token"):
@@ -411,7 +448,7 @@ def test_verify_tenant_store_rejects_wrong_shop_identity(tmp_path, monkeypatch):
     monkeypatch.setattr(s,"PRIVATE",tmp_path / "private")
     owner=str(uuid.uuid4());store="tenant-b.myshopify.com"
     s.save_tenant_setup(owner,store,"TEST_ID","TEST_SECRET")
-    def fake_post(url, *, data=None, json=None, headers=None, timeout=None):
+    def fake_post(url, *, data=None, json=None, headers=None, timeout=None, allow_redirects=False):
         if url.endswith("/oauth/access_token"):
             return FakeResponse(body={"access_token":"FAKE","scope":"read_products,read_inventory,read_locations"})
         return FakeResponse(body={"data":{"shop":{"myshopifyDomain":s.STORE}}})

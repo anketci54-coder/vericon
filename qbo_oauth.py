@@ -203,14 +203,22 @@ class _TokenExchangeRefused(ValueError):
 
 
 def _exchange(config: Config, params: dict[str, str]) -> dict:
-    response = requests.post(
-        TOKEN_URL,
-        auth=(config.client_id, config.client_secret),
-        data=params,
-        headers={"Accept": "application/json"},
-        timeout=20,
-    )
+    budget = config
+    bucket = 'qbo_token_budget_' + hashlib.sha256((config.client_id + ':' + str(config.expected_realm)).encode()).hexdigest()
+    _shared_read_budget(budget, bucket, wait_spacing=True)
+    try:
+        response = requests.post(
+            TOKEN_URL,
+            auth=(config.client_id, config.client_secret),
+            data=params,
+            headers={"Accept": "application/json"},
+            timeout=20,
+        )
+    except requests.RequestException:
+        _shared_read_budget(budget, bucket, cooldown=5)
+        raise
     if response.status_code != 200:
+        _shared_read_budget(budget, bucket, cooldown=60 if response.status_code < 500 else 5)
         invalid_grant = False
         if response.status_code == 400 and params.get('grant_type') == 'refresh_token':
             try:
@@ -329,8 +337,9 @@ def _tenant_count_budget(config: Config, *, cooldown: int = 0) -> None:
     _shared_read_budget(config, 'qbo_count_budget_' + config.expected_realm, cooldown=cooldown)
 
 
-def _shared_read_budget(config: Config, bucket: str, *, cooldown: int = 0) -> None:
-    """On-host 60/min, 0.5s spacing and persisted cooldown; no sleeping/retry."""
+def _shared_read_budget(config: Config, bucket: str, *, cooldown: int = 0,
+                        wait_spacing: bool = False) -> None:
+    """On-host 60/min, 0.5s spacing and persisted cooldown; no provider retry."""
     if not re.fullmatch(r'[a-z0-9_-]{1,100}', bucket):
         raise ValueError('Invalid read budget bucket')
     _secure_dir(config)
@@ -358,12 +367,41 @@ def _shared_read_budget(config: Config, bucket: str, *, cooldown: int = 0) -> No
                 state.update(start=now, used=0)
             until = max(state['next'], state['start'] + 60 if state['used'] >= 60 else 0,
                         state['start'] if now < state['start'] else 0)
+            # CLI serialization only: at most 0.5s, never a provider retry or
+            # sleeping through a quota/cooldown. The flock spans admission.
+            if wait_spacing and 0 < until - now <= 0.5:
+                time.sleep(until - now)
+                now = time.time()
             if until > now:
                 raise HTTPException(429, 'Tenant read rate limited',
                                     headers={'Retry-After': str(max(1, math.ceil(until - now)))})
             state['used'] += 1
             state['next'] = now + 0.5
         _atomic_write(path, json.dumps(state).encode())
+
+
+def bounded_query_get(url: str, *, params: dict, headers: dict, timeout: int = 20,
+                      budget_dir: Path | None = None):
+    """Every CLI data GET shares the HTTP count realm budget; no redirects/retry."""
+    match = re.fullmatch(re.escape(SANDBOX_API) + r'/v3/company/([0-9]{1,32})/query', url)
+    query = params.get('query')
+    if (not match or not isinstance(query, str) or not re.match(
+            r'^SELECT (?:\*|COUNT\(\*\)) FROM (?:Invoice|Payment|CreditMemo|PurchaseOrder|Bill|Item|Preferences)\b', query)
+            or any(c in query for c in (';', '\n', '\r'))
+            or set(params) - {'query', 'minorversion', 'include'}):
+        raise ValueError('Only approved Sandbox GET /query reads are allowed')
+    config = Config('', '', '', budget_dir or BASE_DIR / 'private', match[1])
+    bucket = 'qbo_count_budget_' + match[1]
+    _shared_read_budget(config, bucket, wait_spacing=True)
+    try:
+        response = requests.get(url, params=params, headers=headers, timeout=timeout, allow_redirects=False)
+    except requests.RequestException:
+        _shared_read_budget(config, bucket, cooldown=5)
+        raise ValueError('QuickBooks read unavailable') from None
+    delay = 60 if response.status_code in (401, 403, 429) else 5 if response.status_code >= 500 else 0
+    if delay:
+        _shared_read_budget(config, bucket, cooldown=delay)
+    return response
 
 
 def _read_shopify_proof_with_budget(config: Config, store: str, read):
@@ -490,7 +528,7 @@ def get_access_token(config: Config, *, force_refresh: bool = False) -> tuple[st
 
 def _query_item(config: Config, query: str) -> dict:
     access_token, realm = get_access_token(config)
-    response = requests.get(
+    response = bounded_query_get(
         f"{SANDBOX_API}/v3/company/{realm}/query",
         params={"query": query},
         headers={"Authorization": "Bearer " + access_token, "Accept": "application/json"},
@@ -525,17 +563,19 @@ def read_home_currency(config: Config) -> str | None:
     No FX inference or conversion is permitted in the sandbox price check.
     """
     token, realm = get_access_token(config)
-    response = requests.get(
-        f"{SANDBOX_API}/v3/company/{realm}/preferences",
+    response = bounded_query_get(
+        f"{SANDBOX_API}/v3/company/{realm}/query",
+        params={"query": "SELECT * FROM Preferences"},
         headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
         timeout=20,
     )
     if response.status_code != 200:
         raise ValueError(f"QuickBooks preferences GET failed (HTTP {response.status_code})")
     payload = response.json()
-    prefs = payload.get("Preferences")
-    if payload.get("Fault") or not isinstance(prefs, dict):
+    rows = (payload.get("QueryResponse") or {}).get("Preferences")
+    if payload.get("Fault") or not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
         raise ValueError("QuickBooks preferences unavailable")
+    prefs = rows[0]
     currency = prefs.get("CurrencyPrefs") or {}
     if currency.get("MultiCurrencyEnabled") is not False:
         return None  # Different selling currencies may apply; block price comparison.

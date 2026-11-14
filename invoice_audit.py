@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import hashlib
-from concurrent.futures import ThreadPoolExecutor
 import os
 import re
 import stat
@@ -20,8 +19,9 @@ from decimal import Decimal, DecimalException, InvalidOperation, ROUND_HALF_UP
 from collections import Counter
 
 import requests
+from fastapi import HTTPException
 
-from qbo_oauth import SANDBOX_API, get_access_token, load_saved_setup
+from qbo_oauth import SANDBOX_API, get_access_token, load_saved_setup, bounded_query_get
 
 MAX_INVOICES = 100
 USD_REVIEW_TOLERANCE = Decimal("0.005")
@@ -203,11 +203,11 @@ def audit_financial_components(inv: dict) -> dict:
 
 
 def _get_json(url: str, query: str, headers: dict) -> dict:
-    response = requests.get(url, params={"query": query}, headers=headers, timeout=20)
+    response = bounded_query_get(url, params={"query": query}, headers=headers, timeout=20)
     if response.status_code != 200:
         raise ValueError(f"QuickBooks Sandbox Invoice read failed (HTTP {response.status_code})")
     payload = response.json()
-    if payload.get("Fault") or not isinstance(payload.get("QueryResponse"), dict):
+    if not isinstance(payload, dict) or payload.get("Fault") or not isinstance(payload.get("QueryResponse"), dict):
         raise ValueError("QuickBooks Invoice read incomplete or fault")
     return payload["QueryResponse"]
 
@@ -1313,18 +1313,21 @@ def read_try_pilot_invoices() -> list[dict]:
     ids = [str(row.get("Id") or "") for row in rows if isinstance(row, dict)]
     if len(ids) != count or any(not ident.isdigit() for ident in ids) or len(set(ids)) != count:
         raise ValueError("TRY sandbox invoice IDs missing or duplicate")
-    def get_detail(ident: str) -> dict:
-        response = requests.get(f"{base_url}/invoice/{ident}",
-                                params={"minorversion": "75", "include": "enhancedAllCustomFields"},
-                                headers=headers, timeout=20)
-        response.raise_for_status()
+    # Query is the only approved QBO data endpoint. If enhanced fields are
+    # unavailable here, the reference audit blocks; do not bypass via /invoice.
+    detailed = []
+    for ident in ids:
+        response = bounded_query_get(base_url + "/query",
+            params={"query": f"SELECT * FROM Invoice WHERE Id = '{ident}'",
+                    "minorversion": "75", "include": "enhancedAllCustomFields"},
+            headers=headers, timeout=20)
+        if response.status_code != 200:
+            raise ValueError("TRY sandbox invoice detail refused")
         body = response.json()
-        invoice = body.get("Invoice") if not body.get("Fault") else None
-        if not isinstance(invoice, dict) or str(invoice.get("Id")) != ident:
+        values = (body.get("QueryResponse") or {}).get("Invoice", [])
+        if body.get("Fault") or not isinstance(values, list) or len(values) != 1 or str(values[0].get("Id")) != ident:
             raise ValueError("TRY sandbox invoice detail incomplete")
-        return invoice
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        detailed = list(executor.map(get_detail, ids))
+        detailed.append(values[0])
     return detailed
 
 
@@ -1363,15 +1366,17 @@ def read_try_pilot_credit_memos() -> list[dict]:
         raise ValueError("Pilot CreditMemo IDs invalid or ambiguous")
     detailed = []
     for ident in ids:
-        response = requests.get(url + "/creditmemo/" + ident,
-                                params={"minorversion":"75", "include":"enhancedAllCustomFields"},
-                                headers=headers, timeout=20)
-        response.raise_for_status()
+        response = bounded_query_get(url + "/query",
+            params={"query": f"SELECT * FROM CreditMemo WHERE Id = '{ident}'",
+                    "minorversion": "75", "include": "enhancedAllCustomFields"},
+            headers=headers, timeout=20)
+        if response.status_code != 200:
+            raise ValueError("Pilot CreditMemo detail refused")
         body = response.json()
-        memo = body.get("CreditMemo") if not body.get("Fault") else None
-        if not isinstance(memo, dict) or str(memo.get("Id")) != ident:
+        values = (body.get("QueryResponse") or {}).get("CreditMemo", [])
+        if body.get("Fault") or not isinstance(values, list) or len(values) != 1 or str(values[0].get("Id")) != ident:
             raise ValueError("Pilot CreditMemo detail incomplete")
-        detailed.append(memo)
+        detailed.append(values[0])
     return detailed
 
 
@@ -1393,14 +1398,13 @@ def read_try_pilot_credit_payment(invoice: dict) -> dict:
                     redirect_uri=setup["VERICON_QBO_REDIRECT_URI"],
                     private_dir=vault, expected_realm="9341458641399133")
     token, realm = get_access_token(config)
-    response = requests.get(f"{SANDBOX_API}/v3/company/{realm}/payment/{payment_id}",
-                            headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
-                            timeout=20)
-    response.raise_for_status()
-    data = response.json()
-    payment = data.get("Payment") if not data.get("Fault") else None
-    if not isinstance(payment, dict) or str(payment.get("Id")) != payment_id:
+    data = _get_json(f"{SANDBOX_API}/v3/company/{realm}/query",
+        f"SELECT * FROM Payment WHERE Id = '{payment_id}'",
+        {"Authorization": "Bearer " + token, "Accept": "application/json"})
+    values = data.get("Payment", [])
+    if not isinstance(values, list) or len(values) != 1 or not isinstance(values[0], dict) or str(values[0].get("Id")) != payment_id:
         raise ValueError("Payment response incomplete or unexpected")
+    payment = values[0]
     return payment
 
 
@@ -1689,6 +1693,9 @@ if __name__ == "__main__":
         pilot_order = read_shopify_test_order()
         print(json.dumps(audit_all(invoices, payments, credit_memos, purchase_orders, bills,
                                    shopify_order=pilot_order), ensure_ascii=False))
+    except HTTPException as exc:
+        print(json.dumps({"status": "BLOCKED_PROVIDER_READ_BUDGET", "retry_after": (exc.headers or {}).get('Retry-After')}))
+        raise SystemExit(2) from None
     except ValueError as exc:
         print(json.dumps({"status": "BLOCKED_INVOICE_READ", "reason": str(exc)}))
         raise SystemExit(2) from None

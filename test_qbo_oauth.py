@@ -9,6 +9,11 @@ import pytest
 import qbo_oauth as q
 
 
+@pytest.fixture(autouse=True)
+def isolated_provider_budgets(tmp_path, monkeypatch):
+    monkeypatch.setattr(q, 'BASE_DIR', tmp_path)
+
+
 class FakeResponse:
     def __init__(self, payload, status=200):
         self._payload = payload
@@ -27,6 +32,44 @@ def cfg(tmp_path):
         private_dir=tmp_path / "private",
         expected_realm="12345",
     )
+
+
+def test_cli_query_budget_shares_count_and_refuses_nonquery(cfg, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(q.time, 'time', lambda: clock[0])
+    monkeypatch.setattr(q.time, 'sleep', lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    calls = []
+    monkeypatch.setattr(q.requests, 'get', lambda *a, **kw: calls.append(a[0]) or FakeResponse({}, 429))
+    url = q.SANDBOX_API + '/v3/company/12345/query'
+    q.bounded_query_get(url, params={'query': 'SELECT COUNT(*) FROM Invoice'}, headers={}, budget_dir=cfg.private_dir)
+    with pytest.raises(q.HTTPException) as exc:
+        q._tenant_count_budget(cfg)
+    assert exc.value.status_code == 429 and exc.value.headers['Retry-After'] == '60'
+    for bad in (url.replace('/query', '/invoice/1'), url.replace('sandbox-', ''), url + '?query=bad'):
+        with pytest.raises(ValueError):
+            q.bounded_query_get(bad, params={'query': 'SELECT * FROM Invoice'}, headers={}, budget_dir=cfg.private_dir)
+    assert len(calls) == 1
+
+
+def test_cli_query_budget_reserves_before_network_and_sanitizes_failure(cfg, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(q.time, 'time', lambda: clock[0])
+    monkeypatch.setattr(q.time, 'sleep', lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    calls = []
+    def get(*args, **kwargs):
+        assert kwargs['allow_redirects'] is False
+        calls.append(clock[0])
+        if len(calls) == 2:
+            raise q.requests.Timeout('SECRET_PROVIDER_BODY')
+        return FakeResponse({'QueryResponse': {}})
+    monkeypatch.setattr(q.requests, 'get', get)
+    url = q.SANDBOX_API + '/v3/company/12345/query'
+    q.bounded_query_get(url, params={'query': 'SELECT * FROM Invoice'}, headers={}, budget_dir=cfg.private_dir)
+    with pytest.raises(ValueError, match='unavailable') as error:
+        q.bounded_query_get(url, params={'query': 'SELECT * FROM Invoice'}, headers={}, budget_dir=cfg.private_dir)
+    assert 'SECRET' not in str(error.value) and calls == [1000, 1000.5]
+    with pytest.raises(q.HTTPException):
+        q._tenant_count_budget(cfg)
 
 
 @pytest.mark.parametrize('fault', ['none', 'env', 'permissions', 'symlink', 'missing', 'redirect'])
@@ -261,7 +304,7 @@ def test_stage42_verified_shopify_safe_paths_have_no_side_effects(monkeypatch, p
            'ownership_verified': True}
     monkeypatch.setattr(q, '_verified_customer_subject', lambda header: owner)
     monkeypatch.setenv('VERICON_SUPABASE_PUBLISHABLE_KEY', 'test-public')
-    def get(url, *, params, headers, timeout):
+    def get(url, *, params, headers, timeout, allow_redirects=False):
         assert url.endswith('/vericon_pilot_connections')
         assert params['user_id'] == 'eq.' + owner
         return FakeResponse([row])
@@ -310,7 +353,7 @@ def test_pilot_qbo_owner_requires_matching_rls_record(monkeypatch):
     seen = {}
     row = {"user_id": owner, "qbo_realm_id": "12345", "shop_domain": "hudys3-p0.myshopify.com",
            "connection_status": "pilot_linked"}
-    def get(url, *, params, headers, timeout):
+    def get(url, *, params, headers, timeout, allow_redirects=False):
         seen.update(params=params, headers=headers)
         return FakeResponse([dict(row)])
     monkeypatch.setattr(q.requests, "get", get)
@@ -443,7 +486,7 @@ def test_read_item_is_read_only_and_sanitized(cfg, monkeypatch):
         q.read_inventory_item(unbound, "VERICON TEST")
     seen = {}
 
-    def get(url, *, params, headers, timeout):
+    def get(url, *, params, headers, timeout, allow_redirects=False):
         seen.update(url=url, params=params, headers=headers)
         return FakeResponse({"QueryResponse": {"Item": [{
             "Id": "19", "Name": "VERICON TEST", "Sku": "VERICON-TEST-001",
@@ -552,7 +595,7 @@ def test_force_refresh_rotates_unexpired_tokens(cfg, monkeypatch):
 def test_read_item_by_sku_real_filter(cfg, monkeypatch):
     q._save_tokens(cfg, {"access_token": "A", "refresh_token": "B", "expires_in": 3600}, "12345")
     seen = {}
-    def get(url, *, params, headers, timeout):
+    def get(url, *, params, headers, timeout, allow_redirects=False):
         seen.update(params=params, url=url)
         return FakeResponse({"QueryResponse": {"Item": [{
             "Id": "19", "Name": "VERICON TEST", "Sku": "VERICON-TEST-001",
@@ -595,7 +638,7 @@ def test_qbo_source_has_no_accounting_write_http_calls():
                     assert call.args and isinstance(call.args[0], ast.Name)
                     assert call.args[0].id == "TOKEN_URL"
     assert ("_exchange", "post") in outbound
-    assert ("_query_item", "get") in outbound
+    assert ("bounded_query_get", "get") in outbound
     assert all(method == "get" or (fn in ("_exchange", "disconnect_tenant_quickbooks") and method == "post")
                for fn, method in outbound)
 
@@ -603,19 +646,20 @@ def test_qbo_source_has_no_accounting_write_http_calls():
 def test_qbo_currency_from_preferences_only_when_unambiguous(cfg, monkeypatch):
     q._save_tokens(cfg, {"access_token": "A", "refresh_token": "B", "expires_in": 3600}, "12345")
     seen=[]
-    def get(url, *, headers, timeout):
+    def get(url, *, params, headers, timeout, allow_redirects):
         seen.append(url)
-        return FakeResponse({"Preferences": {"CurrencyPrefs": {
-            "MultiCurrencyEnabled": False, "HomeCurrency": {"value": "USD"}}}})
+        assert params == {"query": "SELECT * FROM Preferences"}
+        return FakeResponse({"QueryResponse": {"Preferences": [{"CurrencyPrefs": {
+            "MultiCurrencyEnabled": False, "HomeCurrency": {"value": "USD"}}}]}})
     monkeypatch.setattr(q.requests,"get",get)
     assert q.read_home_currency(cfg)=="USD"
-    assert seen[0].endswith('/preferences')
+    assert seen[0].endswith('/query')
     monkeypatch.setattr(q.requests,"get",lambda *args,**kwargs: FakeResponse({
-        "Preferences": {"CurrencyPrefs": {"MultiCurrencyEnabled": True,
-                                           "HomeCurrency": {"value": "USD"}}}}))
+        "QueryResponse": {"Preferences": [{"CurrencyPrefs": {"MultiCurrencyEnabled": True,
+                                           "HomeCurrency": {"value": "USD"}}}]}}))
     assert q.read_home_currency(cfg) is None
     monkeypatch.setattr(q.requests,"get",lambda *args,**kwargs: FakeResponse({
-        "Preferences": {"CurrencyPrefs": {"MultiCurrencyEnabled": False}}}))
+        "QueryResponse": {"Preferences": [{"CurrencyPrefs": {"MultiCurrencyEnabled": False}}]}}))
     assert q.read_home_currency(cfg) is None
 
 
@@ -1518,7 +1562,8 @@ def test_stage43_reconnect_error_is_distinct_and_cools_down(stage4_http, monkeyp
     from types import SimpleNamespace
     h = stage4_http; row = h['rows']['A']; cfg = h['cfg']
     now = [time.time()]
-    monkeypatch.setattr(q, 'time', SimpleNamespace(time=lambda: now[0]))
+    monkeypatch.setattr(q, 'time', SimpleNamespace(time=lambda: now[0],
+        sleep=lambda seconds: now.__setitem__(0, now[0] + seconds)))
     if failure == 'invalid_grant':
         q.save_tenant_tokens(cfg, {'access_token': 'fake', 'refresh_token': 'fake', 'expires_in': 0}, user_id=row['user_id'])
     calls = []
@@ -1568,7 +1613,8 @@ def test_stage43_shopify_proof_read_budget_and_cooldown(stage4_http, monkeypatch
     prefix = '/shopify' if pilot else '/tenant/shopify'
     headers = {'Authorization': 'Bearer fixture-A'}
     now = [time.time()]
-    monkeypatch.setattr(q, 'time', SimpleNamespace(time=lambda: now[0]))
+    monkeypatch.setattr(q, 'time', SimpleNamespace(time=lambda: now[0],
+        sleep=lambda seconds: now.__setitem__(0, now[0] + seconds)))
     assert h['client'].request('POST', prefix + '/ownership/start', headers=headers).status_code == 200
     calls = []
     def provider(*args):
