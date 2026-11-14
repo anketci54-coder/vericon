@@ -191,7 +191,11 @@ def test_supabase_session_identity_mismatch_and_network_failure_denied(monkeypat
     assert exc.value.status_code == 503
 
 
-def test_revoked_validly_signed_jwt_denied_at_auth_endpoint(monkeypatch):
+@pytest.mark.parametrize('route', [route for route in q.app.routes
+    if route.path not in ('/health', '/oauth/quickbooks/callback')],
+    ids=lambda route: route.path)
+def test_revoked_validly_signed_jwt_denied_at_authenticated_routes(cfg, monkeypatch, route):
+    """Local signing key + fake Auth response, never a real user session/revoke."""
     import uuid
     from types import SimpleNamespace
     from cryptography.hazmat.primitives.asymmetric import ec
@@ -207,11 +211,20 @@ def test_revoked_validly_signed_jwt_denied_at_auth_endpoint(monkeypatch):
     monkeypatch.setattr(q, "SUPABASE_JWKS", SimpleNamespace(
         get_signing_key_from_jwt=lambda _: SimpleNamespace(key=private.public_key())))
     monkeypatch.setenv("VERICON_SUPABASE_PUBLISHABLE_KEY", "public-test-key")
+    monkeypatch.setattr(q, 'load_saved_setup', lambda: q.replace(cfg,
+        redirect_uri='https://app.vericon.site/oauth/quickbooks/callback'))
+    def forbidden(*args, **kwargs):
+        pytest.fail('revoked session must not reach provider, storage write or external network')
+    monkeypatch.setattr(q.requests, 'post', forbidden)
+    monkeypatch.setattr(q.requests.sessions.Session, 'request', forbidden)
+    monkeypatch.setattr(q, '_atomic_write', forbidden)
     state = {"status": 200}
+    calls = []
     def fake_get(url, *, headers, timeout, allow_redirects):
         assert allow_redirects is False
         assert url == q.SUPABASE_ISSUER + "/user"
         assert headers["Authorization"] == "Bearer " + signed
+        calls.append(state['status'])
         return FakeResponse({"id": subject} if state["status"] == 200 else {},
                             status=state["status"])
     monkeypatch.setattr(q.requests, "get", fake_get)
@@ -222,9 +235,58 @@ def test_revoked_validly_signed_jwt_denied_at_auth_endpoint(monkeypatch):
     first = q.auth_identity(req)
     assert first["authenticated"] is True and first["subject"] == subject
     state["status"] = 403
+    req = Request({"type": "http", "method": next(iter(route.methods)), "path": route.path,
+                   "headers": [(b"authorization", ("Bearer " + signed).encode())],
+                   "query_string": b""})
     with pytest.raises(HTTPException) as exc:
-        q.auth_identity(req)
+        if route.path == '/tenant/finance/invoice-count':
+            route.endpoint(req, realm=cfg.expected_realm)
+        else:
+            route.endpoint(req)
     assert exc.value.status_code == 401
+    assert calls == [200, 403]  # no RLS/provider lookup after revoked Auth response
+    assert not cfg.private_dir.exists()
+
+
+@pytest.mark.parametrize('pilot,operation,expected', [
+    (True, 'start', 409), (True, 'verify', 409), (False, 'start', 200),
+])
+def test_stage42_verified_shopify_safe_paths_have_no_side_effects(monkeypatch, pilot, operation, expected):
+    """Prove the preconditions for safe browser checks without real credentials."""
+    import shopify_read as s
+    from starlette.requests import Request
+    owner = '11111111-1111-4111-8111-111111111111'
+    store = s.STORE if pilot else 'tenant-b.myshopify.com'
+    row = {'user_id': owner, 'shop_domain': store, 'connection_status': 'pilot_linked',
+           'ownership_verified': True}
+    monkeypatch.setattr(q, '_verified_customer_subject', lambda header: owner)
+    monkeypatch.setenv('VERICON_SUPABASE_PUBLISHABLE_KEY', 'test-public')
+    def get(url, *, params, headers, timeout):
+        assert url.endswith('/vericon_pilot_connections')
+        assert params['user_id'] == 'eq.' + owner
+        return FakeResponse([row])
+    monkeypatch.setattr(q.requests, 'get', get)
+    reads = []
+    monkeypatch.setattr(s, 'load_tenant_setup', lambda uid, domain: reads.append((uid, domain)))
+    def forbidden(*args, **kwargs):
+        pytest.fail('already verified start or pilot denial must not touch proof/provider')
+    monkeypatch.setattr(q, 'load_saved_setup', forbidden)
+    monkeypatch.setattr(q, '_atomic_write', forbidden)
+    monkeypatch.setattr(q.requests, 'post', forbidden)
+    monkeypatch.setattr(q.requests.sessions.Session, 'request', forbidden)
+    path = '/tenant/shopify/ownership/' + operation
+    request = Request({'type': 'http', 'method': 'POST', 'path': path,
+                       'headers': [(b'authorization', b'Bearer fixture')], 'query_string': b''})
+    handler = q.tenant_shopify_ownership_start if operation == 'start' else q.tenant_shopify_ownership_verify
+    if expected == 409:
+        with pytest.raises(q.HTTPException) as exc:
+            handler(request)
+        assert exc.value.status_code == expected
+        assert reads == []
+    else:
+        for _ in range(2):
+            assert handler(request) == {'verified': True, 'store': store}
+        assert reads == [(owner, store), (owner, store)]
 
 def test_oauth_persists_verified_user_and_keeps_it_on_refresh(cfg, monkeypatch):
     import uuid
