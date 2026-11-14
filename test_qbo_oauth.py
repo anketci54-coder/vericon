@@ -1216,7 +1216,8 @@ def stage4_http(cfg, monkeypatch):
             user_id=row['user_id'])
         s.save_tenant_setup(row['user_id'], row['shop_domain'], 'fake', 'fake')
     state = {'cfg': cfg, 'ids': ids, 'rows': rows, 'calls': [], 'rls_fault': None,
-             'proof_values': {}, 'revoke_status': 200}
+             'proof_values': {}, 'revoke_status': 200,
+             'verify_subject': q._verified_customer_subject}
     def identity(header):
         if header not in ('Bearer fixture-A', 'Bearer fixture-B'):
             raise q.HTTPException(401, 'Fixture authentication required')
@@ -1301,6 +1302,64 @@ def stage4_http(cfg, monkeypatch):
 
 def test_stage4_route_inventory_is_exhaustive():
     assert {(method, r.path) for r in q.app.routes for method in r.methods} == set(STAGE4_ROUTES)
+
+
+@pytest.mark.parametrize('actor', ['A', 'B'])
+def test_stage42_signed_http_authorization_matrix(stage4_http, monkeypatch, actor):
+    """Real HTTP and JWT verification; local signing keys, fake Auth/RLS only."""
+    import uuid
+    import shopify_read as s
+    from types import SimpleNamespace
+    from cryptography.hazmat.primitives.asymmetric import ec
+    h = stage4_http
+    h['rows']['A']['shop_domain'] = s.STORE
+    for row in h['rows'].values():
+        row['financial_access_enabled'] = False
+    monkeypatch.setenv('VERICON_PILOT_INVOICE_COUNT_REALMS', '12345,67890')
+    monkeypatch.setattr(q, '_verified_customer_subject', h['verify_subject'])
+    private = ec.generate_private_key(ec.SECP256R1())
+    monkeypatch.setattr(q, 'SUPABASE_JWKS', SimpleNamespace(
+        get_signing_key_from_jwt=lambda _: SimpleNamespace(key=private.public_key())))
+    now = int(time.time())
+    signed = q.jwt.encode({'sub': h['ids'][actor], 'session_id': str(uuid.uuid4()),
+        'iss': q.SUPABASE_ISSUER, 'aud': 'authenticated', 'iat': now, 'exp': now + 120,
+        'role': 'authenticated'}, private, algorithm='ES256')
+    headers = {'Authorization': 'Bearer ' + signed}
+    fixture_get = q.requests.get
+    active = [True]
+    def get(url, **kwargs):
+        assert kwargs['headers']['Authorization'] == headers['Authorization']
+        if url == q.SUPABASE_ISSUER + '/user':
+            return FakeResponse({'id': h['ids'][actor]}, 200 if active[0] else 403)
+        kwargs['headers'] = {**kwargs['headers'], 'Authorization': 'Bearer fixture-' + actor}
+        return fixture_get(url, **kwargs)
+    monkeypatch.setattr(q.requests, 'get', get)
+    before = h['snapshot']()
+    call = lambda method, path, **kw: h['client'].request(method, path, headers=headers, **kw)
+    assert call('GET', '/auth/me').json()['subject'] == h['ids'][actor]
+    access = call('GET', '/tenant/finance/access-check')
+    assert access.status_code == 200 and access.json()['financial_access_enabled'] is False
+    peer = h['rows']['B' if actor == 'A' else 'A']
+    assert call('GET', '/tenant/finance/invoice-count',
+                params={'realm': peer['qbo_realm_id']}).status_code == 403
+    if actor == 'B':
+        for path in ('/oauth/quickbooks/start', '/shopify/ownership/start', '/shopify/ownership/verify'):
+            assert call('POST', path).status_code == 403
+        for _ in range(2):
+            assert call('POST', '/tenant/shopify/ownership/start').json() == {
+                'verified': True, 'store': h['rows'][actor]['shop_domain']}
+    else:
+        for path in ('/tenant/shopify/ownership/start', '/tenant/shopify/ownership/verify'):
+            assert call('POST', path).status_code == 409
+    for method, path in STAGE4_OWNED_ROUTES:
+        h['rls_fault'] = 'cross'
+        assert call(method, path, params={'realm': h['rows'][actor]['qbo_realm_id']}).status_code == 403
+    h['rls_fault'] = None
+    active[0] = False
+    for method, path in STAGE4_ROUTES:
+        if path not in ('/health', '/oauth/quickbooks/callback'):
+            assert call(method, path, params={'realm': h['rows'][actor]['qbo_realm_id']}).status_code == 401
+    assert h['snapshot']() == before and h['calls'] == []
 
 
 @pytest.mark.parametrize('actor', ['A', 'B'])
