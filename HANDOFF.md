@@ -4,7 +4,9 @@ Güncelleme: 2026-11-16
 Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 
 ## Şu an tek açık iş
-**ADIM 3B: Shopify `read_orders` (scope artışı). KARAR BEKLİYOR.** Kullanıcı onayı olmadan başlanmaz (AGENTS 4, 6).
+**ADIM 3B: `GET /tenant/shopify/orders?store=&first=`** (dal `3b-orders`, main'e birleşmedi). Scope artışı yok (3B-0: B'de `read_orders` var).
+Kabul: B→B 200 (yalnız sipariş no, createdAt, currency, toplam/vergi/indirim, ödeme durumu, iade, işlem tutarı; müşteri adı/e-posta/adres/telefon ve token yok); çapraz store 403; bayrak false 403; `first` 1–25 dışı 400; kimlik dosyası yok (A) → 503, veri yok; oturumsuz 401. Yalnız GraphQL `query`, `read_orders` ayrı kontrol, `REQUIRED_SCOPES` değişmez.
+Kod + HTTP kapı testi dalda BİTTİ. Kalan: main'e birleştirme, dağıtım (Nginx, restart) ve canlı B→B ölçümü; her biri ayrı kullanıcı onayıyla.
 
 ## BİTTİ
 - Adım 1, Adım 2 (A=`hudys3-p0` realm `9341458613758425`, B=`vericon-tenant-b-test` realm `9341458641399133` = TRY realm; tenant ve legacy token yolları ayrı).

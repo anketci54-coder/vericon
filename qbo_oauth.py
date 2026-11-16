@@ -42,7 +42,7 @@ app = FastAPI(title="VERICON QBO sandbox connector", docs_url=None, redoc_url=No
 @app.middleware("http")
 async def reject_unauthenticated_data_routes(request, call_next):
     # Only a token-validation endpoint is allowed; customer data stays closed.
-    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me", "/shopify/ownership/start", "/shopify/ownership/verify", "/tenant/quickbooks/start", "/tenant/shopify/ownership/start", "/tenant/shopify/ownership/verify", "/tenant/finance/access-check", "/tenant/finance/invoice-count", "/tenant/finance/documents", "/tenant/quickbooks/disconnect"):
+    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me", "/shopify/ownership/start", "/shopify/ownership/verify", "/tenant/quickbooks/start", "/tenant/shopify/ownership/start", "/tenant/shopify/ownership/verify", "/tenant/finance/access-check", "/tenant/finance/invoice-count", "/tenant/finance/documents", "/tenant/shopify/orders", "/tenant/quickbooks/disconnect"):
         return PlainTextResponse("Forbidden", status_code=403)
     return await call_next(request)
 
@@ -832,6 +832,24 @@ def tenant_finance_documents(request: Request, realm: str, start: int = 1, limit
         result = read_tenant_documents(config, user_id=connection["user_id"], start=start, limit=limit)
     except (ValueError, OSError, requests.RequestException):
         raise HTTPException(status_code=503, detail="Financial read unavailable") from None
+    return {**result, "read_only": True}
+
+
+@app.get("/tenant/shopify/orders")
+def tenant_shopify_orders(request: Request, store: str = "", first: int = 10) -> dict:
+    """Bounded read-only page of the tenant's own Shopify orders; no tokens or customer data."""
+    from shopify_read import TENANT_ORDER_MAX_PAGE, read_tenant_orders
+    connection = _authorized_tenant_connection(request.headers.get("authorization"))
+    if store != connection["store"]:
+        raise HTTPException(status_code=403, detail="Cross-tenant order access denied")
+    if connection.get("financial_access_enabled") is not True:
+        raise HTTPException(status_code=403, detail="Financial read not enabled")
+    if not 1 <= first <= TENANT_ORDER_MAX_PAGE:
+        raise HTTPException(status_code=400, detail="Invalid page window")
+    try:
+        result = read_tenant_orders(connection["user_id"], connection["store"], first=first)
+    except (ValueError, OSError, requests.RequestException):
+        raise HTTPException(status_code=503, detail="Shopify order read unavailable") from None
     return {**result, "read_only": True}
 
 

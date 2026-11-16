@@ -1221,7 +1221,7 @@ def test_malformed_pilot_grant_fails_closed_before_startup(monkeypatch, value):
 STAGE4_ROUTES = [
     ('GET', '/auth/me'), ('GET', '/health'),
     ('GET', '/tenant/finance/access-check'), ('GET', '/tenant/finance/invoice-count'),
-    ('GET', '/tenant/finance/documents'),
+    ('GET', '/tenant/finance/documents'), ('GET', '/tenant/shopify/orders'),
     ('POST', '/shopify/ownership/start'), ('POST', '/shopify/ownership/verify'),
     ('POST', '/tenant/shopify/ownership/start'), ('POST', '/tenant/shopify/ownership/verify'),
     ('POST', '/oauth/quickbooks/start'), ('POST', '/tenant/quickbooks/disconnect'),
@@ -1894,3 +1894,46 @@ def test_stage4_http_documents_realm_and_flag_gates(stage4_http, monkeypatch, ac
     assert body['realm'] == row['qbo_realm_id'] and body['read_only'] is True
     assert set(body['documents']) == {'Invoice', 'Payment', 'CreditMemo'}
     assert h['calls'] == [('query', q.SANDBOX_API + f"/v3/company/{row['qbo_realm_id']}/query")] * 3
+
+
+def test_stage4_http_shopify_orders_store_flag_and_credential_gates(stage4_http, monkeypatch):
+    """Real HTTP and real gates; only identity, RLS rows and Shopify responses are fixtures."""
+    import shopify_read as s
+    h = stage4_http
+    row, peer = h['rows']['B'], h['rows']['A']
+    fixture_post = q.requests.post
+    def post(url, **kw):
+        if url.endswith('/access_token'):
+            h['calls'].append(('post', url))
+            return FakeResponse({'access_token': 'fake-shop-token',
+                                 'scope': ','.join(s.REQUIRED_SCOPES | {'read_orders'})})
+        if url.endswith('/graphql.json') and 'orders(' in kw['json']['query']:
+            h['calls'].append(('post', url))
+            assert kw['json']['query'].startswith('query ') and 'mutation' not in kw['json']['query']
+            assert kw['json']['variables'] == {'first': 2}
+            return FakeResponse({'data': {'orders': {'pageInfo': {'hasNextPage': False},
+                'nodes': [{'name': '#1001', 'currencyCode': 'USD'}]}}})
+        return fixture_post(url, **kw)
+    monkeypatch.setattr(q.requests, 'post', post)
+    def call(store, first=2):
+        return h['client'].request('GET', '/tenant/shopify/orders', params={'store': store, 'first': first},
+                                   headers={'Authorization': 'Bearer fixture-B'})
+    before = h['snapshot']()
+    assert call(peer['shop_domain']).status_code == 403
+    row['financial_access_enabled'] = False
+    assert call(row['shop_domain']).status_code == 403
+    row['financial_access_enabled'] = True
+    assert call(row['shop_domain'], first=26).status_code == 400
+    assert h['calls'] == [] and h['snapshot']() == before
+    own = call(row['shop_domain'])
+    assert own.status_code == 200 and 'fake-shop-token' not in own.text
+    assert own.json() == {'store': row['shop_domain'], 'orders': [{'name': '#1001', 'currencyCode': 'USD'}],
+                          'has_next_page': False, 'read_only': True}
+    for field in ('customer', 'email', 'phone', 'Address'):
+        assert field not in s.TENANT_ORDER_QUERY
+    # Missing tenant credential file: clean error, no provider call, no data.
+    s._tenant_setup_path(row['user_id'], row['shop_domain']).unlink()
+    h['calls'].clear()
+    missing = call(row['shop_domain'])
+    assert missing.status_code == 503 and 'orders' not in missing.json()
+    assert h['calls'] == []

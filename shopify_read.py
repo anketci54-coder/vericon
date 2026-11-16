@@ -277,6 +277,59 @@ def read_tenant_owner_proof(user_id: str, store: str) -> str | None:
     return ((((data.get("data") or {}).get("shop") or {}).get("metafield") or {}).get("value"))
 
 
+ORDER_READ_SCOPE = "read_orders"
+TENANT_ORDER_MAX_PAGE = 25
+# Money and status fields only: no customer name, email, address or phone.
+TENANT_ORDER_QUERY = '''query VericonTenantOrders($first: Int!) {
+  orders(first: $first, sortKey: ID) {
+    pageInfo { hasNextPage }
+    nodes {
+      name createdAt currencyCode displayFinancialStatus test
+      subtotalPriceSet { shopMoney { amount currencyCode } }
+      totalTaxSet { shopMoney { amount currencyCode } }
+      totalDiscountsSet { shopMoney { amount currencyCode } }
+      totalPriceSet { shopMoney { amount currencyCode } }
+      refunds { createdAt totalRefundedSet { shopMoney { amount currencyCode } } }
+      transactions(first: 10) { kind status amountSet { shopMoney { amount currencyCode } } }
+    }
+  }
+}'''
+
+
+def read_tenant_orders(user_id: str, store: str, first: int = 10) -> dict:
+    """Bounded read-only page of the tenant's own orders; token never returned."""
+    if type(first) is not int or not 1 <= first <= TENANT_ORDER_MAX_PAGE:
+        raise ValueError("Invalid order page window")
+    config = load_tenant_setup(user_id, store)
+    token_response = _post_read(f"https://{store}/admin/oauth/access_token",
+        data={"grant_type": "client_credentials", "client_id": config.client_id,
+              "client_secret": config.client_secret},
+        headers={"Accept": "application/json"}, timeout=20)
+    if token_response.status_code != 200:
+        raise ValueError("Tenant Shopify token refused")
+    token_data = token_response.json()
+    scopes = frozenset(x.strip() for x in str(token_data.get("scope", "")).split(","))
+    # Separate from REQUIRED_SCOPES: stock and ownership reads never need orders.
+    if ORDER_READ_SCOPE not in scopes or not token_data.get("access_token"):
+        raise ValueError("Tenant Shopify order permission missing")
+    response = _post_read(f"https://{store}/admin/api/{API_VERSION}/graphql.json",
+        json={"query": TENANT_ORDER_QUERY, "variables": {"first": first}},
+        headers={"X-Shopify-Access-Token": str(token_data["access_token"]),
+                 "Content-Type": "application/json"}, timeout=20)
+    if response.status_code != 200:
+        raise ValueError("Tenant Shopify order read refused")
+    body = response.json()
+    if not isinstance(body, dict) or body.get("errors"):
+        raise ValueError("Tenant Shopify order read incomplete")
+    conn = (body.get("data") or {}).get("orders")
+    if not isinstance(conn, dict) or not isinstance(conn.get("nodes"), list):
+        raise ValueError("Tenant Shopify order read incomplete")
+    if len(conn["nodes"]) > first or any(not isinstance(o, dict) for o in conn["nodes"]):
+        raise ValueError("Tenant Shopify order page invalid")
+    return {"store": store, "orders": conn["nodes"],
+            "has_next_page": (conn.get("pageInfo") or {}).get("hasNextPage") is True}
+
+
 def get_access_token(config: Config) -> str:
     if config.store != STORE:
         raise ValueError("Shopify store is not the approved store")
