@@ -14,6 +14,8 @@ Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 - Shopify kimlik dosyası (yalnız ad listelendi): `private/shopify_tenants/` içinde 1 dosya, B (`vericon-tenant-b-test.myshopify.com`). A için dosya yok.
 - 8787 `QBO_OAUTH_CALLBACK_FAILURE`: 50 kayıt, hepsi `ValueError`. 13-11: 36 `state_validation_failure` (3 patlama × 12, aynı saniye) + 5 `other_failure` (her biri servis restartından 3–4 sn sonra). 14-11: 6 (5 other, 1 state). 16-11: 08:29 1 state, 11:01 2 other. Hepsi Nginx üzerinden geldi (callback durum logunda 50 upstream 400 + 63 adet 429 + 1 adet 200). Callback logu IP/zaman tutmuyor; ana access.log'da 13-11 13:46'ya kadarki callback çağrıları VPS'in kendi IP'sinden (curl/python-requests). Ajan oturum kayıtlarında 16-11 08:29 ve 11:01'e denk gelen callback çağrısı yok.
 
+- 3B-0 (2026-11-16, tek client_credentials isteği, yalnız B): HTTP 200, scope = read_inventory, read_locations, read_orders, read_products. B'de `read_orders` zaten verili; scope artışı gerekmiyor. `REQUIRED_SCOPES` değişmedi.
+
 ## BLOKE
 - 16-11 08:29 ve 11:01 callback hatalarının kaynağı: IP/zaman kaydı yok, kanıtla belirlenemiyor. Kullanıcı o saatlerde OAuth/bağlantı sayfası açtı mı, kullanıcıdan teyit.
 - Eski CLI `invalid_grant` doğrulanmadı (dış çağrı gerekir).
