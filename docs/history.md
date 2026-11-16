@@ -487,3 +487,9 @@ A/B kendi Sandbox hesapları için, yalnızca okuma yetkisiyle `financial_access
 
 ## Fikir kutusu
 `IDEAS.md`
+
+
+## 2026-11-16 HANDOFF devri (Adım 3B)
+- 3B-0 (2026-11-16, tek client_credentials isteği, yalnız B): HTTP 200, scope = read_inventory, read_locations, read_orders, read_products. B'de `read_orders` zaten verili; scope artışı gerekmiyor. `REQUIRED_SCOPES` değişmedi.
+- **Dağıtım 3B** (2026-11-16 11:47 EET, kod `edf9e15`): Nginx diff yalnız `/tenant/shopify/orders` bloğu; yedek `/root/backup-nginx/vericon-app.conf.20261116-114739`; `nginx -t` temiz, reload; dış /health 200. 8787→8788→8789 sırayla restart, her biri active + yerel /health 200. Oturumsuz GET orders: önce 404, sonra 401; POST 403. Dinleyen: 8787–8789 (+ 8771 Senal Plastik, dokunulmadı).
+- **3B-A** (2026-11-16, kullanıcı onayı): legacy kasa mağazası `hudys3-p0` doğrulandı; `save_tenant_setup` ile A dosyası yazıldı (`private/shopify_tenants/ab87c520-…_hudys3-p0.myshopify.com.json`, 0600, + store lock); B dosyasına dokunulmadı. Tek client_credentials isteği HTTP 200, scope = read_inventory, read_locations, read_orders, read_products (`read_orders` var).

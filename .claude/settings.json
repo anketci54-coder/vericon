@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git fetch:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git ls-remote:*)",
+      "Bash(git branch:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(wc:*)",
+      "Bash(cmp:*)",
+      "Bash(python3 -m pytest:*)",
+      "Bash(systemctl status:*)",
+      "Bash(systemctl is-active:*)",
+      "Bash(ss -ltnp)",
+      "Bash(nginx -t)",
+      "Bash(curl -s http://127.0.0.1:*)"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(curl:* | bash)",
+      "Bash(cat .env:*)",
+      "Bash(cat private/:*)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./private/**)"
+    ]
+  },
+  "model": "opusplan"
+}

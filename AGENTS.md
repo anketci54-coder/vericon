@@ -74,7 +74,12 @@ Kullanıcı "fikir: ..." yazarsa tek satır `IDEAS.md` dosyasına eklenir (tarih
 `HANDOFF.md` güncellenir: tek açık iş, son SHA, BİTTİ/BLOKE değişiklikleri. Yarım sayfayı geçmez. Eski içerik `docs/history.md` içine taşınır.
 
 ## 13. Model rolleri ve maliyet
-- Tek dosya yazarı: Claude Code'daki ana ajan. Paralel yazar yok.
-- Denetçi (Fable) salt-okunur çalışır, yalnızca aşama kapanışında: "bu diff ve kanıt kabul ölçütünü karşılıyor mu?"
-- API kredisi (yaklaşık 3-4 USD) yalnızca denetçi incelemelerine ayrılır. Abonelik kullanımı ile API faturası karıştırılmaz. Onaysız yeni ücretli servis açılmaz.
+- Tek dosya yazarı: Claude Code ana ajanı (Sonnet; plan modunda Opus, `opusplan`). Paralel yazar yok. Haiku yalnızca kısa okuma/listeleme.
+- Baş denetçi: Fable, salt-okunur (`denetci` ajanı), yalnızca aşama kapanışında. API kredisinden (yaklaşık 3-4 USD), abonelikle karıştırılmaz.
+- ChatGPT Pro: salt-okunur ikinci göz. Girdi: `/paket` çıktısı (diff + kabul ölçütü). Repo'ya, VPS'e, token'a erişmez.
+- Gemini Pro: araştırma (Shopify/QBO dokümanı, vergi/iade kuralı, uzun metin özeti). Kod yazmaz, karar vermez.
+- Dış modellerin çıktısı kanıt değildir. Bulgu, Claude Code komut çıktısıyla doğrulanınca BİTTİ olur. Çelişkide kanıt karar verir, kullanıcı onaylar.
+- Dış modele `.env`, `private/`, token, gerçek müşteri verisi verilmez.
+- ChatGPT/Gemini paketleri 1 aylıktır (2026-11 sonu). Sonunda bu satırlar gözden geçirilir.
+- Onaysız yeni ücretli servis, yeni CLI, yeni yönlendirici açılmaz.
 - Token ve maliyet ölçülmediyse "tahmin" diye etiketlenir.
