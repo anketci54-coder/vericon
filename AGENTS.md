@@ -1,28 +1,80 @@
-# VERICON - Gelistirme kurallari
+# VERICON: Ajan Kuralları (değişmez)
 
-1. Ana hedef: Shopify ve QuickBooks Online verilerinin bagimsiz, kanitlanabilir, salt-okunur uyusmazlik denetimi. ERP, envanter yoneticisi veya otomatik muhasebe kaydi olusturma projesine donusturme.
-2. Once olc, sonra karar ver. Kod degistirmeden once runtime ve kanitli kok nedeni belirle; tek nedensel degisiklik yap, test et, gercek davranisi dogrula.
-3. Shopify inventory_quantity ile QuickBooks QtyOnHand alanlarini korlemesine karsilastirma. Lokasyon, rezerve/stokta/mevcut, zaman damgasi ve SKU ayniligi kanitlanmadan fark diye etiketleme.
-4. Parasal kurallar (vergi, indirim, iade, para birimi, birim fiyat, yuvarlama) deterministik olmali. AI sonucu tek basina finansal gercek olamaz. Bilinmeyen = incelemeye al.
-5. Once QuickBooks Sandbox ve bos Shopify deneme magazasiyla sinirli calis. Gercek musteri verisi, API yetki artisi, canli servis veya veri degisikligi icin ayri onay gerekir.
-6. Token, client secret, .env, gercek veriler, fatura ve musteri bilgilerini depoya koyma, loglarda paylasma. Gerekiyorsa mevcut gizli depolama cozumunu kontrollu belirle.
-7. Iki AI ayni dosyada paralel degisiklik yapmaz. Degisikliklerin diff'i, test sonucu ve uygulama davranisi ayri dogrulanir.
-8. Yeni framework, refactor, servis, konteyner, dokuman, branch veya ek API ancak kanitli ihtiyac varsa acilir.
-9. Projeyi diger VPS uygulamalarindan izole tut. SMRS ve Senal Plastik servislerine dokunma.
-10. 'Hazir' veya 'basarili' sadece uctan uca kanitli sonuc icin kullanilir. Halen herhangi bir musteri sonucu dogrulanmadi.
+Bu dosya yalnızca değişmeyen kuralları taşır. Durum bilgisi `HANDOFF.md`, plan `PLAN.md` içindedir. Buraya durum notu yazılmaz.
 
-11. Dis sistemde urun, stok, item, fatura, siparis olusturma/guncelleme/silme islemleri KAPALI. QBO REST istegi sadece GET `/query`; POST yalniz Intuit OAuth token endpointine. Shopify POST yalnizca OAuth token ve `query` GraphQL; `mutation` kullanma. Eger gercek is ihtiyaci varsa ayri onay karari almadan yazma yolu acma.
-12. Silmeden once runtime referanslarini kanitla; `private/` ve OAuth yetki-kurtarma kodunu koru. GitHub ve VPS ayni SHA olmadan bitmis ilan etme.
+## 1. Amaç
+ABD Shopify + QuickBooks Online işletmeleri için bağımsız, kanıtlı, **salt-okunur** muhasebe uyuşmazlık denetimi. ERP, stok yöneticisi veya otomatik muhasebe kaydı üreten bir sisteme dönüşmeyecek.
 
-13. Ticari urune kadar TEK CANLI CHECKLIST `TODO.md` icindeki `Ticari urune kadar ana checklist` bolumudur. Tamamlanan gorevi ancak test + gercek davranis kaniti sonrasi `[x]` yap. Her tamamlanan dar adimda ilgili TODO/README kaydini guncelle, diff/test/canli kontrol yap, VPS commit + GitHub push ve local/remote SHA eslesmesini raporla. Bir adim bloke ise tik atma; gerekce ve sonraki tek isi yaz.
-14. Canli web dosyalari `/var/www/vericon-app` ve Nginx ayarlari Git disindaysa deployment drift'i ayri belirt; kaynak SHA eslesmesini tum VPS dosyalari eslesiyor diye sunma. Gizli dosyalari ve tokenleri Git'e alma.
+## 2. Oturum başlangıcı (sırayla, başka dosya okunmaz)
+1. `AGENTS.md`
+2. `HANDOFF.md`
+3. `PLAN.md` içinde yalnızca HANDOFF'taki aşama
+4. `git status` ve `git log -1`
+5. İlgili kod
 
+`docs/history.md` ve eski `TODO.md` okunmaz. Kullanıcı açıkça isterse okunur.
 
-## Modelden bagimsiz devir ve maliyet protokolu (2026-11-12)
-- Bu dosya Codex, Claude, Gemini ve diger ajanlar icin ayni kurallari tasir. Tek gorev kaynagi `TODO.md` PDF checklist; yeni liste acma, mevcut [x] isleri yeniden yapma.
-- Her oturum basinda `AGENTS.md`, `TODO.md` (ozellikle ilk acik madde ve son kanit), `git status`, `git log -1`, ilgili kodu oku. VPS runtime ile GitHub SHA'yi ayri dogrula. Notion Agent Operating Guide: https://app.notion.com/p/40b467bd97ef815abf37c96427066e48
-- Guncel devir (2026-11-13): TODO.md DEVAM kaydi esas. Nginx/systemd dagitimi, otomatik servis toparlanmasi ve refresh hata sogumasi canli; 231 test PASS. Asama 3 tarihsel gercek kullanici kabulunu tekrar acma veya ayni OTP/logout/revoke/scope testlerini yeniden isteme. Siradaki dar kabul PDF 4-2: henuz kapsanmamis endpointlerde iki izinli gercek A/B oturumuyla negatif izolasyon; yeni JWT yoksa BLOKE kaydet, uydurma. 2.5–2.8 politika/banka/orneklem; 4.3–4.5 ticari onboarding/ingest/kapasite eksikleri acik. Secret sizintisi kaniti olmadan rotasyon yapma; eski token arsivini otomatik geri yukleme.
-- Model rolleri oneridir, zorunlu API aboneligi degildir: Codex kod degisikligi; Claude bagimsiz diff/guvenlik incelemesi; Gemini uzun dokuman/arastirma; MiMo/Nemotron yalniz olculmus dusuk riskli gorevlerde. Her zaman tek dosya yazari; incelemeciler salt-okunur.
-- Gorev devri: (1) gorev ve kabul olcutu (2) mevcut kanit/kok neden (3) degisen dosyalar ve diff (4) test ve gercek API davranisi (5) acik riskler (6) commit SHA ve sonraki tek is. Sir, JWT, token, musteri kaydi veya tam logu devre ekleme.
-- Maliyet: API token sayilari olculmediyse tahmin olarak etiketle. Her gercek API gorevinde model, input/output token, cache, USD, sure, tekrar deneme ve dogrulanmis sonuc kaydet; abonelik kullanimi ile API faturalarini karistirma. Ilk API deney butce tavani 20 USD/ay; kullanici onayi olmadan yeni ucretli servis acma.
-- Canli servis, OAuth, Supabase politikasi, finansal veri veya musteri yetkisi degisikligi kullanici onayi ve rollback plani gerektirir. CI PASS ticari davranis PASS degildir.
+## 3. Tek görev kuralı
+- Oturumda tek görev. Görev ve kabul ölçütü `HANDOFF.md` içinde yazılıdır.
+- Kabul ölçütü dışındaki dosyaya, araca, teste, belgeye dokunulmaz.
+- Görev bitince dur, `HANDOFF.md` güncelle, kullanıcıya raporla. Sonraki göreve kullanıcı onayı olmadan geçilmez.
+
+## 4. Dur ve sor
+Şu durumlarda işlem yapmadan önce kullanıcıya sorulur:
+- Kapsam dışı dosya, yeni araç, yeni kütüphane, yeni test türü, refactor, yeni servis, branch veya doküman gerekiyorsa
+- Kanıt yoksa veya bir şey belirsizse (tahmin yürütülmez)
+- Yetki, scope, OAuth, canlı servis, Supabase politikası veya finansal veri değişecekse
+- Kullanıcıdan ekran görüntüsü veya elle işlem istenecekse. Önce neden gerektiği ve ajanın kendi başına yapamadığı yazılır.
+
+## 5. Rapor dili
+Her madde şu üç etiketten biriyle raporlanır:
+- **BİTTİ:** Hangi kanıtla doğrulandı (komut, çıktı, SHA).
+- **BİTMEDİ:** Ne kaldı, sıradaki tek iş.
+- **BLOKE:** Kimden ne lazım. Tek satır.
+
+"Ama, fakat, ancak, garanti değil" ile yumuşatılmış yarım sonuç yazılmaz. Bilinmeyen bir şey BLOKE olarak yazılır. Rapor kısa tutulur, test sayısı övünme konusu yapılmaz.
+
+## 6. Salt-okunur ve dış sistem kuralları
+- Dış sistemde ürün, stok, fatura, sipariş oluşturma/güncelleme/silme KAPALI.
+- QBO: yalnızca GET `/query`. POST yalnızca Intuit OAuth token endpoint'ine.
+- Shopify: yalnızca OAuth token ve `query` GraphQL. `mutation` yok.
+- Gerçek müşteri verisi, yeni API yetkisi, scope artırımı, canlı servis değişikliği için ayrı onay gerekir.
+- Parasal kurallar deterministiktir (vergi, indirim, iade, para birimi, yuvarlama). AI çıktısı tek başına finansal gerçek sayılmaz. Bilinmeyen = incele (REVIEW/BLOCK).
+- Shopify `inventory_quantity` ile QBO `QtyOnHand` körlemesine karşılaştırılmaz.
+
+## 6b. Onaylı karar (2026-11-16, kullanıcı)
+A/B kendi Sandbox hesapları için, yalnızca okuma yetkisiyle `financial_access_enabled` açılabilir. Sınırlar: yalnız A ve B, yalnız GET/query, scope artmaz, başka tenant yok. Geri alma: bayrağı tekrar `false` yap. Bu onay yalnızca `PLAN.md` Adım 2 ölçümü sonrasında, Adım 3'te kullanılır.
+
+## 7. Gizli bilgi
+Token, client secret, `.env`, JWT, gerçek müşteri kaydı, fatura ve tam log Git'e, sohbete veya devir notuna girmez. Sızıntı kanıtı olmadan rotasyon yapılmaz. Eski token arşivi otomatik geri yüklenmez.
+
+## 8. Koruma listesi (dokunma)
+- `private/` ve OAuth yetki-kurtarma kodu
+- Çalışan A/B tenant bağlantıları (revoke etme, silme)
+- SMRS ve Senal Plastik servisleri, diğer VPS uygulamaları
+- Eski portlar 8782–8786 (kullanılmadığı kanıtlanmadan silme/durdurma yok)
+- `/var/www/vericon-app` ve Nginx dosyaları Git dışındaysa drift ayrıca belirtilir
+
+## 9. Yasaklı tekrarlar
+- Geçersiz refresh token tekrar denenmez. Eski CLI `invalid_grant` kurtarması için OAuth URL tekrar tekrar üretilmez.
+- Başka tenant token'ı legacy dosyaya kopyalanmaz.
+- Tarihsel OTP/logout/revoke/izolasyon kabulleri yeniden istenmez.
+- OAuth code/state/query loglanmaz.
+
+## 10. Değişiklik disiplini
+Ölç → kanıtlı kök neden → tek nedensel değişiklik → diff → test → gerçek davranış → commit → push. Test geçmesi tek başına ürün kabulü değildir; kabul ölçütü gerçek davranıştır.
+- Yeni test yalnızca kanıtlı bir hatayı yakalamak için yazılır.
+- GitHub ve VPS aynı SHA olmadan iş bitti denmez.
+- Her adımda README güncellenmez. Yalnızca davranış değiştiyse güncellenir.
+
+## 11. Fikir kutusu
+Kullanıcı "fikir: ..." yazarsa tek satır `IDEAS.md` dosyasına eklenir (tarih, fikir, ilgili aşama). Başka hiçbir şey yapılmaz, iş başlatılmaz. Oturum başında yalnızca mevcut aşamaya ait fikirler listelenir. Aşama kapanışında kalan fikirler için kullanıcıya sorulur: yap, ertele, çöpe at.
+
+## 12. Oturum sonu
+`HANDOFF.md` güncellenir: tek açık iş, son SHA, BİTTİ/BLOKE değişiklikleri. Yarım sayfayı geçmez. Eski içerik `docs/history.md` içine taşınır.
+
+## 13. Model rolleri ve maliyet
+- Tek dosya yazarı: Claude Code'daki ana ajan. Paralel yazar yok.
+- Denetçi (Fable) salt-okunur çalışır, yalnızca aşama kapanışında: "bu diff ve kanıt kabul ölçütünü karşılıyor mu?"
+- API kredisi (yaklaşık 3-4 USD) yalnızca denetçi incelemelerine ayrılır. Abonelik kullanımı ile API faturası karıştırılmaz. Onaysız yeni ücretli servis açılmaz.
+- Token ve maliyet ölçülmediyse "tahmin" diye etiketlenir.
