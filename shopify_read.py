@@ -278,19 +278,26 @@ def read_tenant_owner_proof(user_id: str, store: str) -> str | None:
 
 
 ORDER_READ_SCOPE = "read_orders"
-TENANT_ORDER_MAX_PAGE = 25
+TENANT_ORDER_MAX_PAGE = 20
 # Money and status fields only: no customer name, email, address or phone.
 TENANT_ORDER_QUERY = '''query VericonTenantOrders($first: Int!) {
   orders(first: $first, sortKey: ID) {
     pageInfo { hasNextPage }
     nodes {
-      name createdAt currencyCode displayFinancialStatus test
+      id name createdAt currencyCode displayFinancialStatus test
       subtotalPriceSet { shopMoney { amount currencyCode } }
       totalTaxSet { shopMoney { amount currencyCode } }
       totalDiscountsSet { shopMoney { amount currencyCode } }
       totalPriceSet { shopMoney { amount currencyCode } }
-      refunds { createdAt totalRefundedSet { shopMoney { amount currencyCode } } }
-      transactions(first: 10) { kind status amountSet { shopMoney { amount currencyCode } } }
+      lineItems(first: 5) { nodes { sku quantity originalUnitPriceSet { shopMoney { amount currencyCode } } discountedTotalSet { shopMoney { amount currencyCode } } } }
+      shippingLines(first: 5) { nodes { title discountedPriceSet { shopMoney { amount currencyCode } } } }
+      refunds {
+        id createdAt order { id } totalRefundedSet { shopMoney { amount currencyCode } }
+        transactions(first: 20) { pageInfo { hasNextPage } nodes {
+          id kind status test amountSet { shopMoney { amount currencyCode } }
+        } }
+      }
+      transactions(first: 10) { kind status test amountSet { shopMoney { amount currencyCode } } }
     }
   }
 }'''

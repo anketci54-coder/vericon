@@ -1923,7 +1923,7 @@ def test_stage4_http_shopify_orders_store_flag_and_credential_gates(stage4_http,
     row['financial_access_enabled'] = False
     assert call(row['shop_domain']).status_code == 403
     row['financial_access_enabled'] = True
-    assert call(row['shop_domain'], first=26).status_code == 400
+    assert call(row['shop_domain'], first=21).status_code == 400
     assert h['calls'] == [] and h['snapshot']() == before
     own = call(row['shop_domain'])
     assert own.status_code == 200 and 'fake-shop-token' not in own.text
@@ -1931,6 +1931,9 @@ def test_stage4_http_shopify_orders_store_flag_and_credential_gates(stage4_http,
                           'has_next_page': False, 'read_only': True}
     for field in ('customer', 'email', 'phone', 'Address'):
         assert field not in s.TENANT_ORDER_QUERY
+    for field in ('id name', 'lineItems', 'originalUnitPriceSet', 'discountedTotalSet', 'shippingLines', 'order { id }', 'test amountSet'):
+        assert field in s.TENANT_ORDER_QUERY
+    assert 'mutation' not in s.TENANT_ORDER_QUERY and s.TENANT_ORDER_MAX_PAGE == 20
     # Missing tenant credential file: clean error, no provider call, no data.
     s._tenant_setup_path(row['user_id'], row['shop_domain']).unlink()
     h['calls'].clear()
