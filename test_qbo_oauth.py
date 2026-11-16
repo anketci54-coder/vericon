@@ -1862,7 +1862,7 @@ def test_tenant_documents_read_only_bounded_get_query(cfg, monkeypatch):
     monkeypatch.setattr(q.requests, 'post', lambda *a, **kw: pytest.fail('no POST on read path'))
     result = q.read_tenant_documents(tenant, user_id=user, start=1, limit=2)
     assert [x[1] for x in seen] == [
-        f'SELECT * FROM {e} STARTPOSITION 1 MAXRESULTS 3' for e in ('Invoice', 'Payment', 'CreditMemo')]
+        f'SELECT * FROM {e} ORDERBY Id STARTPOSITION 1 MAXRESULTS 3' for e in ('Invoice', 'Payment', 'CreditMemo')]
     assert all(u == q.SANDBOX_API + '/v3/company/987654321/query' for u, _ in seen)
     assert all(len(d['rows']) == 2 and d['has_more'] for d in result['documents'].values())
     assert 'SECRET_TOKEN' not in json.dumps(result)
@@ -1871,3 +1871,26 @@ def test_tenant_documents_read_only_bounded_get_query(cfg, monkeypatch):
             q.read_tenant_documents(tenant, user_id=user, limit=bad)
     with pytest.raises(ValueError):
         q.read_tenant_documents(tenant, user_id=user, start=1001)
+
+
+@pytest.mark.parametrize('actor', ['A', 'B'])
+def test_stage4_http_documents_realm_and_flag_gates(stage4_http, monkeypatch, actor):
+    """Real HTTP and real gates; only identity, RLS rows and QBO responses are fixtures."""
+    h = stage4_http
+    row, peer = h['rows'][actor], h['rows']['B' if actor == 'A' else 'A']
+    def call(realm):
+        return h['client'].request('GET', '/tenant/finance/documents', params={'realm': realm},
+                                   headers={'Authorization': 'Bearer fixture-' + actor})
+    before = h['snapshot']()
+    assert call(peer['qbo_realm_id']).status_code == 403
+    row['financial_access_enabled'] = False
+    monkeypatch.setenv('VERICON_PILOT_INVOICE_COUNT_REALMS', row['qbo_realm_id'])
+    assert call(row['qbo_realm_id']).status_code == 403
+    assert h['calls'] == [] and h['snapshot']() == before
+    row['financial_access_enabled'] = True
+    own = call(row['qbo_realm_id'])
+    assert own.status_code == 200 and 'fake-' not in own.text
+    body = own.json()
+    assert body['realm'] == row['qbo_realm_id'] and body['read_only'] is True
+    assert set(body['documents']) == {'Invoice', 'Payment', 'CreditMemo'}
+    assert h['calls'] == [('query', q.SANDBOX_API + f"/v3/company/{row['qbo_realm_id']}/query")] * 3

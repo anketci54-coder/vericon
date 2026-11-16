@@ -7,3 +7,4 @@ Aşama kapanışında ilgili fikirler için karar: yap / ertele / çöpe at.
 ## Açık
 - [ ] 2026-11-16 | Disiplin kuralı: tüm ajan oturumları HANDOFF.md ile başlar ve biter | Adım 0
 - [ ] 2026-11-16 | Pilot öncesi: /tenant/finance/documents yanıtında QBO alanlarını PII açısından süz (e-posta, adres) | Adım 7
+- [ ] 2026-11-16 | documents hata dalı testleri (401→409, 429, 5xx, Fault, has_more) | Adım 6

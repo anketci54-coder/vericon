@@ -493,7 +493,7 @@ def read_tenant_documents(config: Config, *, user_id: str, start: int = 1, limit
             # One extra row only reveals whether another page exists; it is never returned.
             response = bounded_query_get(
                 f"{SANDBOX_API}/v3/company/{realm}/query",
-                params={"query": f"SELECT * FROM {entity} STARTPOSITION {start} MAXRESULTS {limit + 1}"},
+                params={"query": f"SELECT * FROM {entity} ORDERBY Id STARTPOSITION {start} MAXRESULTS {limit + 1}"},
                 headers=headers, budget_dir=config.private_dir)
             if response.status_code == 401:
                 raise HTTPException(409, 'QuickBooks access token rejected; renewal or reconnection needed',
