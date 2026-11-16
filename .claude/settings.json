@@ -34,5 +34,6 @@
       "Read(./.env.*)",
       "Read(./private/**)"
     ]
-  }
+  },
+  "model": "opusplan"
 }
