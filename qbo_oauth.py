@@ -42,7 +42,7 @@ app = FastAPI(title="VERICON QBO sandbox connector", docs_url=None, redoc_url=No
 @app.middleware("http")
 async def reject_unauthenticated_data_routes(request, call_next):
     # Only a token-validation endpoint is allowed; customer data stays closed.
-    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me", "/shopify/ownership/start", "/shopify/ownership/verify", "/tenant/quickbooks/start", "/tenant/shopify/ownership/start", "/tenant/shopify/ownership/verify", "/tenant/finance/access-check", "/tenant/finance/invoice-count", "/tenant/quickbooks/disconnect"):
+    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me", "/shopify/ownership/start", "/shopify/ownership/verify", "/tenant/quickbooks/start", "/tenant/shopify/ownership/start", "/tenant/shopify/ownership/verify", "/tenant/finance/access-check", "/tenant/finance/invoice-count", "/tenant/finance/documents", "/tenant/quickbooks/disconnect"):
         return PlainTextResponse("Forbidden", status_code=403)
     return await call_next(request)
 
@@ -470,6 +470,66 @@ def read_tenant_invoice_count(config: Config, *, user_id: str) -> int:
     return count
 
 
+TENANT_DOCUMENT_ENTITIES = ("Invoice", "Payment", "CreditMemo")
+TENANT_DOCUMENT_MAX_PAGE = 50
+TENANT_DOCUMENT_MAX_START = 1000
+
+
+def read_tenant_documents(config: Config, *, user_id: str, start: int = 1, limit: int = 25) -> dict:
+    """Tenant-bound, bounded GET /query page of Invoice, Payment and CreditMemo."""
+    if (type(start) is not int or type(limit) is not int
+            or not 1 <= start <= TENANT_DOCUMENT_MAX_START
+            or not 1 <= limit <= TENANT_DOCUMENT_MAX_PAGE):
+        raise ValueError("Invalid tenant document page")
+    load_tenant_tokens(config, user_id=user_id)
+    _tenant_count_budget(config)
+    try:
+        token, realm = get_tenant_access_token(config, user_id=user_id)
+        if realm != config.expected_realm:
+            raise ValueError("Tenant realm binding mismatch")
+        headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
+        documents = {}
+        for entity in TENANT_DOCUMENT_ENTITIES:
+            # One extra row only reveals whether another page exists; it is never returned.
+            response = bounded_query_get(
+                f"{SANDBOX_API}/v3/company/{realm}/query",
+                params={"query": f"SELECT * FROM {entity} STARTPOSITION {start} MAXRESULTS {limit + 1}"},
+                headers=headers, budget_dir=config.private_dir)
+            if response.status_code == 401:
+                raise HTTPException(409, 'QuickBooks access token rejected; renewal or reconnection needed',
+                                    headers={'Retry-After': '60'})
+            if response.status_code == 429:
+                raise HTTPException(429, 'Financial provider rate limited', headers={'Retry-After': '60'})
+            if response.status_code >= 500:
+                raise HTTPException(503, 'Financial provider unavailable', headers={'Retry-After': '5'})
+            if response.status_code != 200:
+                raise ValueError("Tenant document read refused")
+            body = response.json()
+            if not isinstance(body, dict) or body.get("Fault") or not isinstance(body.get("QueryResponse"), dict):
+                raise ValueError("Tenant document read invalid")
+            rows = body["QueryResponse"].get(entity, [])
+            if (not isinstance(rows, list) or len(rows) > limit + 1
+                    or any(not isinstance(row, dict) for row in rows)):
+                raise ValueError("Tenant document read invalid")
+            documents[entity] = {"rows": rows[:limit], "has_more": len(rows) > limit}
+    except _TokenExchangeRefused as exc:
+        if exc.invalid_grant:
+            _tenant_count_budget(config, cooldown=60)
+            raise HTTPException(409, 'QuickBooks reconnection required',
+                                headers={'Retry-After': '60'}) from None
+        if exc.status_code == 429:
+            _tenant_count_budget(config, cooldown=60)
+            raise HTTPException(429, 'Financial provider rate limited', headers={'Retry-After': '60'}) from None
+        if exc.status_code >= 500:
+            _tenant_count_budget(config, cooldown=5)
+            raise HTTPException(503, 'Financial provider unavailable', headers={'Retry-After': '5'}) from None
+        raise
+    except requests.RequestException:
+        _tenant_count_budget(config, cooldown=5)
+        raise HTTPException(503, 'Financial provider unavailable', headers={'Retry-After': '5'}) from None
+    return {"realm": realm, "start": start, "limit": limit, "documents": documents}
+
+
 def load_tokens(config: Config) -> dict:
     if not config.expected_realm or not str(config.expected_realm).isdigit():
         raise ValueError("Expected QuickBooks company ID is required")
@@ -754,6 +814,25 @@ def tenant_finance_invoice_count(request: Request, realm: str) -> dict:
     except (ValueError, OSError, requests.RequestException):
         raise HTTPException(status_code=503, detail="Financial read unavailable") from None
     return {"invoice_count": count, "realm": connection["realm"], "read_only": True}
+
+
+@app.get("/tenant/finance/documents")
+def tenant_finance_documents(request: Request, realm: str, start: int = 1, limit: int = 25) -> dict:
+    """Bounded read-only page of the tenant's own QBO documents; no tokens returned."""
+    connection = _authorized_tenant_connection(request.headers.get("authorization"))
+    if realm != connection["realm"]:
+        raise HTTPException(status_code=403, detail="Cross-tenant finance access denied")
+    # Explicit per-tenant flag only: the pilot count exception does not apply here.
+    if connection.get("financial_access_enabled") is not True:
+        raise HTTPException(status_code=403, detail="Financial read not enabled")
+    if not (1 <= start <= TENANT_DOCUMENT_MAX_START and 1 <= limit <= TENANT_DOCUMENT_MAX_PAGE):
+        raise HTTPException(status_code=400, detail="Invalid page window")
+    try:
+        config = _tenant_qbo_config(load_saved_setup(), connection["realm"])
+        result = read_tenant_documents(config, user_id=connection["user_id"], start=start, limit=limit)
+    except (ValueError, OSError, requests.RequestException):
+        raise HTTPException(status_code=503, detail="Financial read unavailable") from None
+    return {**result, "read_only": True}
 
 
 def _tenant_qbo_config(config: Config, realm: str) -> Config:

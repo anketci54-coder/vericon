@@ -282,7 +282,7 @@ def test_revoked_validly_signed_jwt_denied_at_authenticated_routes(cfg, monkeypa
                    "headers": [(b"authorization", ("Bearer " + signed).encode())],
                    "query_string": b""})
     with pytest.raises(HTTPException) as exc:
-        if route.path == '/tenant/finance/invoice-count':
+        if route.path in ('/tenant/finance/invoice-count', '/tenant/finance/documents'):
             route.endpoint(req, realm=cfg.expected_realm)
         else:
             route.endpoint(req)
@@ -1221,6 +1221,7 @@ def test_malformed_pilot_grant_fails_closed_before_startup(monkeypatch, value):
 STAGE4_ROUTES = [
     ('GET', '/auth/me'), ('GET', '/health'),
     ('GET', '/tenant/finance/access-check'), ('GET', '/tenant/finance/invoice-count'),
+    ('GET', '/tenant/finance/documents'),
     ('POST', '/shopify/ownership/start'), ('POST', '/shopify/ownership/verify'),
     ('POST', '/tenant/shopify/ownership/start'), ('POST', '/tenant/shopify/ownership/verify'),
     ('POST', '/oauth/quickbooks/start'), ('POST', '/tenant/quickbooks/disconnect'),
@@ -1802,3 +1803,71 @@ def test_stage2_read_only_document_queries_share_existing_sandbox_guard(cfg, mon
         q.bounded_query_get(q.SANDBOX_API.replace('sandbox-', '') + '/v3/company/12345/query',
             params={'query': f'SELECT * FROM {entity}'}, headers={}, budget_dir=cfg.private_dir)
     assert len(calls) == 1
+
+
+def _documents_request():
+    from starlette.requests import Request
+    return Request({"type": "http", "method": "GET", "path": "/tenant/finance/documents", "headers": []})
+
+
+@pytest.mark.parametrize('owner_realm,asked_realm,status', [
+    ('111', '111', 200), ('222', '222', 200),      # A->A, B->B
+    ('111', '222', 403), ('222', '111', 403)])     # A->B, B->A
+def test_tenant_documents_own_realm_only(monkeypatch, owner_realm, asked_realm, status):
+    monkeypatch.setattr(q, '_authorized_tenant_connection', lambda h: {
+        'user_id': 'u', 'realm': owner_realm, 'store': 'x.myshopify.com', 'financial_access_enabled': True})
+    monkeypatch.setattr(q, 'load_saved_setup', lambda: q.Config('id', 'fake', '', q.BASE_DIR, owner_realm))
+    calls = []
+    monkeypatch.setattr(q, 'read_tenant_documents', lambda config, *, user_id, start, limit:
+                        calls.append(config.expected_realm) or {'realm': config.expected_realm, 'documents': {}})
+    if status == 200:
+        result = q.tenant_finance_documents(_documents_request(), realm=asked_realm)
+        assert result['read_only'] is True and calls == [owner_realm]
+        assert not any('token' in k for k in result)
+    else:
+        with pytest.raises(q.HTTPException) as exc:
+            q.tenant_finance_documents(_documents_request(), realm=asked_realm)
+        assert exc.value.status_code == 403 and calls == []
+
+
+def test_tenant_documents_unauthenticated_denied_before_read(monkeypatch):
+    monkeypatch.setattr(q, 'read_tenant_documents', lambda *a, **kw: pytest.fail('must not read'))
+    with pytest.raises(q.HTTPException) as exc:
+        q.tenant_finance_documents(_documents_request(), realm='111')
+    assert exc.value.status_code == 401  # same unauthenticated behavior as every /tenant route
+
+
+@pytest.mark.parametrize('flag,pilot', [(False, ''), (None, ''), ('true', ''), (False, '111')])
+def test_tenant_documents_require_flag_not_pilot_exception(monkeypatch, flag, pilot):
+    monkeypatch.setenv('VERICON_PILOT_INVOICE_COUNT_REALMS', pilot)
+    monkeypatch.setattr(q, '_authorized_tenant_connection', lambda h: {
+        'user_id': 'u', 'realm': '111', 'store': 'x.myshopify.com', 'financial_access_enabled': flag})
+    monkeypatch.setattr(q, 'read_tenant_documents', lambda *a, **kw: pytest.fail('must not read'))
+    with pytest.raises(q.HTTPException) as exc:
+        q.tenant_finance_documents(_documents_request(), realm='111')
+    assert exc.value.status_code == 403
+
+
+def test_tenant_documents_read_only_bounded_get_query(cfg, monkeypatch):
+    from dataclasses import replace
+    user = '11111111-1111-4111-8111-111111111111'
+    tenant = replace(cfg, expected_realm='987654321')
+    q.save_tenant_tokens(tenant, {'access_token': 'SECRET_TOKEN', 'refresh_token': 'R', 'expires_in': 3600}, user_id=user)
+    seen = []
+    def fake_get(url, *, params, headers, timeout, allow_redirects):
+        seen.append((url, params['query']))
+        entity = params['query'].split()[3]
+        return FakeResponse({'QueryResponse': {entity: [{'Id': str(i)} for i in range(3)]}})
+    monkeypatch.setattr(q.requests, 'get', fake_get)
+    monkeypatch.setattr(q.requests, 'post', lambda *a, **kw: pytest.fail('no POST on read path'))
+    result = q.read_tenant_documents(tenant, user_id=user, start=1, limit=2)
+    assert [x[1] for x in seen] == [
+        f'SELECT * FROM {e} STARTPOSITION 1 MAXRESULTS 3' for e in ('Invoice', 'Payment', 'CreditMemo')]
+    assert all(u == q.SANDBOX_API + '/v3/company/987654321/query' for u, _ in seen)
+    assert all(len(d['rows']) == 2 and d['has_more'] for d in result['documents'].values())
+    assert 'SECRET_TOKEN' not in json.dumps(result)
+    for bad in (0, 51, True):
+        with pytest.raises(ValueError):
+            q.read_tenant_documents(tenant, user_id=user, limit=bad)
+    with pytest.raises(ValueError):
+        q.read_tenant_documents(tenant, user_id=user, start=1001)

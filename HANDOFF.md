@@ -6,7 +6,7 @@ Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 ## Şu an tek açık iş
 **ADIM 3A: `GET /tenant/finance/documents`** (Invoice/Payment/CreditMemo, sınırlı sayfa, token dönmez).
 Kapılar: `_authorized_tenant_connection` + realm eşleşmesi + `financial_access_enabled=true`. Yalnızca GET `/query`, scope artışı yok, Shopify'a dokunulmaz.
-Kabul: A→A 200, A→B 403, B→A 403, oturumsuz 403, bayrak false iken 403.
+Kabul: A→A 200, A→B 403, B→A 403, oturumsuz 401 (mevcut auth davranışı), bayrak false iken 403.
 Her biri ayrı kullanıcı onayıyla: (1) Nginx + middleware izin listesi, (2) servis yeniden başlatma, (3) `/health`, (4) geri alma planı. Bayrak EN SON, kullanıcı tarafından, yalnız bu iki satır için açılır (AGENTS 6b). Geri alma: bayrak `false`.
 Kod yazmaya başlamadan önce kullanıcıdan başlama onayı alınır.
 
