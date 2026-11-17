@@ -1669,3 +1669,76 @@ def test_missing_invoice_policy_requires_known_empty_refund_history(refunds):
         'displayFinancialStatus': 'PAID', 'refunds': refunds}
     result = a.audit_missing_invoice_candidates([order], [], policy, context=context)
     assert result['status'] == 'BLOCKED_ORDER_POLICY_EXCEPTION' and result['candidate_count'] == 0
+
+
+def _tenant_envelopes():
+    """Synthetic tenant envelopes shaped like the live B responses; no PII."""
+    money = lambda v: {"shopMoney": {"amount": v, "currencyCode": "TRY"}}
+    order = {"id": "gid://shopify/Order/101", "name": "#101", "test": True,
+        "currencyCode": "TRY", "displayFinancialStatus": "PARTIALLY_REFUNDED",
+        "subtotalPriceSet": money("216"), "totalTaxSet": money("0"),
+        "totalDiscountsSet": money("0"), "totalPriceSet": money("216"),
+        "lineItems": {"pageInfo": {"hasNextPage": False}, "nodes": []},
+        "shippingLines": {"pageInfo": {"hasNextPage": False}, "nodes": []},
+        "refunds": [{"id": "gid://shopify/Refund/101", "order": {"id": "gid://shopify/Order/101"},
+            "totalRefundedSet": money("100"),
+            "transactions": {"pageInfo": {"hasNextPage": False}, "nodes": [{
+                "id": "gid://shopify/OrderTransaction/1", "kind": "REFUND", "status": "SUCCESS",
+                "test": True, "amountSet": money("100")}]}}],
+        "transactions": [{"kind": "SALE", "status": "SUCCESS", "test": True, "amountSet": money("216")}]}
+    invoice = {"Id": "I1", "DocNumber": "101", "TotalAmt": 216, "Balance": 116,
+        "CurrencyRef": {"value": "TRY"}, "CustomerRef": {"value": "C1"},
+        "CustomField": [{"Name": "Shopify Order ID", "StringValue": "101"}],
+        "TxnTaxDetail": {"TotalTax": 0}, "LinkedTxn": [{"TxnId": "P1", "TxnType": "Payment"}]}
+    credit = {"Id": "CM1", "TotalAmt": 100, "Balance": 0, "CurrencyRef": {"value": "TRY"},
+        "CustomerRef": {"value": "C1"}, "TxnTaxDetail": {"TotalTax": 0},
+        "CustomField": [{"Name": "Shopify Refund ID", "StringValue": "101"}],
+        "Line": [{"DetailType": "SalesItemLineDetail", "SalesItemLineDetail": {"TaxCodeRef": {"value": "NON"}}}]}
+    payment = {"Id": "P1", "TotalAmt": 0, "UnappliedAmt": 0, "CurrencyRef": {"value": "TRY"},
+        "CustomerRef": {"value": "C1"},
+        "Line": [{"Amount": 100, "LinkedTxn": [{"TxnId": "I1", "TxnType": "Invoice"}]},
+                 {"Amount": 100, "LinkedTxn": [{"TxnId": "CM1", "TxnType": "CreditMemo"}]}]}
+    page = lambda rows: {"rows": rows, "has_more": False}
+    return ({"store": "x.myshopify.com", "orders": [order], "has_next_page": False, "read_only": True},
+            {"realm": "1", "start": 1, "limit": 25, "read_only": True,
+             "documents": {"Invoice": page([invoice]), "CreditMemo": page([credit]),
+                           "Payment": page([payment])}})
+
+
+def test_tenant_adapter_converts_envelopes_to_audit_input(monkeypatch):
+    monkeypatch.setattr(a, "_audit_pilot_line_items", lambda order, inv, base:
+                        {**base, "status": "PILOT_ORDER_INVOICE_VERIFIED",
+                         "verified": True, "invoice_id": inv["Id"]})
+    orders, docs = _tenant_envelopes()
+    out = a.adapt_tenant_envelopes(orders, docs)
+    assert out["status"] == "READY" and out["blocked"] == []
+    result = a.audit_order_financial_batch(out["orders"], out["invoices"], out["credits"], out["payments"])
+    assert result["status"] == "FINANCIAL_BATCH_VERIFIED" and result["orders_verified"] == 1
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda o, d: o.update(has_next_page=True),
+    lambda o, d: d["documents"]["Invoice"].update(has_more=True),
+    lambda o, d: d["documents"]["CreditMemo"].update(has_more=True),
+    lambda o, d: d["documents"]["Payment"].update(has_more=True),
+])
+def test_tenant_adapter_blocks_incomplete_pages(mutate):
+    orders, docs = _tenant_envelopes()
+    mutate(orders, docs)
+    out = a.adapt_tenant_envelopes(orders, docs)
+    assert out["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT" and out["orders"] == []
+
+
+@pytest.mark.parametrize("mutate,code", [
+    (lambda o: o["lineItems"]["pageInfo"].update(hasNextPage=True), "BLOCKED_MISSING_ORDER_LINES"),
+    (lambda o: o["shippingLines"]["pageInfo"].update(hasNextPage=True), "BLOCKED_MISSING_ORDER_LINES"),
+    (lambda o: o.update(transactions=o["transactions"] * 10), "BLOCKED_PAYMENT_EVIDENCE"),
+    (lambda o: o["refunds"][0]["transactions"]["pageInfo"].update(hasNextPage=True),
+     "BLOCKED_REFUND_TRANSACTION_PAGINATION"),
+])
+def test_tenant_adapter_blocks_truncated_order_sublists(mutate, code):
+    orders, docs = _tenant_envelopes()
+    mutate(orders["orders"][0])
+    out = a.adapt_tenant_envelopes(orders, docs)
+    assert out["status"] == "READY" and out["orders"] == []
+    assert out["blocked"] == [{"order": "#101", "id": "gid://shopify/Order/101", "status": code}]
