@@ -33,6 +33,48 @@ ADIM 10 Ticari lansman
 
 Her adım sonu: `HANDOFF.md` güncellenir, kullanıcı onaylar, ancak sonra sonraki adım başlar. Aşama kapanışında Fable (salt-okunur) bağımsız inceleme yapar.
 
+## Checklist (tek kaynak: durum için HANDOFF.md, sıra için bu dosya)
+İşaret: [x] bitti (kanıtlı), [ ] açık, [!] bloke. Yalnızca kullanıcı onayıyla işaretlenir.
+
+**Adım 0-3**
+- [x] 0 Disiplin kurulumu (AGENTS, PLAN, HANDOFF, IDEAS, komutlar)
+- [x] 1 Gerçek durum özeti
+- [x] 2 Ölçüm (A/B sipariş + fatura + ödeme okunabiliyor)
+- [x] 3A `GET /tenant/finance/documents` canlı (`48d83d5`), izolasyon ölçüldü
+- [x] 3B `GET /tenant/shopify/orders` canlı, B→B 200, PII yok (`edf9e15`)
+
+**Adım 4 İlk uçtan uca rapor (AKTİF)**
+- [x] 4-0 Girdi sözleşmesi farkı çıkarıldı (`audit_order_financial_batch`)
+- [x] 4-1a B Shopify mağazası TRY, 4 yeni test siparişi (#1005-#1008, iadeler dahil)
+- [x] 4-1b Sipariş sorgusu genişletildi, kod main'de (`05324c5`, 593 test)
+- [ ] 4-1c Dağıtım: `/dagit 05324c5` (8787-8789 yeniden başlatma, onayla)
+- [ ] 4-1d Canlı ölçüm: yeni alanlar geliyor mu, sorgu maliyeti hatası yok mu
+- [ ] 4-1e QBO notları: 8 belgeye yeni sipariş/iade numarası (elle, ayrı onay)
+- [ ] 4-2 Adaptör: zarf açma, yalnızca SUCCESS iade işlemi, kesilme kontrolü (lineItems/shippingLines hasNextPage, transactions tam 10), para birimi
+- [ ] 4-3 Tenant belge okuyucu: bağlantı notu (PrivateNote) doğrulaması
+- [ ] 4-4 İlk uçtan uca denetim: B siparişleri ↔ B QBO belgeleri, yazma çağrısı 0
+- [ ] 4-5 Aşama kapanışı: ChatGPT/Gemini ikinci göz, Fable denetçi, HANDOFF, `/bitir`
+
+**Adım 5 ve sonrası (Adım 4 kapanınca kabul ölçütleri yazılır)**
+- [ ] 5 Panel
+- [ ] 6 Güvenilirlik testleri
+- [ ] 7 ABD pilot müşteri
+- [ ] 8 Hukuk ve uyumluluk
+- [ ] 9 Abonelik ve ödeme
+- [ ] 10 Ticari lansman
+
+**Dış kapılar (kod ile çözülmez)**
+- [!] 2.5 Muhasebe politikası + izinli örnek
+- [!] 2.6-2.7 Banka/ödeme sağlayıcısı verisi
+- [!] 2.8 Muhasebeci etiketli örneklem
+- [!] 4.3 Shopify dağıtım kararı
+
+**Açık sorular**
+- [!] 16-11 08:29 ve 11:01 callback hatalarının kaynağı (kullanıcı teyidi)
+- [ ] Eski CLI `invalid_grant`: gerekli mi? Ölç, sonra kapat
+- [ ] Claude Code: auto mode kapalı mı, Fable erişimi `/model` ile kontrol
+- [ ] OmniRoute: Adım 4 sonrası karar (IDEAS)
+
 ## Yapıldı (kanıtlı, tekrar yapılmaz)
 - Repo, GitHub ve VPS eşit; systemd üç API servisi, Nginx, HTTPS canlı
 - Shopify test mağazaları ve QBO Sandbox okuma
