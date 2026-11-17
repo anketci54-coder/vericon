@@ -1222,6 +1222,7 @@ STAGE4_ROUTES = [
     ('GET', '/auth/me'), ('GET', '/health'),
     ('GET', '/tenant/finance/access-check'), ('GET', '/tenant/finance/invoice-count'),
     ('GET', '/tenant/finance/documents'), ('GET', '/tenant/shopify/orders'),
+    ('GET', '/tenant/finance/audit'),
     ('POST', '/shopify/ownership/start'), ('POST', '/shopify/ownership/verify'),
     ('POST', '/tenant/shopify/ownership/start'), ('POST', '/tenant/shopify/ownership/verify'),
     ('POST', '/oauth/quickbooks/start'), ('POST', '/tenant/quickbooks/disconnect'),
@@ -1946,3 +1947,58 @@ def test_stage4_http_shopify_orders_store_flag_and_credential_gates(stage4_http,
     missing = call(row['shop_domain'])
     assert missing.status_code == 503 and 'orders' not in missing.json()
     assert h['calls'] == []
+
+
+def test_stage4_http_finance_audit_gates_fields_and_read_only(stage4_http, monkeypatch):
+    """Real HTTP and real gates; only identity, RLS rows, Shopify and QBO responses are fixtures."""
+    import shopify_read as s
+    from test_invoice_audit import _tenant_envelopes
+    h = stage4_http
+    row, peer = h['rows']['B'], h['rows']['A']
+    env_orders, env_docs = _tenant_envelopes()
+    order = dict(env_orders['orders'][0], customer={'email': 'pii-order@example.com'})
+    invoice = dict(env_docs['documents']['Invoice']['rows'][0], BillEmail={'Address': 'pii-qbo@example.com'})
+    rows = {'Invoice': [invoice], 'CreditMemo': env_docs['documents']['CreditMemo']['rows'],
+            'Payment': env_docs['documents']['Payment']['rows']}
+    shop_post, qbo_get = q.requests.post, q.requests.get
+    def post(url, **kw):
+        if url.endswith('/access_token'):
+            return FakeResponse({'access_token': 'fake-shop-token',
+                                 'scope': ','.join(s.REQUIRED_SCOPES | {'read_orders'})})
+        if url.endswith('/graphql.json') and 'orders(' in kw['json']['query']:
+            assert 'mutation' not in kw['json']['query']
+            h['calls'].append(('post', url))
+            return FakeResponse({'data': {'orders': {'pageInfo': {'hasNextPage': False}, 'nodes': [order]}}})
+        return shop_post(url, **kw)
+    def get(url, **kw):
+        if url.endswith('/query'):
+            entity = kw['params']['query'].split()[3]
+            h['calls'].append(('query', url))
+            return FakeResponse({'QueryResponse': {entity: rows[entity]}})
+        return qbo_get(url, **kw)
+    monkeypatch.setattr(q.requests, 'post', post)
+    monkeypatch.setattr(q.requests, 'get', get)
+    def call(store, auth='Bearer fixture-B'):
+        return h['client'].request('GET', '/tenant/finance/audit', params={'store': store} if store is not None else None,
+                                   headers={'Authorization': auth} if auth else {})
+    before = h['snapshot']()
+    assert call(None).status_code == 403 and call(peer['shop_domain']).status_code == 403
+    assert call(row['shop_domain'], auth=None).status_code == 401
+    row['financial_access_enabled'] = False
+    assert call(row['shop_domain']).status_code == 403
+    row['financial_access_enabled'] = True
+    assert h['calls'] == [] and h['snapshot']() == before
+    own = call(row['shop_domain'])
+    body = own.json()
+    assert own.status_code == 200 and body['read_only'] is True and body['bank_settlement_verified'] is False
+    assert body['orders_checked'] == 1 and body['orders_verified'] == 0 and body['verified'] is False
+    assert set(body['results'][0]) <= set(q.AUDIT_ROW_FIELDS)
+    assert body['results'][0]['order'] == '#101' and body['results'][0]['status'] == 'BLOCKED_ORDER_INVOICE_LINK'
+    assert body['results'][0]['order_invoice'] == 'BLOCKED_UNSUPPORTED_ORDER_LINES'
+    for leak in ('pii-order', 'pii-qbo', 'fake-shop-token', 'fake-B', row['user_id']):
+        assert leak not in own.text
+    assert [c[0] for c in h['calls']].count('query') == 3  # GET /query only; local budget files may change
+    # Provider failure -> 503 without data.
+    monkeypatch.setattr(q.requests, 'post', lambda url, **kw: FakeResponse({}, 500))
+    failed = call(row['shop_domain'])
+    assert failed.status_code == 503 and 'results' not in failed.json()

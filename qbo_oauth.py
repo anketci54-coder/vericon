@@ -42,7 +42,7 @@ app = FastAPI(title="VERICON QBO sandbox connector", docs_url=None, redoc_url=No
 @app.middleware("http")
 async def reject_unauthenticated_data_routes(request, call_next):
     # Only a token-validation endpoint is allowed; customer data stays closed.
-    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me", "/shopify/ownership/start", "/shopify/ownership/verify", "/tenant/quickbooks/start", "/tenant/shopify/ownership/start", "/tenant/shopify/ownership/verify", "/tenant/finance/access-check", "/tenant/finance/invoice-count", "/tenant/finance/documents", "/tenant/shopify/orders", "/tenant/quickbooks/disconnect"):
+    if request.url.path not in ("/health", "/oauth/quickbooks/callback", "/oauth/quickbooks/start", "/auth/me", "/shopify/ownership/start", "/shopify/ownership/verify", "/tenant/quickbooks/start", "/tenant/shopify/ownership/start", "/tenant/shopify/ownership/verify", "/tenant/finance/access-check", "/tenant/finance/invoice-count", "/tenant/finance/documents", "/tenant/shopify/orders", "/tenant/finance/audit", "/tenant/quickbooks/disconnect"):
         return PlainTextResponse("Forbidden", status_code=403)
     return await call_next(request)
 
@@ -851,6 +851,54 @@ def tenant_shopify_orders(request: Request, store: str = "", first: int = 10) ->
     except (ValueError, OSError, requests.RequestException):
         raise HTTPException(status_code=503, detail="Shopify order read unavailable") from None
     return {**result, "read_only": True}
+
+
+# Whitelist: audit rows are never passed through; no raw order/QBO field reaches the client.
+AUDIT_ROW_FIELDS = ("order", "status", "order_invoice", "test_payment", "refund_credit",
+                    "credit_application", "verified", "cash_received_verified",
+                    "difference_amount", "expected_balance")
+
+
+def _audit_value(value):
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, (int, float)) or type(value).__name__ == "Decimal":
+        return str(value)
+    return None
+
+
+@app.get("/tenant/finance/audit")
+def tenant_finance_audit(request: Request, store: str = "") -> dict:
+    """On-demand read-only audit of the tenant's own orders vs QBO documents; nothing stored."""
+    import invoice_audit
+    from shopify_read import TENANT_ORDER_MAX_PAGE, read_tenant_orders
+    connection = _authorized_tenant_connection(request.headers.get("authorization"))
+    if store != connection["store"]:
+        raise HTTPException(status_code=403, detail="Cross-tenant order access denied")
+    if connection.get("financial_access_enabled") is not True:
+        raise HTTPException(status_code=403, detail="Financial read not enabled")
+    try:
+        config = _tenant_qbo_config(load_saved_setup(), connection["realm"])
+        orders = read_tenant_orders(connection["user_id"], connection["store"], first=TENANT_ORDER_MAX_PAGE)
+        docs = read_tenant_documents(config, user_id=connection["user_id"], start=1,
+                                     limit=TENANT_DOCUMENT_MAX_PAGE)
+        adapted = invoice_audit.adapt_tenant_envelopes(
+            orders, docs, store=connection["store"], realm=connection["realm"])
+        batch = (invoice_audit.audit_order_financial_batch(
+            adapted["orders"], adapted["invoices"], adapted["credits"], adapted["payments"])
+            if adapted["status"] == "READY" else None)
+    except (ValueError, KeyError, TypeError, ArithmeticError, OSError, requests.RequestException):
+        raise HTTPException(status_code=503, detail="Financial audit unavailable") from None
+    results = [{key: _audit_value(row.get(key)) for key in AUDIT_ROW_FIELDS if key in row}
+               for row in (batch or {}).get("results", []) if isinstance(row, dict)]
+    return {"store": connection["store"], "adapter_status": adapted["status"],
+            "status": batch["status"] if batch else adapted["status"],
+            "verified": bool(batch and batch.get("verified") is True),
+            "orders_checked": len(results),
+            "orders_verified": sum(1 for row in results if row.get("verified") is True),
+            "blocked": [{"order": _audit_value(b.get("order")), "status": _audit_value(b.get("status"))}
+                        for b in adapted["blocked"]],
+            "results": results, "bank_settlement_verified": False, "read_only": True}
 
 
 def _tenant_qbo_config(config: Config, realm: str) -> Config:
