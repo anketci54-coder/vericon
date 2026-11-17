@@ -498,3 +498,9 @@ A/B kendi Sandbox hesapları için, yalnızca okuma yetkisiyle `financial_access
 ## 2026-11-17 HANDOFF devri (Adım 4-1)
 - **Adım 3A kapandı.** Kod `48d83d5`, Nginx + 8787–8789 yeniden başlatma yapıldı. Kanıt (2026-11-16 11:17–11:24 EET, kullanıcı panelden ölçtü): A bayrak `false` iken A→A 403; B→B 200 (ilk sayfa Invoice 5, Payment 5, CreditMemo 4); A→A 200 (5, 5, 1); A→B 403; B→A 403; oturumsuz 401.
 - 8787 `QBO_OAUTH_CALLBACK_FAILURE`: 50 kayıt, hepsi `ValueError`. 13-11: 36 `state_validation_failure` (3 patlama × 12, aynı saniye) + 5 `other_failure` (her biri servis restartından 3–4 sn sonra). 14-11: 6 (5 other, 1 state). 16-11: 08:29 1 state, 11:01 2 other. Hepsi Nginx üzerinden geldi (callback durum logunda 50 upstream 400 + 63 adet 429 + 1 adet 200). Callback logu IP/zaman tutmuyor; ana access.log'da 13-11 13:46'ya kadarki callback çağrıları VPS'in kendi IP'sinden (curl/python-requests). Ajan oturum kayıtlarında 16-11 08:29 ve 11:01'e denk gelen callback çağrısı yok.
+
+
+## 2026-11-17 HANDOFF devri (Adım 4-2/4-3)
+- **Dağıtım 4-1:** kod `05324c5`, 8787–8789 yeniden başlatıldı 2026-11-17 08:19 EET (Nginx değişmedi, yedek gerekmedi; son yedek `/root/backup-nginx/vericon-app.conf.20261116-114739`). Kanıt: 3 birim active, /health 200, dış /health 200, orders oturumsuz 401, yalnız 127.0.0.1:8787-8789 dinliyor.
+- B Shopify mağazası TRY. B'de test siparişleri #1005–#1008. QBO'daki 8 belge notu yeni numaralarla güncellendi (kullanıcı, 2026-11-17 09:55).
+- **Adım 4-1 kapandı.** Canlı sorgu ölçümü (kullanıcı): 8 sipariş, PII yok, sorgu maliyeti hatası yok.
