@@ -52,7 +52,7 @@ Her adım sonu: `HANDOFF.md` güncellenir, kullanıcı onaylar, ancak sonra sonr
 - [x] 4-1e QBO notları: 8 belgeye yeni sipariş/iade numarası (elle, ayrı onay)
 - [x] 4-2 Adaptör: zarf açma, yalnızca SUCCESS iade işlemi, kesilme kontrolü (lineItems/shippingLines hasNextPage, transactions tam 10), para birimi
 - [x] 4-3 Tenant belge okuyucu: bağlantı notu (PrivateNote) doğrulaması
-- [ ] 4-4 İlk uçtan uca denetim: B siparişleri ↔ B QBO belgeleri, yazma çağrısı 0
+- [x] 4-4 İlk uçtan uca denetim: B siparişleri ↔ B QBO belgeleri, yazma çağrısı 0. Kanıt (2026-11-17, gerçek B verisi, yazma 0, 8 sipariş/36 fatura/4 kredi/20 ödeme): #1001–#1004 fatura yok (beklenen, `BLOCKED_ORDER_INVOICE_LINK`); #1005, #1008 pilot şekil dışı (`BLOCKED_UNSUPPORTED_ORDER_LINES`); #1006 toplam 120≠119 (`REVIEW_LINKED_TOTAL_MISMATCH`, kasıtlı); #1007 çift fatura DUP-1003 (`BLOCKED_MULTIPLE_LINKED_INVOICES`, kasıtlı). Hiçbir sipariş sessizce geçmedi, 0/8 VERIFIED.
 - [ ] 4-5 Aşama kapanışı: ChatGPT/Gemini ikinci göz, Fable denetçi, HANDOFF, `/bitir`
 
 **Adım 5 ve sonrası (Adım 4 kapanınca kabul ölçütleri yazılır)**
