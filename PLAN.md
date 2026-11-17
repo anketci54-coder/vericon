@@ -43,7 +43,7 @@ Her adım sonu: `HANDOFF.md` güncellenir, kullanıcı onaylar, ancak sonra sonr
 - [x] 3A `GET /tenant/finance/documents` canlı (`48d83d5`), izolasyon ölçüldü
 - [x] 3B `GET /tenant/shopify/orders` canlı, B→B 200, PII yok (`edf9e15`)
 
-**Adım 4 İlk uçtan uca rapor (AKTİF)**
+**Adım 4 İlk uçtan uca rapor (KAPANDI 2026-11-17)**
 - [x] 4-0 Girdi sözleşmesi farkı çıkarıldı (`audit_order_financial_batch`)
 - [x] 4-1a B Shopify mağazası TRY, 4 yeni test siparişi (#1005-#1008, iadeler dahil)
 - [x] 4-1b Sipariş sorgusu genişletildi, kod main'de (`05324c5`, 593 test)
@@ -53,7 +53,7 @@ Her adım sonu: `HANDOFF.md` güncellenir, kullanıcı onaylar, ancak sonra sonr
 - [x] 4-2 Adaptör: zarf açma, yalnızca SUCCESS iade işlemi, kesilme kontrolü (lineItems/shippingLines hasNextPage, transactions tam 10), para birimi
 - [x] 4-3 Tenant belge okuyucu: bağlantı notu (PrivateNote) doğrulaması
 - [x] 4-4 İlk uçtan uca denetim: B siparişleri ↔ B QBO belgeleri, yazma çağrısı 0. Kanıt (2026-11-17, gerçek B verisi, yazma 0, 8 sipariş/36 fatura/4 kredi/20 ödeme): #1001–#1004 fatura yok (beklenen, `BLOCKED_ORDER_INVOICE_LINK`); #1005, #1008 pilot şekil dışı (`BLOCKED_UNSUPPORTED_ORDER_LINES`); #1006 toplam 120≠119 (`REVIEW_LINKED_TOTAL_MISMATCH`, kasıtlı); #1007 çift fatura DUP-1003 (`BLOCKED_MULTIPLE_LINKED_INVOICES`, kasıtlı). Hiçbir sipariş sessizce geçmedi, 0/8 VERIFIED.
-- [ ] 4-5 Aşama kapanışı: ChatGPT/Gemini ikinci göz, Fable denetçi, HANDOFF, `/bitir`
+- [x] 4-5 Aşama kapanışı: fail-closed düzeltmeler (`64066c7` dağıtıldı; adaptör start/store/realm), `denetci` denetimi (BLOKE bulguları 1, 2, 9 IDEAS'ta/Adım 5-7), HANDOFF
 
 **Adım 5 ve sonrası (Adım 4 kapanınca kabul ölçütleri yazılır)**
 - [ ] 5 Panel
