@@ -17,6 +17,7 @@ Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 
 - **Adım 3B kapandı.** Kod `edf9e15` (main'de), dağıtım 11:47 EET. Canlı ölçüm 2026-11-16 (kullanıcı): B→B `/tenant/shopify/orders` 200, 4 sipariş, USD, PII yok; A→A 200 (onaylandı). Çapraz store 403, bayrak false 403, `first` aralığı 400, oturumsuz 401 kapı testinde BİTTİ.
 - 3B-0, 3B-A, 3B dağıtım ayrıntısı (11:47 EET, yedek `/root/backup-nginx/vericon-app.conf.20261116-114739`) `docs/history.md` sonunda.
+- **Dağıtım 4-1:** kod `05324c5`, 8787–8789 yeniden başlatıldı 2026-11-17 08:19 EET (Nginx değişmedi, yedek gerekmedi; son yedek `/root/backup-nginx/vericon-app.conf.20261116-114739`). Kanıt: 3 birim active, /health 200, dış /health 200, orders oturumsuz 401, yalnız 127.0.0.1:8787-8789 dinliyor.
 - B Shopify mağazası USD'ye çevrildi. B'de 4 test siparişi: #1001 $216 (iade $100), #1002 $120, #1003 $100, #1004 $300 (iade 2×$100).
 
 ## BLOKE
