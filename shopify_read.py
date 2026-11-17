@@ -333,8 +333,11 @@ def read_tenant_orders(user_id: str, store: str, first: int = 10) -> dict:
         raise ValueError("Tenant Shopify order read incomplete")
     if len(conn["nodes"]) > first or any(not isinstance(o, dict) for o in conn["nodes"]):
         raise ValueError("Tenant Shopify order page invalid")
-    return {"store": store, "orders": conn["nodes"],
-            "has_next_page": (conn.get("pageInfo") or {}).get("hasNextPage") is True}
+    page_info = conn.get("pageInfo")
+    # Real responses always carry pageInfo; missing/malformed means unknown, never "no more".
+    if not isinstance(page_info, dict) or type(page_info.get("hasNextPage")) is not bool:
+        raise ValueError("Tenant Shopify order read incomplete")
+    return {"store": store, "orders": conn["nodes"], "has_next_page": page_info["hasNextPage"]}
 
 
 def get_access_token(config: Config) -> str:

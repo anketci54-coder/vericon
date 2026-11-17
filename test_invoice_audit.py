@@ -1789,3 +1789,19 @@ def test_tenant_adapter_blocks_non_dict_document_rows(entity):
     docs["documents"][entity]["rows"].append("junk")
     out = a.adapt_tenant_envelopes(orders, docs)
     assert out["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT" and out["invoices"] == []
+
+
+@pytest.mark.parametrize("page_info", [None, {}, [1], {"hasNextPage": None}, {"hasNextPage": "x"}])
+def test_read_tenant_orders_rejects_missing_or_malformed_page_info(monkeypatch, page_info):
+    import shopify_read as sr
+    from types import SimpleNamespace
+    conn = {"nodes": [{"id": "gid://shopify/Order/1"}]}
+    if page_info is not None:
+        conn["pageInfo"] = page_info
+    monkeypatch.setattr(sr, "load_tenant_setup", lambda u, s: SimpleNamespace(client_id="x", client_secret="y"))
+    monkeypatch.setattr(sr, "_post_read", lambda url, **kw: SimpleNamespace(status_code=200, json=lambda: (
+        {"scope": "read_orders", "access_token": "t"} if "oauth" in url else {"data": {"orders": conn}})))
+    with pytest.raises(ValueError):
+        sr.read_tenant_orders("u", "a.myshopify.com", first=5)
+    conn["pageInfo"] = {"hasNextPage": False}
+    assert sr.read_tenant_orders("u", "a.myshopify.com", first=5)["has_next_page"] is False
