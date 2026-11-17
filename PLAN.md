@@ -47,9 +47,9 @@ Her adım sonu: `HANDOFF.md` güncellenir, kullanıcı onaylar, ancak sonra sonr
 - [x] 4-0 Girdi sözleşmesi farkı çıkarıldı (`audit_order_financial_batch`)
 - [x] 4-1a B Shopify mağazası TRY, 4 yeni test siparişi (#1005-#1008, iadeler dahil)
 - [x] 4-1b Sipariş sorgusu genişletildi, kod main'de (`05324c5`, 593 test)
-- [ ] 4-1c Dağıtım: `/dagit 05324c5` (8787-8789 yeniden başlatma, onayla)
-- [ ] 4-1d Canlı ölçüm: yeni alanlar geliyor mu, sorgu maliyeti hatası yok mu
-- [ ] 4-1e QBO notları: 8 belgeye yeni sipariş/iade numarası (elle, ayrı onay)
+- [x] 4-1c Dağıtım: `/dagit 05324c5` (8787-8789 yeniden başlatma, onayla)
+- [x] 4-1d Canlı ölçüm: yeni alanlar geliyor mu, sorgu maliyeti hatası yok mu
+- [x] 4-1e QBO notları: 8 belgeye yeni sipariş/iade numarası (elle, ayrı onay)
 - [ ] 4-2 Adaptör: zarf açma, yalnızca SUCCESS iade işlemi, kesilme kontrolü (lineItems/shippingLines hasNextPage, transactions tam 10), para birimi
 - [ ] 4-3 Tenant belge okuyucu: bağlantı notu (PrivateNote) doğrulaması
 - [ ] 4-4 İlk uçtan uca denetim: B siparişleri ↔ B QBO belgeleri, yazma çağrısı 0
