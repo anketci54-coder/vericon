@@ -1740,5 +1740,52 @@ def test_tenant_adapter_blocks_truncated_order_sublists(mutate, code):
     orders, docs = _tenant_envelopes()
     mutate(orders["orders"][0])
     out = a.adapt_tenant_envelopes(orders, docs)
-    assert out["status"] == "READY" and out["orders"] == []
+    assert out["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT"
+    assert out["orders"] == [] and out["invoices"] == [] and out["credits"] == [] and out["payments"] == []
     assert out["blocked"] == [{"order": "#101", "id": "gid://shopify/Order/101", "status": code}]
+
+
+def test_tenant_adapter_blocks_whole_batch_when_one_order_blocked():
+    from copy import deepcopy
+    orders, docs = _tenant_envelopes()
+    second = deepcopy(orders["orders"][0])
+    second["id"], second["name"] = "gid://shopify/Order/102", "#102"
+    second["lineItems"]["pageInfo"]["hasNextPage"] = True
+    orders["orders"].append(second)
+    out = a.adapt_tenant_envelopes(orders, docs)
+    assert out["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT" and out["orders"] == []
+    assert out["blocked"] == [{"order": "#102", "id": "gid://shopify/Order/102",
+                               "status": "BLOCKED_MISSING_ORDER_LINES"}]
+
+
+def test_tenant_adapter_blocks_empty_orders():
+    orders, docs = _tenant_envelopes()
+    orders["orders"] = []
+    assert a.adapt_tenant_envelopes(orders, docs)["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT"
+
+
+@pytest.mark.parametrize("nodes", [None, "DEL"])
+def test_tenant_adapter_blocks_refund_transactions_without_nodes(nodes):
+    orders, docs = _tenant_envelopes()
+    conn = orders["orders"][0]["refunds"][0]["transactions"]
+    conn.pop("nodes") if nodes == "DEL" else conn.update(nodes=None)
+    out = a.adapt_tenant_envelopes(orders, docs)
+    assert out["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT"
+    assert out["blocked"][0]["status"] == "BLOCKED_REFUND_TRANSACTION_PAGINATION"
+
+
+@pytest.mark.parametrize("bad", [[1], "x", 5])
+def test_tenant_adapter_blocks_non_dict_page_info_without_crash(bad):
+    orders, docs = _tenant_envelopes()
+    orders["orders"][0]["lineItems"]["pageInfo"] = bad
+    out = a.adapt_tenant_envelopes(orders, docs)
+    assert out["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT"
+    assert out["blocked"][0]["status"] == "BLOCKED_MISSING_ORDER_LINES"
+
+
+@pytest.mark.parametrize("entity", ["Invoice", "CreditMemo", "Payment"])
+def test_tenant_adapter_blocks_non_dict_document_rows(entity):
+    orders, docs = _tenant_envelopes()
+    docs["documents"][entity]["rows"].append("junk")
+    out = a.adapt_tenant_envelopes(orders, docs)
+    assert out["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT" and out["invoices"] == []

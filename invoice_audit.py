@@ -1260,15 +1260,18 @@ def adapt_tenant_envelopes(orders_envelope: dict, documents_envelope: dict) -> d
     """Pure: tenant /orders and /documents envelopes -> audit_order_financial_batch input.
 
     Incomplete data never passes silently. An incomplete page blocks the whole
-    input; an order with truncated sub-lists is moved to ``blocked`` with the
-    audit's own code and is NOT sent to the audit. No values are converted.
+    input; so does an empty order list. If any order has truncated sub-lists the
+    whole result is BLOCKED, no order is passed on, and ``blocked`` keeps each
+    order's name and audit code (a partial batch would report a falsely
+    complete verification). No values are converted.
     """
     whole = {"status": ADAPTER_BLOCKED_INPUT, "orders": [], "invoices": [],
              "credits": [], "payments": [], "blocked": []}
     if not isinstance(orders_envelope, dict) or not isinstance(documents_envelope, dict):
         return whole
     orders = orders_envelope.get("orders")
-    if not isinstance(orders, list) or orders_envelope.get("has_next_page") is not False:
+    if (not isinstance(orders, list) or not orders
+            or orders_envelope.get("has_next_page") is not False):
         return whole
     docs = documents_envelope.get("documents")
     if not isinstance(docs, dict):
@@ -1277,7 +1280,8 @@ def adapt_tenant_envelopes(orders_envelope: dict, documents_envelope: dict) -> d
     for entity in ("Invoice", "CreditMemo", "Payment"):
         part = docs.get(entity)
         if (not isinstance(part, dict) or not isinstance(part.get("rows"), list)
-                or part.get("has_more") is not False):
+                or part.get("has_more") is not False
+                or any(not isinstance(row, dict) for row in part["rows"])):
             return whole
         lists[entity] = part["rows"]
     ready, blocked = [], []
@@ -1289,15 +1293,21 @@ def adapt_tenant_envelopes(orders_envelope: dict, documents_envelope: dict) -> d
             blocked.append({"order": order.get("name"), "id": order.get("id"), "status": code})
         else:
             ready.append(order)
+    if blocked:
+        return {**whole, "blocked": blocked}
     return {"status": "READY", "orders": ready, "invoices": lists["Invoice"],
             "credits": lists["CreditMemo"], "payments": lists["Payment"], "blocked": blocked}
+
+
+def _page_complete(page_info) -> bool:
+    return isinstance(page_info, dict) and page_info.get("hasNextPage") is False
 
 
 def _tenant_order_block_code(order: dict) -> str | None:
     for key in ("lineItems", "shippingLines"):
         part = order.get(key)
         if (not isinstance(part, dict) or not isinstance(part.get("nodes"), list)
-                or (part.get("pageInfo") or {}).get("hasNextPage") is not False):
+                or not _page_complete(part.get("pageInfo"))):
             return "BLOCKED_MISSING_ORDER_LINES"
     transactions = order.get("transactions")
     # The tenant query asks for exactly 10; a full list may be truncated.
@@ -1309,7 +1319,8 @@ def _tenant_order_block_code(order: dict) -> str | None:
     for refund in refunds:
         connection = refund.get("transactions") if isinstance(refund, dict) else None
         if (not isinstance(connection, dict)
-                or (connection.get("pageInfo") or {}).get("hasNextPage") is not False):
+                or not isinstance(connection.get("nodes"), list)
+                or not _page_complete(connection.get("pageInfo"))):
             return "BLOCKED_REFUND_TRANSACTION_PAGINATION"
     return None
 
