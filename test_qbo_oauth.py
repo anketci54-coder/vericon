@@ -1934,6 +1934,12 @@ def test_stage4_http_shopify_orders_store_flag_and_credential_gates(stage4_http,
     for field in ('id name', 'lineItems', 'originalUnitPriceSet', 'discountedTotalSet', 'shippingLines', 'order { id }', 'test amountSet'):
         assert field in s.TENANT_ORDER_QUERY
     assert 'mutation' not in s.TENANT_ORDER_QUERY and s.TENANT_ORDER_MAX_PAGE == 20
+    q_ = s.TENANT_ORDER_QUERY
+    for conn in ('lineItems(first: 5) { pageInfo { hasNextPage } nodes',
+                 'shippingLines(first: 5) { pageInfo { hasNextPage } nodes',
+                 'transactions(first: 10) { kind status test amountSet',
+                 'transactions(first: 20) { pageInfo { hasNextPage } nodes'):
+        assert conn in q_
     # Missing tenant credential file: clean error, no provider call, no data.
     s._tenant_setup_path(row['user_id'], row['shop_domain']).unlink()
     h['calls'].clear()

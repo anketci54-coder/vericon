@@ -289,8 +289,8 @@ TENANT_ORDER_QUERY = '''query VericonTenantOrders($first: Int!) {
       totalTaxSet { shopMoney { amount currencyCode } }
       totalDiscountsSet { shopMoney { amount currencyCode } }
       totalPriceSet { shopMoney { amount currencyCode } }
-      lineItems(first: 5) { nodes { sku quantity originalUnitPriceSet { shopMoney { amount currencyCode } } discountedTotalSet { shopMoney { amount currencyCode } } } }
-      shippingLines(first: 5) { nodes { title discountedPriceSet { shopMoney { amount currencyCode } } } }
+      lineItems(first: 5) { pageInfo { hasNextPage } nodes { sku quantity originalUnitPriceSet { shopMoney { amount currencyCode } } discountedTotalSet { shopMoney { amount currencyCode } } } }
+      shippingLines(first: 5) { pageInfo { hasNextPage } nodes { title discountedPriceSet { shopMoney { amount currencyCode } } } }
       refunds {
         id createdAt order { id } totalRefundedSet { shopMoney { amount currencyCode } }
         transactions(first: 20) { pageInfo { hasNextPage } nodes {
