@@ -13,9 +13,6 @@ Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 - RLS: `vericon_pilot_connections` yalnızca SELECT politikası ve yetkisi; kullanıcı bayrağı değiştiremez (kullanıcı panelden doğruladı).
 - Shopify kimlik dosyası (yalnız ad listelendi): `private/shopify_tenants/` içinde B (`vericon-tenant-b-test.myshopify.com`) ve A (`hudys3-p0.myshopify.com`, 3B-A ile yazıldı). A→A orders 200 ölçüldü.
 
-
-- **Adım 3B kapandı.** Kod `edf9e15` (main'de), dağıtım 11:47 EET. Canlı ölçüm 2026-11-16 (kullanıcı): B→B `/tenant/shopify/orders` 200, 4 sipariş, USD, PII yok; A→A 200 (onaylandı). Çapraz store 403, bayrak false 403, `first` aralığı 400, oturumsuz 401 kapı testinde BİTTİ.
-- 3B-0, 3B-A, 3B dağıtım ayrıntısı (11:47 EET, yedek `/root/backup-nginx/vericon-app.conf.20261116-114739`) `docs/history.md` sonunda.
 - **Dağıtım 4-1:** kod `05324c5`, 8787–8789 yeniden başlatıldı 2026-11-17 08:19 EET (Nginx değişmedi, yedek gerekmedi; son yedek `/root/backup-nginx/vericon-app.conf.20261116-114739`). Kanıt: 3 birim active, /health 200, dış /health 200, orders oturumsuz 401, yalnız 127.0.0.1:8787-8789 dinliyor.
 - B Shopify mağazası TRY. B'de test siparişleri #1005–#1008. QBO'daki 8 belge notu yeni numaralarla güncellendi (kullanıcı, 2026-11-17 09:55).
 - **Adım 4-1 kapandı.** Canlı sorgu ölçümü (kullanıcı): 8 sipariş, PII yok, sorgu maliyeti hatası yok.
