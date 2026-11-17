@@ -1256,7 +1256,8 @@ def audit_order_financial_batch(orders: list[dict], invoices: list[dict],
 ADAPTER_BLOCKED_INPUT = "BLOCKED_FINANCIAL_BATCH_INPUT"
 
 
-def adapt_tenant_envelopes(orders_envelope: dict, documents_envelope: dict) -> dict:
+def adapt_tenant_envelopes(orders_envelope: dict, documents_envelope: dict, *,
+                           store: str, realm: str) -> dict:
     """Pure: tenant /orders and /documents envelopes -> audit_order_financial_batch input.
 
     Incomplete data never passes silently. An incomplete page blocks the whole
@@ -1264,10 +1265,17 @@ def adapt_tenant_envelopes(orders_envelope: dict, documents_envelope: dict) -> d
     whole result is BLOCKED, no order is passed on, and ``blocked`` keeps each
     order's name and audit code (a partial batch would report a falsely
     complete verification). No values are converted.
+
+    ``store`` and ``realm`` are the caller's connection; envelopes that name another
+    store/realm, or a document page not starting at 1, block the whole input.
     """
     whole = {"status": ADAPTER_BLOCKED_INPUT, "orders": [], "invoices": [],
              "credits": [], "payments": [], "blocked": []}
     if not isinstance(orders_envelope, dict) or not isinstance(documents_envelope, dict):
+        return whole
+    if (not isinstance(store, str) or not store or orders_envelope.get("store") != store
+            or not isinstance(realm, str) or not realm or documents_envelope.get("realm") != realm
+            or type(documents_envelope.get("start")) is not int or documents_envelope["start"] != 1):
         return whole
     orders = orders_envelope.get("orders")
     if (not isinstance(orders, list) or not orders

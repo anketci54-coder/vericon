@@ -1710,7 +1710,7 @@ def test_tenant_adapter_converts_envelopes_to_audit_input(monkeypatch):
                         {**base, "status": "PILOT_ORDER_INVOICE_VERIFIED",
                          "verified": True, "invoice_id": inv["Id"]})
     orders, docs = _tenant_envelopes()
-    out = a.adapt_tenant_envelopes(orders, docs)
+    out = a.adapt_tenant_envelopes(orders, docs, store="x.myshopify.com", realm="1")
     assert out["status"] == "READY" and out["blocked"] == []
     result = a.audit_order_financial_batch(out["orders"], out["invoices"], out["credits"], out["payments"])
     assert result["status"] == "FINANCIAL_BATCH_VERIFIED" and result["orders_verified"] == 1
@@ -1725,7 +1725,7 @@ def test_tenant_adapter_converts_envelopes_to_audit_input(monkeypatch):
 def test_tenant_adapter_blocks_incomplete_pages(mutate):
     orders, docs = _tenant_envelopes()
     mutate(orders, docs)
-    out = a.adapt_tenant_envelopes(orders, docs)
+    out = a.adapt_tenant_envelopes(orders, docs, store="x.myshopify.com", realm="1")
     assert out["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT" and out["orders"] == []
 
 
@@ -1739,7 +1739,7 @@ def test_tenant_adapter_blocks_incomplete_pages(mutate):
 def test_tenant_adapter_blocks_truncated_order_sublists(mutate, code):
     orders, docs = _tenant_envelopes()
     mutate(orders["orders"][0])
-    out = a.adapt_tenant_envelopes(orders, docs)
+    out = a.adapt_tenant_envelopes(orders, docs, store="x.myshopify.com", realm="1")
     assert out["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT"
     assert out["orders"] == [] and out["invoices"] == [] and out["credits"] == [] and out["payments"] == []
     assert out["blocked"] == [{"order": "#101", "id": "gid://shopify/Order/101", "status": code}]
@@ -1752,7 +1752,7 @@ def test_tenant_adapter_blocks_whole_batch_when_one_order_blocked():
     second["id"], second["name"] = "gid://shopify/Order/102", "#102"
     second["lineItems"]["pageInfo"]["hasNextPage"] = True
     orders["orders"].append(second)
-    out = a.adapt_tenant_envelopes(orders, docs)
+    out = a.adapt_tenant_envelopes(orders, docs, store="x.myshopify.com", realm="1")
     assert out["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT" and out["orders"] == []
     assert out["blocked"] == [{"order": "#102", "id": "gid://shopify/Order/102",
                                "status": "BLOCKED_MISSING_ORDER_LINES"}]
@@ -1761,7 +1761,7 @@ def test_tenant_adapter_blocks_whole_batch_when_one_order_blocked():
 def test_tenant_adapter_blocks_empty_orders():
     orders, docs = _tenant_envelopes()
     orders["orders"] = []
-    assert a.adapt_tenant_envelopes(orders, docs)["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT"
+    assert a.adapt_tenant_envelopes(orders, docs, store="x.myshopify.com", realm="1")["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT"
 
 
 @pytest.mark.parametrize("nodes", [None, "DEL"])
@@ -1769,7 +1769,7 @@ def test_tenant_adapter_blocks_refund_transactions_without_nodes(nodes):
     orders, docs = _tenant_envelopes()
     conn = orders["orders"][0]["refunds"][0]["transactions"]
     conn.pop("nodes") if nodes == "DEL" else conn.update(nodes=None)
-    out = a.adapt_tenant_envelopes(orders, docs)
+    out = a.adapt_tenant_envelopes(orders, docs, store="x.myshopify.com", realm="1")
     assert out["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT"
     assert out["blocked"][0]["status"] == "BLOCKED_REFUND_TRANSACTION_PAGINATION"
 
@@ -1778,7 +1778,7 @@ def test_tenant_adapter_blocks_refund_transactions_without_nodes(nodes):
 def test_tenant_adapter_blocks_non_dict_page_info_without_crash(bad):
     orders, docs = _tenant_envelopes()
     orders["orders"][0]["lineItems"]["pageInfo"] = bad
-    out = a.adapt_tenant_envelopes(orders, docs)
+    out = a.adapt_tenant_envelopes(orders, docs, store="x.myshopify.com", realm="1")
     assert out["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT"
     assert out["blocked"][0]["status"] == "BLOCKED_MISSING_ORDER_LINES"
 
@@ -1787,7 +1787,7 @@ def test_tenant_adapter_blocks_non_dict_page_info_without_crash(bad):
 def test_tenant_adapter_blocks_non_dict_document_rows(entity):
     orders, docs = _tenant_envelopes()
     docs["documents"][entity]["rows"].append("junk")
-    out = a.adapt_tenant_envelopes(orders, docs)
+    out = a.adapt_tenant_envelopes(orders, docs, store="x.myshopify.com", realm="1")
     assert out["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT" and out["invoices"] == []
 
 
@@ -1805,3 +1805,22 @@ def test_read_tenant_orders_rejects_missing_or_malformed_page_info(monkeypatch, 
         sr.read_tenant_orders("u", "a.myshopify.com", first=5)
     conn["pageInfo"] = {"hasNextPage": False}
     assert sr.read_tenant_orders("u", "a.myshopify.com", first=5)["has_next_page"] is False
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda o, d: d.update(start=26),
+    lambda o, d: d.pop("start"),
+])
+def test_tenant_adapter_blocks_document_page_not_starting_at_one(mutate):
+    orders, docs = _tenant_envelopes()
+    mutate(orders, docs)
+    docs["documents"]["Invoice"]["rows"] = []
+    out = a.adapt_tenant_envelopes(orders, docs, store="x.myshopify.com", realm="1")
+    assert out["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT" and out["orders"] == []
+
+
+@pytest.mark.parametrize("store,realm", [("other.myshopify.com", "1"), ("x.myshopify.com", "999")])
+def test_tenant_adapter_blocks_envelopes_of_another_connection(store, realm):
+    orders, docs = _tenant_envelopes()
+    out = a.adapt_tenant_envelopes(orders, docs, store=store, realm=realm)
+    assert out["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT" and out["orders"] == []
