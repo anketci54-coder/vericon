@@ -512,3 +512,9 @@ A/B kendi Sandbox hesapları için, yalnızca okuma yetkisiyle `financial_access
 - **Dağıtım 4-1:** `05324c5` (2026-11-17 08:19 EET).
 - **Dağıtım 4-5a:** `64066c7`, 2026-11-17 13:26 EET; Nginx değişmedi (yedek: `/root/backup-nginx/vericon-app.conf.20261116-114739`).
 - **5A kapsam/kabul metni:** tek `GET /tenant/finance/audit?store=`, `read_only: true`, anlık hesap, kayıt yok, alan beyaz listesi, hata 503. Kabul (1)–(8): B 200/8 sipariş, A→B 403, oturumsuz 401, PII yok, yazma 0, bozuk veri BLOCKED, suit geçer, dağıtım ayrı onay.
+
+## Adım 5 kapanışı (2026-11-18)
+- 5A dağıtım `0f5155f` (2026-11-17 17:18 EET; 8787–8789 yeniden başlatıldı; Nginx yedek `/root/backup-nginx/vericon-app.conf.20261117-171430`).
+- 5B statik dağıtım `af1e47e` (2026-11-18; cmp ok ×2, nginx -t + reload; yedek `/root/backup-nginx/vericon-app.conf.20261118-092239`, `/root/backup-nginx/index.html.20261118-092239`).
+- 5B dar ekran `4d18934` (2026-11-18 12:21 EET; yedek `/root/backup-nginx/finance-audit.js.20261118-122110`, `/root/backup-nginx/style.css.20261118-122110`).
+- 5A canlı ölçüm 2026-11-17 17:20–17:30 EET: B→B 200/8 sipariş `BLOCKED_ORDER_INVOICE_LINK`, A→A 200, A→B/B→A/olmayan mağaza 403, oturumsuz 401.
