@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/style.css">
   <script type="module" defer src="/app.bundle.js"></script>
   <script defer src="/tenant-isolation-check.js"></script>
+  <script defer src="/finance-audit.js"></script>
 
 </head>
 <body>
@@ -92,6 +93,8 @@
           <p id="pdf42-result" role="status" aria-live="polite" style="overflow-wrap:anywhere" hidden></p>
           <button class="secondary-button" id="tenant-isolation-check" type="button">Finansal izolasyonu doğrula</button>
           <p id="tenant-isolation-result" role="status" aria-live="polite" style="overflow-wrap:anywhere" hidden></p>
+          <button class="secondary-button" id="finance-audit-run" type="button">Finansal denetimi çalıştır (salt-okunur)</button>
+          <div id="finance-audit-result" role="status" aria-live="polite" hidden></div>
           <button class="secondary-button" id="signout" type="button">Güvenli çıkış yap <span aria-hidden="true">→</span></button>
         </div>
         <div class="panel-bottom"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="M8 10V7a4 4 0 0 1 8 0v3" stroke="currentColor" stroke-width="1.7"/></svg><span>Şifre paylaşılmaz. Müşteri verileri henüz erişime açık değildir.</span></div>
