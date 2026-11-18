@@ -386,7 +386,7 @@ def bounded_query_get(url: str, *, params: dict, headers: dict, timeout: int = 2
     match = re.fullmatch(re.escape(SANDBOX_API) + r'/v3/company/([0-9]{1,32})/query', url)
     query = params.get('query')
     if (not match or not isinstance(query, str) or not re.match(
-            r'^SELECT (?:\*|COUNT\(\*\)) FROM (?:Invoice|SalesReceipt|Payment|CreditMemo|Deposit|PurchaseOrder|Bill|Item|Preferences)\b', query)
+            r'^SELECT (?:\*|COUNT\(\*\)) FROM (?:Invoice|SalesReceipt|RefundReceipt|Payment|CreditMemo|Deposit|PurchaseOrder|Bill|Item|Preferences)\b', query)
             or any(c in query for c in (';', '\n', '\r'))
             or set(params) - {'query', 'minorversion', 'include'}):
         raise ValueError('Only approved Sandbox GET /query reads are allowed')
@@ -470,13 +470,43 @@ def read_tenant_invoice_count(config: Config, *, user_id: str) -> int:
     return count
 
 
-TENANT_DOCUMENT_ENTITIES = ("Invoice", "Payment", "CreditMemo")
+TENANT_DOCUMENT_ENTITIES = ("Invoice", "Payment", "CreditMemo", "SalesReceipt", "RefundReceipt")
+# Receipt types are returned through a whitelist: no customer name, e-mail, address or phone.
+RECEIPT_ENTITIES = ("SalesReceipt", "RefundReceipt")
+RECEIPT_ROW_FIELDS = ("Id", "DocNumber", "TxnDate", "TotalAmt", "HomeTotalAmt", "CurrencyRef",
+                      "ExchangeRate", "PrivateNote", "CustomField", "LinkedTxn", "Line", "TxnTaxDetail")
+RECEIPT_LINE_FIELDS = ("Id", "LineNum", "Amount", "DetailType")
+RECEIPT_LINE_DETAIL_FIELDS = ("ItemRef", "Qty", "UnitPrice", "TaxCodeRef", "PercentBased", "DiscountPercent")
+
+
+def _receipt_row(row: dict) -> dict:
+    """Whitelist one SalesReceipt/RefundReceipt row; malformed shape fails closed."""
+    out = {key: row[key] for key in RECEIPT_ROW_FIELDS if key in row and key not in ("Line", "TxnTaxDetail")}
+    if "TxnTaxDetail" in row:
+        detail = row["TxnTaxDetail"]
+        if not isinstance(detail, dict):
+            raise ValueError("Tenant document read invalid")
+        out["TxnTaxDetail"] = {"TotalTax": detail.get("TotalTax")}
+    if "Line" in row:
+        if not isinstance(row["Line"], list) or any(not isinstance(l, dict) for l in row["Line"]):
+            raise ValueError("Tenant document read invalid")
+        lines = []
+        for line in row["Line"]:
+            item = {key: line[key] for key in RECEIPT_LINE_FIELDS if key in line}
+            for name, value in line.items():
+                if name.endswith("LineDetail"):
+                    if not isinstance(value, dict):
+                        raise ValueError("Tenant document read invalid")
+                    item[name] = {key: value[key] for key in RECEIPT_LINE_DETAIL_FIELDS if key in value}
+            lines.append(item)
+        out["Line"] = lines
+    return out
 TENANT_DOCUMENT_MAX_PAGE = 50
 TENANT_DOCUMENT_MAX_START = 1000
 
 
 def read_tenant_documents(config: Config, *, user_id: str, start: int = 1, limit: int = 25) -> dict:
-    """Tenant-bound, bounded GET /query page of Invoice, Payment and CreditMemo."""
+    """Tenant-bound, bounded GET /query page of Invoice, Payment, CreditMemo, SalesReceipt and RefundReceipt."""
     if (type(start) is not int or type(limit) is not int
             or not 1 <= start <= TENANT_DOCUMENT_MAX_START
             or not 1 <= limit <= TENANT_DOCUMENT_MAX_PAGE):
@@ -511,7 +541,10 @@ def read_tenant_documents(config: Config, *, user_id: str, start: int = 1, limit
             if (not isinstance(rows, list) or len(rows) > limit + 1
                     or any(not isinstance(row, dict) for row in rows)):
                 raise ValueError("Tenant document read invalid")
-            documents[entity] = {"rows": rows[:limit], "has_more": len(rows) > limit}
+            page = rows[:limit]
+            if entity in RECEIPT_ENTITIES:
+                page = [_receipt_row(row) for row in page]
+            documents[entity] = {"rows": page, "has_more": len(rows) > limit}
     except _TokenExchangeRefused as exc:
         if exc.invalid_grant:
             _tenant_count_budget(config, cooldown=60)

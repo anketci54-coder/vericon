@@ -1863,7 +1863,7 @@ def test_tenant_documents_read_only_bounded_get_query(cfg, monkeypatch):
     monkeypatch.setattr(q.requests, 'post', lambda *a, **kw: pytest.fail('no POST on read path'))
     result = q.read_tenant_documents(tenant, user_id=user, start=1, limit=2)
     assert [x[1] for x in seen] == [
-        f'SELECT * FROM {e} ORDERBY Id STARTPOSITION 1 MAXRESULTS 3' for e in ('Invoice', 'Payment', 'CreditMemo')]
+        f'SELECT * FROM {e} ORDERBY Id STARTPOSITION 1 MAXRESULTS 3' for e in q.TENANT_DOCUMENT_ENTITIES]
     assert all(u == q.SANDBOX_API + '/v3/company/987654321/query' for u, _ in seen)
     assert all(len(d['rows']) == 2 and d['has_more'] for d in result['documents'].values())
     assert 'SECRET_TOKEN' not in json.dumps(result)
@@ -1872,6 +1872,36 @@ def test_tenant_documents_read_only_bounded_get_query(cfg, monkeypatch):
             q.read_tenant_documents(tenant, user_id=user, limit=bad)
     with pytest.raises(ValueError):
         q.read_tenant_documents(tenant, user_id=user, start=1001)
+
+
+def test_6a1_receipts_read_whitelisted_no_pii_and_bad_page_blocks(cfg, monkeypatch):
+    from dataclasses import replace
+    user = '11111111-1111-4111-8111-111111111111'
+    tenant = replace(cfg, expected_realm='987654321')
+    q.save_tenant_tokens(tenant, {'access_token': 'T', 'refresh_token': 'R', 'expires_in': 3600}, user_id=user)
+    row = {'Id': '7', 'DocNumber': '1001', 'TotalAmt': 10, 'PrivateNote': 'VERICON_SHOPIFY_ORDER_ID=5',
+           'CustomerRef': {'value': '1', 'name': 'Jane Doe'}, 'BillEmail': {'Address': 'jane@example.com'},
+           'BillAddr': {'Line1': '1 Main St'}, 'ShipAddr': {'Line1': '1 Main St'}, 'CustomerMemo': {'value': 'x'},
+           'Line': [{'Id': '1', 'Amount': 10, 'DetailType': 'SalesItemLineDetail', 'Description': 'Jane Doe',
+                     'SalesItemLineDetail': {'Qty': 1, 'UnitPrice': 10, 'ItemRef': {'value': '3'}}}]}
+    bad = {'on': False}
+    def fake_get(url, *, params, headers, timeout, allow_redirects):
+        entity = params['query'].split()[3]
+        if entity in q.RECEIPT_ENTITIES and bad['on']:
+            return FakeResponse({'QueryResponse': {entity: [{'Id': '1', 'Line': 'broken'}]}})
+        return FakeResponse({'QueryResponse': {entity: [dict(row)] if entity in q.RECEIPT_ENTITIES else []}})
+    monkeypatch.setattr(q.requests, 'get', fake_get)
+    docs = q.read_tenant_documents(tenant, user_id=user)['documents']
+    for e in q.RECEIPT_ENTITIES:
+        got = docs[e]['rows'][0]
+        assert got['DocNumber'] == '1001' and got['PrivateNote'].startswith('VERICON_SHOPIFY_ORDER_ID=')
+        assert not {'CustomerRef', 'BillEmail', 'BillAddr', 'ShipAddr', 'CustomerMemo'} & set(got)
+        assert 'Jane' not in json.dumps(got) and 'example.com' not in json.dumps(got)
+    bad['on'] = True
+    other = replace(cfg, expected_realm='987654322')
+    q.save_tenant_tokens(other, {'access_token': 'T', 'refresh_token': 'R', 'expires_in': 3600}, user_id=user)
+    with pytest.raises(ValueError):
+        q.read_tenant_documents(other, user_id=user)
 
 
 @pytest.mark.parametrize('actor', ['A', 'B'])
@@ -1893,8 +1923,8 @@ def test_stage4_http_documents_realm_and_flag_gates(stage4_http, monkeypatch, ac
     assert own.status_code == 200 and 'fake-' not in own.text
     body = own.json()
     assert body['realm'] == row['qbo_realm_id'] and body['read_only'] is True
-    assert set(body['documents']) == {'Invoice', 'Payment', 'CreditMemo'}
-    assert h['calls'] == [('query', q.SANDBOX_API + f"/v3/company/{row['qbo_realm_id']}/query")] * 3
+    assert set(body['documents']) == set(q.TENANT_DOCUMENT_ENTITIES)
+    assert h['calls'] == [('query', q.SANDBOX_API + f"/v3/company/{row['qbo_realm_id']}/query")] * 5
 
 
 def test_stage4_http_shopify_orders_store_flag_and_credential_gates(stage4_http, monkeypatch):
@@ -1974,7 +2004,7 @@ def test_stage4_http_finance_audit_gates_fields_and_read_only(stage4_http, monke
         if url.endswith('/query'):
             entity = kw['params']['query'].split()[3]
             h['calls'].append(('query', url))
-            return FakeResponse({'QueryResponse': {entity: rows[entity]}})
+            return FakeResponse({'QueryResponse': {entity: rows.get(entity, [])}})
         return qbo_get(url, **kw)
     monkeypatch.setattr(q.requests, 'post', post)
     monkeypatch.setattr(q.requests, 'get', get)
@@ -1997,7 +2027,7 @@ def test_stage4_http_finance_audit_gates_fields_and_read_only(stage4_http, monke
     assert body['results'][0]['order_invoice'] == 'BLOCKED_UNSUPPORTED_ORDER_LINES'
     for leak in ('pii-order', 'pii-qbo', 'fake-shop-token', 'fake-B', row['user_id']):
         assert leak not in own.text
-    assert [c[0] for c in h['calls']].count('query') == 3  # GET /query only; local budget files may change
+    assert [c[0] for c in h['calls']].count('query') == 5  # GET /query only; local budget files may change
     # Provider failure -> 503 without data.
     monkeypatch.setattr(q.requests, 'post', lambda url, **kw: FakeResponse({}, 500))
     failed = call(row['shop_domain'])
