@@ -4,8 +4,12 @@ Güncelleme: 2026-11-18
 Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 
 ## Şu an tek açık iş
-**Adım 6A-2 (TASLAK, başlatılmadı; onay yok). Kod yok.** Kapsam: (1) ortak belge modeli, saf fonksiyon: Invoice/SalesReceipt/CreditMemo/RefundReceipt aynı iç biçime; (2) `docnumber` bağlama profili (istek parametresi, izinli liste; `marker` varsayılan; QBO belge no = Shopify sipariş no, yalnız tam eşleşme veya tek tanımlı önek; profil yok / belirsiz / aynı numara iki belgede = BLOKE); (3) SalesReceipt ve RefundReceipt'in audit'e bağlanması (audit şimdi 3 türle sınırlı, `AUDIT_DOCUMENT_ENTITIES`).
-Kabul: sandbox örnekleriyle doğru eşleşme REVIEW/VERIFIED; numara yok, çakışma, yanlış tutar BLOKE/REVIEW; **belge numarası sipariş numarasıyla tesadüfen çakışır ama tutar uyuşmaz → REVIEW testi**; Invoice yolu bozulmaz; yazma 0; panel yalnız onaylı alanlar; canlı ölçüm; dağıtım ayrı onay. Bağlama profili belge numarası ayarına dayanır, gözlem yapılmadı, bilinmeyen = BLOKE.
+**Adım 6A-2a (TASLAK, başlatılmadı; onay yok). Kod yok.** Ortak belge modeli + `docnumber` bağlama profili: yalnız saf fonksiyon ve testler. Uç, audit, panel değişmez. Dağıtım yok.
+- Model: Invoice/SalesReceipt/CreditMemo/RefundReceipt aynı iç biçime. Profil izinli liste: `marker` (varsayılan), `docnumber`. Profil yok / eşleşme belirsiz / aynı numara iki belgede = BLOKE.
+- Kabul: doğru eşleşme; numara yok, çakışma, yanlış tutar BLOKE/REVIEW; **numara siparişle tesadüfen çakışır ama tutar uyuşmaz → REVIEW testi**; mevcut Invoice testleri bozulmaz; yazma 0.
+- **Kural önerileri (onay bekliyor, onaylanana kadar bağlayıcı değil):** (a) `docnumber` profilinde RefundReceipt bağlanmaz; iade yalnız `marker` ile gelirse bağlanır, yoksa BLOKE. (b) SalesReceipt toplamı sipariş toplamıyla eşleşirse "belge ve ödeme kaydı var" sayılır; `cash_received_verified` ve banka doğrulaması kalır (doğrulanmadı). (c) Numara normalleştirme: yalnız baştaki `#` atılır; tek tanımlı önek istisnası dışında dönüşüm yok.
+
+**Sırada: 6A-2b** (6A-2a bitip onaylanınca): receipt'leri audit'e (`AUDIT_DOCUMENT_ENTITIES`) ve uca bağla, panel yalnız onaylı alanlar, canlı ölçüm, dağıtım ayrı onay. BLOKE (6A-2b): sipariş numarasıyla eşleşen 3-4 SalesReceipt'i kullanıcı sandbox'ta elle girecek. Bağlama profili belge numarası ayarına dayanır, gözlem yapılmadı, bilinmeyen = BLOKE.
 
 ## BİTTİ
 - **6A-1 kapandı** (`78c59c5` dağıtıldı 2026-11-18 15:16 +02:00, sunucu saati, journalctl 8789 başlama 15:16:14). Canlı kanıt (kullanıcı, B, konsol, 2026-11-18 15:24 +02:00, Bükreş saati): documents 200, Invoice 36/Payment 20/CreditMemo 4/SalesReceipt 4/RefundReceipt 1, has_more false; yeni türlerde PII yok. Eski 3 türde BillEmail/BillAddr/ShipAddr/FreeFormAddress/CustomerMemo/CustomerRef dönüyor (IDEAS, yüksek öncelik, Adım 7 öncesi).
@@ -14,7 +18,7 @@ Kabul: sandbox örnekleriyle doğru eşleşme REVIEW/VERIFIED; numara yok, çak�
 - **5B canlı kabul** (kullanıcı, 2026-11-18 11:50–12:30 +02:00, tarayıcı): B sayfada kendi mağazası, 8 sipariş, doğrulanan 0, banka doğrulanmadı, salt-okunur, nedenler 4-4 ile uyumlu; A yalnız kendi mağazası ve 4 siparişi. Dar ekran: `.audit-scroll` var, scrollWidth 1265 > clientWidth 314, overflow-x auto, sebep sütunu yatay kaydırarak görüldü.
 
 ## BİTMEDİ
-- Adım 6 (Güvenilirlik testleri) kabul ölçütleri yazılmadı; 6A-2 taslağı onaylanana kadar bekler.
+- Adım 6 (Güvenilirlik testleri) kabul ölçütleri yazılmadı; 6A-2a taslağı onaylanana kadar bekler.
 - IDEAS: pilot şekil sınırı (Adım 7), B test verisi yeniden kurulumu (düşük öncelik), `index.html` eski `style=` nitelikleri CSP'de engelleniyor (düşük öncelik). `shopify_read.py` fail-open satırı kapandı (4-5a); IDEAS'ta işaretlemek kullanıcı kararı.
 
 ## BLOKE
