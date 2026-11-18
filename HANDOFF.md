@@ -15,6 +15,8 @@ Açık soru (onayda): `store` değeri sayfada nereden alınır (mevcut bağlant�
 - **Dağıtım 5B (statik):** `af1e47e` (`web/finance-audit.js`, `index.html`, Nginx `location = /finance-audit.js`), 2026-11-18 EET; servis yeniden başlatılmadı (sunucu kodu değişmedi). Kanıt: cmp ok ×2, nginx -t ok + reload, dış /health 200, /finance-audit.js 200, audit oturumsuz 401, 8787–8789 dinliyor ve active. Nginx yedek: `/root/backup-nginx/vericon-app.conf.20261118-092239`; eski index.html: `/root/backup-nginx/index.html.20261118-092239`. Kalan: 5B tarayıcı kabulü (kullanıcı).
 - **Adım 5A kapandı** (kullanıcı canlı ölçümü, 2026-11-17 17:20–17:30 EET, konsol): B→B 200, 8 sipariş, hepsi `BLOCKED_ORDER_INVOICE_LINK`, `read_only: true`, `bank_settlement_verified: false`, alan listesi beyaz liste ile aynı; A→A 200; A→B 403; B→A 403; olmayan mağaza 403; oturumsuz 401.
 
+- **Dağıtım 5B dar ekran (statik):** `4d18934` (`web/finance-audit.js`, `web/style.css`), 2026-11-18 12:21 EET; servis/Nginx dokunulmadı. Kanıt: cmp ok ×3, dış /health 200, /finance-audit.js 200, /style.css 200, audit oturumsuz 401, 8787–8789 dinliyor, 8782–8786 yok. Eski dosyalar: `/root/backup-nginx/finance-audit.js.20261118-122110`, `/root/backup-nginx/style.css.20261118-122110`. Kalan: dar ekran tarayıcı doğrulaması (kullanıcı), sonra 5B ve Adım 5 kapanışı.
+
 ## BİTMEDİ
 - 5B onayı (yukarıdaki taslak + açık soru).
 - IDEAS: pilot şekil sınırı (Adım 7), B test verisi yeniden kurulumu (düşük öncelik). `shopify_read.py` fail-open satırı kapandı (4-5a); IDEAS'ta işaretlemek kullanıcı kararı.
