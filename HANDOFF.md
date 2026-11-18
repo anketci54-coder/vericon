@@ -7,7 +7,7 @@ Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 **Adım 6A (TASLAK, başlatılmadı; kullanıcı onayı yok).** Kod yok, dal yok.
 Kapsam: (1) ortak belge modeli, saf fonksiyon: Invoice/SalesReceipt/CreditMemo/RefundReceipt aynı iç biçime. (2) QBO'dan SalesReceipt ve RefundReceipt okuma: yalnız GET /query, yeni scope yok (doğrula), yeni dış yazma yok. (3) Bağlama profili, istek parametresi, izinli liste: `marker` (VERICON_SHOPIFY_ORDER_ID, varsayılan) ve `docnumber` (QBO belge no = Shopify sipariş no; yalnız tam eşleşme veya tek tanımlı önek). Supabase şeması değişmez. Profil yok / eşleşme belirsiz / aynı numara iki belgede = BLOKE, tahmin yok.
 Kabul: sandbox'ta SalesReceipt ve RefundReceipt örnekleriyle doğru eşleşme REVIEW/VERIFIED; numara yok, çakışma, yanlış tutar BLOKE/REVIEW; mevcut Invoice yolu bozulmaz; yazma 0; panel yalnız onaylı alanları gösterir; canlı ölçüm; dağıtım ayrı onay.
-Ön koşul (BLOKE): önce gerçek bağlayıcı çıktısı gözlemlenmeli (IDEAS 6A satırı).
+Bağlama profili belge numarası ayarına dayanır, gözlem yapılmadı, bilinmeyen = BLOKE.
 
 ## BİTTİ
 - Adım 1–4 (ayrıntı `docs/history.md`). A=`hudys3-p0` realm `9341458613758425`, B=`vericon-tenant-b-test` realm `9341458641399133` (TRY). A ve B `financial_access_enabled=true` (AGENTS 6b; geri alma: bayrak `false`).
