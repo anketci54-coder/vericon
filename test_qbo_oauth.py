@@ -2027,7 +2027,7 @@ def test_stage4_http_finance_audit_gates_fields_and_read_only(stage4_http, monke
     assert body['results'][0]['order_invoice'] == 'BLOCKED_UNSUPPORTED_ORDER_LINES'
     for leak in ('pii-order', 'pii-qbo', 'fake-shop-token', 'fake-B', row['user_id']):
         assert leak not in own.text
-    assert [c[0] for c in h['calls']].count('query') == 5  # GET /query only; local budget files may change
+    assert [c[0] for c in h['calls']].count('query') == 3  # GET /query only; local budget files may change
     # Provider failure -> 503 without data.
     monkeypatch.setattr(q.requests, 'post', lambda url, **kw: FakeResponse({}, 500))
     failed = call(row['shop_domain'])

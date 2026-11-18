@@ -473,6 +473,7 @@ def read_tenant_invoice_count(config: Config, *, user_id: str) -> int:
 TENANT_DOCUMENT_ENTITIES = ("Invoice", "Payment", "CreditMemo", "SalesReceipt", "RefundReceipt")
 # Receipt types are returned through a whitelist: no customer name, e-mail, address or phone.
 RECEIPT_ENTITIES = ("SalesReceipt", "RefundReceipt")
+AUDIT_DOCUMENT_ENTITIES = ("Invoice", "Payment", "CreditMemo")
 RECEIPT_ROW_FIELDS = ("Id", "DocNumber", "TxnDate", "TotalAmt", "HomeTotalAmt", "CurrencyRef",
                       "ExchangeRate", "PrivateNote", "CustomField", "LinkedTxn", "Line", "TxnTaxDetail")
 RECEIPT_LINE_FIELDS = ("Id", "LineNum", "Amount", "DetailType")
@@ -505,12 +506,15 @@ TENANT_DOCUMENT_MAX_PAGE = 50
 TENANT_DOCUMENT_MAX_START = 1000
 
 
-def read_tenant_documents(config: Config, *, user_id: str, start: int = 1, limit: int = 25) -> dict:
+def read_tenant_documents(config: Config, *, user_id: str, start: int = 1, limit: int = 25,
+                          entities: tuple = TENANT_DOCUMENT_ENTITIES) -> dict:
     """Tenant-bound, bounded GET /query page of Invoice, Payment, CreditMemo, SalesReceipt and RefundReceipt."""
     if (type(start) is not int or type(limit) is not int
             or not 1 <= start <= TENANT_DOCUMENT_MAX_START
             or not 1 <= limit <= TENANT_DOCUMENT_MAX_PAGE):
         raise ValueError("Invalid tenant document page")
+    if entities not in (TENANT_DOCUMENT_ENTITIES, AUDIT_DOCUMENT_ENTITIES):
+        raise ValueError("Invalid tenant document entities")
     load_tenant_tokens(config, user_id=user_id)
     _tenant_count_budget(config)
     try:
@@ -519,7 +523,7 @@ def read_tenant_documents(config: Config, *, user_id: str, start: int = 1, limit
             raise ValueError("Tenant realm binding mismatch")
         headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
         documents = {}
-        for entity in TENANT_DOCUMENT_ENTITIES:
+        for entity in entities:
             # One extra row only reveals whether another page exists; it is never returned.
             response = bounded_query_get(
                 f"{SANDBOX_API}/v3/company/{realm}/query",
@@ -914,7 +918,7 @@ def tenant_finance_audit(request: Request, store: str = "") -> dict:
         config = _tenant_qbo_config(load_saved_setup(), connection["realm"])
         orders = read_tenant_orders(connection["user_id"], connection["store"], first=TENANT_ORDER_MAX_PAGE)
         docs = read_tenant_documents(config, user_id=connection["user_id"], start=1,
-                                     limit=TENANT_DOCUMENT_MAX_PAGE)
+                                     limit=TENANT_DOCUMENT_MAX_PAGE, entities=AUDIT_DOCUMENT_ENTITIES)
         adapted = invoice_audit.adapt_tenant_envelopes(
             orders, docs, store=connection["store"], realm=connection["realm"])
         batch = (invoice_audit.audit_order_financial_batch(

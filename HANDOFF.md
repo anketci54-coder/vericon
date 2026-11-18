@@ -4,7 +4,7 @@ Güncelleme: 2026-11-18
 Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 
 ## Şu an tek açık iş
-**Adım 6A-1 (yalnız okuma dilimi): kod bitti, dağıtılmadı.** `qbo_oauth.py`: `TENANT_DOCUMENT_ENTITIES` ve sorgu izin listesine SalesReceipt/RefundReceipt eklendi; bu iki tür beyaz liste alanlarıyla döner (PII yok), bozuk sayfa ValueError. Suit 635 geçti. Yan etki: `/tenant/finance/audit` artık 5 GET /query yapıyor (denetim mantığı değişmedi, adaptör yeni türleri yok sayar). Dağıtım ayrı onay (`/dagit`).
+**Adım 6A-1 (yalnız okuma dilimi): kod bitti, dağıtılmadı.** `qbo_oauth.py`: `TENANT_DOCUMENT_ENTITIES` ve sorgu izin listesine SalesReceipt/RefundReceipt eklendi; bu iki tür beyaz liste alanlarıyla döner (PII yok), bozuk sayfa ValueError. Suit 635 geçti. `/tenant/finance/audit` eski 3 türle (Invoice, Payment, CreditMemo) sınırlı; yalnız `/tenant/finance/documents` 5 türü okur. Dağıtım ayrı onay (`/dagit`).
 Sırada kalan 6A: (1) ortak belge modeli, (3) bağlama profili (`marker` varsayılan, `docnumber` tam eşleşme/tek önek; belirsiz/çakışma = BLOKE), kabul: sandbox örnekleri, Invoice yolu bozulmaz, yazma 0, panel onaylı alanlar, canlı ölçüm. Bağlama profili belge numarası ayarına dayanır, gözlem yapılmadı, bilinmeyen = BLOKE.
 
 ## BİTTİ
