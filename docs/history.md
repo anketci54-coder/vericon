@@ -504,3 +504,11 @@ A/B kendi Sandbox hesapları için, yalnızca okuma yetkisiyle `financial_access
 - **Dağıtım 4-1:** kod `05324c5`, 8787–8789 yeniden başlatıldı 2026-11-17 08:19 EET (Nginx değişmedi, yedek gerekmedi; son yedek `/root/backup-nginx/vericon-app.conf.20261116-114739`). Kanıt: 3 birim active, /health 200, dış /health 200, orders oturumsuz 401, yalnız 127.0.0.1:8787-8789 dinliyor.
 - B Shopify mağazası TRY. B'de test siparişleri #1005–#1008. QBO'daki 8 belge notu yeni numaralarla güncellendi (kullanıcı, 2026-11-17 09:55).
 - **Adım 4-1 kapandı.** Canlı sorgu ölçümü (kullanıcı): 8 sipariş, PII yok, sorgu maliyeti hatası yok.
+
+## HANDOFF'tan taşındı (2026-11-18, 5A kapanışı)
+- **Adım 4-2:** `adapt_tenant_envelopes` fail-closed, kod `0fd7254`, 612 test. ChatGPT/Gemini incelemesi sonrası: refund `nodes` eksik, `pageInfo` dict değil, dict olmayan satır, kısmi blok = tüm girdi BLOCKED, boş `orders` BLOCKED.
+- **Adım 4-3:** kullanıcının 17-11 09:55 konsol ölçümü (8 belgede marker) ve `invoice_audit.py:800-821` ayrıştırma kuralı.
+- **Adım 4-4** (2026-11-17): adaptör READY; 0/8 VERIFIED, hiçbiri sessiz geçmedi. #1001–#1004 fatura yok; #1005, #1008 `BLOCKED_UNSUPPORTED_ORDER_LINES`; #1006 120≠119; #1007 çift fatura.
+- **Dağıtım 4-1:** `05324c5` (2026-11-17 08:19 EET).
+- **Dağıtım 4-5a:** `64066c7`, 2026-11-17 13:26 EET; Nginx değişmedi (yedek: `/root/backup-nginx/vericon-app.conf.20261116-114739`).
+- **5A kapsam/kabul metni:** tek `GET /tenant/finance/audit?store=`, `read_only: true`, anlık hesap, kayıt yok, alan beyaz listesi, hata 503. Kabul (1)–(8): B 200/8 sipariş, A→B 403, oturumsuz 401, PII yok, yazma 0, bozuk veri BLOCKED, suit geçer, dağıtım ayrı onay.

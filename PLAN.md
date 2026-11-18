@@ -56,8 +56,8 @@ Her adım sonu: `HANDOFF.md` güncellenir, kullanıcı onaylar, ancak sonra sonr
 - [x] 4-5 Aşama kapanışı: fail-closed düzeltmeler (`64066c7` dağıtıldı; adaptör start/store/realm), `denetci` denetimi (BLOKE bulguları 1, 2, 9 IDEAS'ta/Adım 5-7), HANDOFF
 
 **Adım 5 ve sonrası (Adım 4 kapanınca kabul ölçütleri yazılır)**
-- [ ] 5A Sunucu endpoint'i: GET, salt-okunur, anlık hesap, kayıt yok, yalnız onaylı alanlar, mevcut `_authorized_tenant_connection`, hata 503 (taslak: HANDOFF)
-- [ ] 5B Arayüz: yeni düz JS dosyası, bağımlılık yok, yalnız 5A'yı çağırır (+ Nginx statik bloğu ve `index.html` script satırı; 5A bitince kapsamı yazılır)
+- [x] 5A Sunucu endpoint'i: GET, salt-okunur, anlık hesap, kayıt yok, yalnız onaylı alanlar, mevcut `_authorized_tenant_connection`, hata 503. Dağıtım `0f5155f`; canlı ölçüm 2026-11-17 17:20–17:30 EET: B→B 200/8 sipariş, A→A 200, A→B/B→A/olmayan mağaza 403, oturumsuz 401
+- [ ] 5B Arayüz: yeni düz JS dosyası, bağımlılık yok, yalnız 5A'yı çağırır (+ Nginx statik bloğu ve `index.html` script satırı; taslak: HANDOFF, onay bekliyor)
 - [ ] 6 Güvenilirlik testleri
 - [ ] 7 ABD pilot müşteri
 - [ ] 8 Hukuk ve uyumluluk
