@@ -58,6 +58,7 @@ Her adım sonu: `HANDOFF.md` güncellenir, kullanıcı onaylar, ancak sonra sonr
 **Adım 5 ve sonrası (Adım 4 kapanınca kabul ölçütleri yazılır)**
 - [x] 5A Sunucu endpoint'i: GET, salt-okunur, anlık hesap, kayıt yok, yalnız onaylı alanlar, mevcut `_authorized_tenant_connection`, hata 503. Dağıtım `0f5155f`; canlı ölçüm 2026-11-17 17:20–17:30 EET: B→B 200/8 sipariş, A→A 200, A→B/B→A/olmayan mağaza 403, oturumsuz 401
 - [x] 5B Arayüz: `web/finance-audit.js`, yalnız 5A'yı çağırır. Dağıtım `af1e47e` + dar ekran `4d18934`; canlı kabul 2026-11-18 11:50–12:30 EET: B 8 sipariş/doğrulanan 0, A yalnız kendi 4 siparişi, yatay kaydırma ölçüldü. **Adım 5 kapandı.**
+- [x] 6A-1 Okuma dilimi: SalesReceipt/RefundReceipt GET /query, beyaz liste. Dağıtım `78c59c5`; canlı kanıt (kullanıcı, B, konsol): documents 200, Invoice 36/Payment 20/CreditMemo 4/SalesReceipt 4/RefundReceipt 1, has_more false, yeni türlerde PII anahtarı yok.
 - [ ] 6 Güvenilirlik testleri
 - [ ] 7 ABD pilot müşteri
 - [ ] 8 Hukuk ve uyumluluk

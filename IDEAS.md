@@ -6,7 +6,7 @@ Aşama kapanışında ilgili fikirler için karar: yap / ertele / çöpe at.
 
 ## Açık
 - [ ] 2026-11-16 | Disiplin kuralı: tüm ajan oturumları HANDOFF.md ile başlar ve biter | Adım 0
-- [ ] 2026-11-16 | Pilot öncesi: /tenant/finance/documents yanıtında QBO alanlarını PII açısından süz (e-posta, adres) | Adım 7
+- [ ] 2026-11-18 | **YÜKSEK ÖNCELİK, gerçek müşteri verisinden önce:** /tenant/finance/documents eski 3 türde (Invoice, Payment, CreditMemo) ham `SELECT *` döndürüyor; canlı kanıt: BillEmail, BillAddr, ShipAddr, FreeFormAddress, CustomerMemo, CustomerRef anahtarları dönüyor. Beyaz liste (receipt kalıbı, `RECEIPT_ROW_FIELDS`) uygulanmalı | Adım 7 öncesi (güncellendi, ilk kayıt 2026-11-16)
 - [ ] 2026-11-16 | documents hata dalı testleri (401→409, 429, 5xx, Fault, has_more) | Adım 6
 - [ ] 2026-11-17 | shopify_read.py ~331-337: pageInfo/hasNextPage eksikse has_next_page=False üretiyor (fail-open); eksikse hata veya True olmalı. Canlı kod, dağıtım gerekir | Adım 4-5 öncesi
 - [ ] 2026-11-17 | Audit pilot şekil sınırı: yalnız tek ürün (SKU VERICON-TEST-001) + tek kargo satırı; gerçek müşteri için kapsam genişletme kararı, muhasebe politikası (dış kapı 2.5) gerekir | Adım 7
