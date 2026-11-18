@@ -13,6 +13,7 @@ Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 
 ## BİTMEDİ
 - Adım 6 kabul ölçütleri (yazılacak, onay bekliyor).
+- **Adım 6A adayı** (başlatılmadı, IDEAS'ta): SalesReceipt/RefundReceipt okunmuyor; bağlama VERICON_SHOPIFY_ORDER_ID işaretine bağlı, MyWorks gibi bağlayıcılar yazmıyor (sipariş no = belge no). Önce gerçek bağlayıcı çıktısı gözlemlenmeli.
 - IDEAS: pilot şekil sınırı (Adım 7), B test verisi yeniden kurulumu (düşük öncelik), `index.html` eski `style=` nitelikleri CSP'de engelleniyor (düşük öncelik). `shopify_read.py` fail-open satırı kapandı (4-5a); IDEAS'ta işaretlemek kullanıcı kararı.
 
 ## BLOKE
