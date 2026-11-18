@@ -4,12 +4,8 @@ Güncelleme: 2026-11-18
 Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 
 ## Şu an tek açık iş
-**Adım 6A-2a (TASLAK, başlatılmadı; onay yok). Kod yok.** Ortak belge modeli + `docnumber` bağlama profili: yalnız saf fonksiyon ve testler. Uç, audit, panel değişmez. Dağıtım yok.
-- Model: Invoice/SalesReceipt/CreditMemo/RefundReceipt aynı iç biçime. Profil izinli liste: `marker` (varsayılan), `docnumber`. Profil yok / eşleşme belirsiz / aynı numara iki belgede = BLOKE.
-- Kabul: doğru eşleşme; numara yok, çakışma, yanlış tutar BLOKE/REVIEW; **numara siparişle tesadüfen çakışır ama tutar uyuşmaz → REVIEW testi**; mevcut Invoice testleri bozulmaz; yazma 0.
-- **Kural önerileri (onay bekliyor, onaylanana kadar bağlayıcı değil):** (a) `docnumber` profilinde RefundReceipt bağlanmaz; iade yalnız `marker` ile gelirse bağlanır, yoksa BLOKE. (b) SalesReceipt toplamı sipariş toplamıyla eşleşirse "belge ve ödeme kaydı var" sayılır; `cash_received_verified` ve banka doğrulaması kalır (doğrulanmadı). (c) Numara normalleştirme: yalnız baştaki `#` atılır; tek tanımlı önek istisnası dışında dönüşüm yok.
-
-**Sırada: 6A-2b** (6A-2a bitip onaylanınca): receipt'leri audit'e (`AUDIT_DOCUMENT_ENTITIES`) ve uca bağla, panel yalnız onaylı alanlar, canlı ölçüm, dağıtım ayrı onay. BLOKE (6A-2b): sipariş numarasıyla eşleşen 3-4 SalesReceipt'i kullanıcı sandbox'ta elle girecek. Bağlama profili belge numarası ayarına dayanır, gözlem yapılmadı, bilinmeyen = BLOKE.
+**Adım 6A-2a: kod bitti, main'de, dağıtılmadı (dağıtım gerekmez: canlı yolda çağıran yok).** `invoice_audit.py`: `normalize_document`, `bind_documents_to_orders` (saf), 3 test; suit 638 geçti. Onaylı kurallar: (a) `docnumber` profilinde RefundReceipt (ve CreditMemo) bağlanmaz, iade yalnız `VERICON_SHOPIFY_REFUND_ID` işaretiyle, yoksa BLOKE; (b) tutar eşleşirse yalnız "belge kaydı var" (`DOCUMENT_RECORD_FOUND`), `cash_received_verified` ve banka false; (c) yalnız baştaki `#` atılır, tek tanımlı önek parametresi (`[A-Za-z0-9_-]{1,8}`, yalnız docnumber) dışında dönüşüm yok. Tesadüfen çakışan numara + farklı tutar = `REVIEW_AMOUNT_MISMATCH`.
+**Sırada: 6A-2b** (onay bekliyor): receipt'leri audit'e (`AUDIT_DOCUMENT_ENTITIES`) ve uca bağla, panel yalnız onaylı alanlar, canlı ölçüm, dağıtım ayrı onay. BLOKE: eşleşen 3-4 SalesReceipt'i kullanıcı sandbox'ta elle girecek.
 
 ## BİTTİ
 - 16-11 08:29 ve 11:01 callback hataları kapandı: kaynak belirlenemedi, kullanıcı hatırlamıyor (2026-11-18).
@@ -23,6 +19,7 @@ Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 - IDEAS: pilot şekil sınırı (Adım 7), B test verisi yeniden kurulumu (düşük öncelik), `index.html` eski `style=` nitelikleri CSP'de engelleniyor (düşük öncelik). `shopify_read.py` fail-open satırı kapandı (4-5a); IDEAS'ta işaretlemek kullanıcı kararı.
 
 ## BLOKE
+- 6A-2b: SalesReceipt ödeme alanı (DepositToAccountRef, PaymentMethodRef, PaymentRefNum) kodda/fixture'da/dokümanda yok ve `RECEIPT_ROW_FIELDS` beyaz listesi bunları döndürmüyor; ödeme kaydı tanımı belirsiz, o yüzden yalnız "belge kaydı var". Bu alanları okumak beyaz liste değişikliği (6A-2b onayı) ve canlı ölçüm ister.
 - Eski CLI `invalid_grant` doğrulanmadı (dış çağrı gerekir).
 - Dış kapılar: 2.5 muhasebe politikası, 2.6–2.7 banka/ödeme verisi, 2.8 muhasebeci örneklemi, 4.3 Shopify dağıtım kararı.
 

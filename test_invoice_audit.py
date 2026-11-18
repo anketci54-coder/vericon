@@ -1824,3 +1824,60 @@ def test_tenant_adapter_blocks_envelopes_of_another_connection(store, realm):
     orders, docs = _tenant_envelopes()
     out = a.adapt_tenant_envelopes(orders, docs, store=store, realm=realm)
     assert out["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT" and out["orders"] == []
+
+
+def _bind(docs, orders=None, **kw):
+    money = lambda v: {"shopMoney": {"amount": v, "currencyCode": "USD"}}
+    orders = orders or [{"id": "gid://shopify/Order/9001", "name": "#1001", "totalPriceSet": money("50.00"),
+                         "refunds": []}]
+    norm = [a.normalize_document(k, r) for k, r in docs]
+    return a.bind_documents_to_orders(orders, norm, **kw), orders
+
+
+def _doc(num, total=50, ident="S1", note=None):
+    row = {"Id": ident, "DocNumber": num, "TotalAmt": total, "CurrencyRef": {"value": "USD"}}
+    if note:
+        row["PrivateNote"] = note
+    return row
+
+
+def test_6a2a_docnumber_exact_hash_prefix_and_marker_default():
+    out, _ = _bind([("SalesReceipt", _doc("1001"))], profile="docnumber")
+    r = out["results"][0]
+    assert r["status"] == "DOCUMENT_RECORD_FOUND" and r["document_kind"] == "SalesReceipt"
+    assert r["cash_received_verified"] is False and r["bank_settlement_verified"] is False
+    assert _bind([("Invoice", _doc("#1001"))], profile="docnumber")[0]["results"][0]["status"] == "DOCUMENT_RECORD_FOUND"
+    assert _bind([("SalesReceipt", _doc("SO-1001"))], profile="docnumber")[0]["results"][0]["status"] == "REVIEW_NO_DOCUMENT"
+    assert _bind([("SalesReceipt", _doc("SO-1001"))], profile="docnumber", prefix="SO-")[0]["results"][0]["status"] == "DOCUMENT_RECORD_FOUND"
+    assert _bind([("SalesReceipt", _doc("1001-1"))], profile="docnumber", prefix="SO-")[0]["results"][0]["status"] == "REVIEW_NO_DOCUMENT"
+    assert _bind([("SalesReceipt", _doc("X", note="VERICON_SHOPIFY_ORDER_ID=9001"))])[0]["results"][0]["status"] == "DOCUMENT_RECORD_FOUND"
+    for bad in (dict(profile="x"), dict(profile="marker", prefix="SO-"), dict(profile="docnumber", prefix="a b")):
+        assert _bind([], **bad)[0]["status"] == "BLOCKED_BINDING_PROFILE"
+
+
+def test_6a2a_duplicate_number_missing_number_and_amount_collision():
+    dup = _bind([("SalesReceipt", _doc("1001", ident="S1")), ("Invoice", _doc("#1001", ident="I1"))], profile="docnumber")[0]
+    assert dup["results"][0]["status"] == "BLOCKED_DUPLICATE_DOCUMENT_NUMBER"
+    both = _bind([("SalesReceipt", _doc("1001", ident="S1")), ("SalesReceipt", _doc("SO-1001", ident="S2"))],
+                 profile="docnumber", prefix="SO-")[0]
+    assert both["results"][0]["status"] == "BLOCKED_DUPLICATE_DOCUMENT_NUMBER"
+    nonum = _bind([("SalesReceipt", _doc(None))], profile="docnumber")[0]
+    assert nonum["results"][0]["status"] == "BLOCKED_UNBOUND_DOCUMENTS"
+    assert nonum["unbound"][0]["status"] == "BLOCKED_NO_DOCUMENT_NUMBER"
+    clash = _bind([("SalesReceipt", _doc("1001", total=75))], profile="docnumber")[0]["results"][0]
+    assert clash["status"] == "REVIEW_AMOUNT_MISMATCH" and clash["document_record_found"] is False
+
+
+def test_6a2a_refundreceipt_never_binds_by_docnumber_only_marker():
+    money = lambda v: {"shopMoney": {"amount": v, "currencyCode": "USD"}}
+    order = {"id": "gid://shopify/Order/9001", "name": "#1001", "totalPriceSet": money("50.00"),
+             "refunds": [{"id": "gid://shopify/Refund/77", "totalRefundedSet": money("20.00")}]}
+    rr = {"Id": "R1", "DocNumber": "1001", "TotalAmt": 20, "CurrencyRef": {"value": "USD"}}
+    out, _ = _bind([("SalesReceipt", _doc("1001")), ("RefundReceipt", rr)], [order], profile="docnumber")
+    assert out["results"][0]["refunds"][0]["status"] == "BLOCKED_REFUND_MARKER_REQUIRED"
+    assert out["unbound"][0]["status"] == "BLOCKED_REFUND_MARKER_REQUIRED"
+    rr = {**rr, "PrivateNote": "VERICON_SHOPIFY_REFUND_ID=77"}
+    out, _ = _bind([("SalesReceipt", _doc("1001")), ("RefundReceipt", rr)], [order], profile="docnumber")
+    assert out["results"][0]["refunds"][0]["status"] == "REFUND_RECORD_FOUND"
+    out, _ = _bind([("RefundReceipt", {**rr, "TotalAmt": 5})], [order], profile="marker")
+    assert out["results"][0]["refunds"][0]["status"] == "REVIEW_REFUND_AMOUNT_MISMATCH"

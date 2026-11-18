@@ -2132,6 +2132,126 @@ if __name__ == "__main__" and sys.argv[1:] == ["--pilot-report"]:
     raise SystemExit(0)
 
 
+# --- 6A-2a: common document model + binding profiles. Pure; no caller, no I/O. ---
+BIND_PROFILES = ("marker", "docnumber")
+SALE_KINDS = ("Invoice", "SalesReceipt")
+REFUND_KINDS = ("CreditMemo", "RefundReceipt")
+
+
+def normalize_document(kind: str, row: dict) -> dict:
+    """Same internal shape for Invoice/SalesReceipt/CreditMemo/RefundReceipt; never raises.
+
+    payment_record_verified stays False: what proves a payment on a receipt is undefined.
+    """
+    out = {"kind": kind, "id": None, "doc_number": None, "total": None, "currency": None,
+           "order_ref": None, "refund_ref": None, "error": None, "payment_record_verified": False}
+    if kind not in SALE_KINDS + REFUND_KINDS or not isinstance(row, dict) or not row.get("Id"):
+        return {**out, "error": "BLOCKED_INVALID_DOCUMENT"}
+    out["id"] = str(row["Id"])
+    try:
+        out["total"] = number(row.get("TotalAmt"))
+        out["currency"] = (row.get("CurrencyRef") or {}).get("value")
+        out["doc_number"] = str(row["DocNumber"]).strip() or None if row.get("DocNumber") is not None else None
+        if kind in SALE_KINDS:
+            out["order_ref"] = _invoice_shopify_order_ref(row)
+        else:
+            out["refund_ref"] = _credit_shopify_refund_ref(row)
+    except (ValueError, TypeError, AttributeError):
+        return {**out, "error": "BLOCKED_INVALID_DOCUMENT_REFERENCE"}
+    return out
+
+
+def _strip_hash(value) -> str | None:
+    """Only a leading '#' is removed; no other transformation."""
+    text = str(value).strip() if value is not None else ""
+    text = text[1:] if text.startswith("#") else text
+    return text or None
+
+
+def bind_documents_to_orders(orders: list[dict], documents: list[dict], *, profile: str = "marker",
+                             prefix: str | None = None) -> dict:
+    """Bind normalized documents to orders; unknown or ambiguous = BLOCKED, no guessing.
+
+    marker: sale documents by VERICON_SHOPIFY_ORDER_ID. docnumber: DocNumber equals the order number
+    (leading '#' dropped) or the single configured prefix + number. Refund documents
+    (CreditMemo/RefundReceipt) bind only by refund marker, in every profile.
+    A matching total is only "document record found": cash and bank stay unverified.
+    """
+    if profile not in BIND_PROFILES:
+        return {"status": "BLOCKED_BINDING_PROFILE", "results": [], "unbound": []}
+    if prefix is not None and (profile != "docnumber" or not re.fullmatch(r"[A-Za-z0-9_-]{1,8}", str(prefix))):
+        return {"status": "BLOCKED_BINDING_PROFILE", "results": [], "unbound": []}
+    sales = [d for d in documents if d["kind"] in SALE_KINDS and not d["error"]]
+    refunds = [d for d in documents if d["kind"] in REFUND_KINDS and not d["error"]]
+    unbound = [{"id": d["id"], "kind": d["kind"], "status": d["error"] or "BLOCKED_INVALID_DOCUMENT"}
+               for d in documents if d["error"]]
+    if profile == "docnumber":
+        for d in sales:
+            if not _strip_hash(d["doc_number"]):
+                unbound.append({"id": d["id"], "kind": d["kind"], "status": "BLOCKED_NO_DOCUMENT_NUMBER"})
+        sales = [d for d in sales if _strip_hash(d["doc_number"])]
+    # Refund documents without a refund marker are never bound by number.
+    for d in [x for x in refunds if not x["refund_ref"]]:
+        unbound.append({"id": d["id"], "kind": d["kind"], "status": "BLOCKED_REFUND_MARKER_REQUIRED"})
+    refunds = [d for d in refunds if d["refund_ref"]]
+    results = []
+    for order in orders:
+        name = _strip_hash(order.get("name"))
+        oid = str(order.get("id") or "").split("/")[-1]
+        row = {"order": order.get("name"), "status": None, "document_id": None, "document_kind": None,
+               "document_record_found": False, "cash_received_verified": False,
+               "bank_settlement_verified": False, "refunds": []}
+        if profile == "marker":
+            hits = [d for d in sales if d["order_ref"] and d["order_ref"] == oid]
+        elif not name:
+            results.append({**row, "status": "BLOCKED_NO_ORDER_NUMBER"})
+            continue
+        else:
+            wanted = {name} | ({prefix + name} if prefix else set())
+            hits = [d for d in sales if _strip_hash(d["doc_number"]) in wanted]
+        if len(hits) > 1:
+            row["status"] = "BLOCKED_DUPLICATE_DOCUMENT_NUMBER" if profile == "docnumber" else "BLOCKED_DUPLICATE_DOCUMENT_REFERENCE"
+        elif not hits:
+            row["status"] = ("BLOCKED_UNBOUND_DOCUMENTS" if any(u["status"].startswith("BLOCKED_NO_DOC") or
+                             u["status"] == "BLOCKED_INVALID_DOCUMENT_REFERENCE" for u in unbound)
+                             else "REVIEW_NO_DOCUMENT")
+        else:
+            doc = hits[0]
+            row.update(document_id=doc["id"], document_kind=doc["kind"])
+            try:
+                order_total = number(((order.get("totalPriceSet") or {}).get("shopMoney") or {}).get("amount"))
+            except ValueError:
+                order_total = None
+            currency = ((order.get("totalPriceSet") or {}).get("shopMoney") or {}).get("currencyCode")
+            if order_total is None or not currency or doc["currency"] != currency:
+                row["status"] = "REVIEW_CURRENCY_OR_TOTAL_UNKNOWN"
+            elif abs(order_total - doc["total"]) > USD_REVIEW_TOLERANCE:
+                row["status"] = "REVIEW_AMOUNT_MISMATCH"
+            else:
+                row.update(status="DOCUMENT_RECORD_FOUND", document_record_found=True)
+        for refund in (order.get("refunds") if isinstance(order.get("refunds"), list) else []):
+            rid = refund.get("id") if isinstance(refund, dict) else None
+            rdocs = [d for d in refunds if d["refund_ref"] == rid]
+            try:
+                rtotal = number(((refund.get("totalRefundedSet") or {}).get("shopMoney") or {}).get("amount"))
+            except ValueError:
+                rtotal = None
+            if len(rdocs) > 1:
+                rstatus = "BLOCKED_DUPLICATE_REFUND_DOCUMENT"
+            elif not rdocs:
+                rstatus = ("BLOCKED_REFUND_MARKER_REQUIRED"
+                           if any(u["status"] == "BLOCKED_REFUND_MARKER_REQUIRED" for u in unbound)
+                           else "REVIEW_NO_REFUND_DOCUMENT")
+            elif rtotal is None or abs(rtotal - rdocs[0]["total"]) > USD_REVIEW_TOLERANCE:
+                rstatus = "REVIEW_REFUND_AMOUNT_MISMATCH"
+            else:
+                rstatus = "REFUND_RECORD_FOUND"
+            row["refunds"].append({"refund": rid, "status": rstatus,
+                                   "document_id": rdocs[0]["id"] if len(rdocs) == 1 else None})
+        results.append(row)
+    return {"status": "OK", "results": results, "unbound": unbound}
+
+
 if __name__ == "__main__" and sys.argv[1:] == ["--pilot-refunds"]:
     try:
         from shopify_read import read_shopify_test_order
