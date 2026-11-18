@@ -8,10 +8,10 @@ Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 Kabul: sandbox örnekleriyle doğru eşleşme REVIEW/VERIFIED; numara yok, çakışma, yanlış tutar BLOKE/REVIEW; **belge numarası sipariş numarasıyla tesadüfen çakışır ama tutar uyuşmaz → REVIEW testi**; Invoice yolu bozulmaz; yazma 0; panel yalnız onaylı alanlar; canlı ölçüm; dağıtım ayrı onay. Bağlama profili belge numarası ayarına dayanır, gözlem yapılmadı, bilinmeyen = BLOKE.
 
 ## BİTTİ
-- **6A-1 kapandı** (`78c59c5` dağıtıldı). Canlı kanıt (kullanıcı, B, konsol, 2026-11-18 15:24 EET): documents 200, Invoice 36/Payment 20/CreditMemo 4/SalesReceipt 4/RefundReceipt 1, has_more false; yeni türlerde PII yok. Eski 3 türde BillEmail/BillAddr/ShipAddr/FreeFormAddress/CustomerMemo/CustomerRef dönüyor (IDEAS, yüksek öncelik, Adım 7 öncesi).
+- **6A-1 kapandı** (`78c59c5` dağıtıldı 2026-11-18 15:16 +02:00, sunucu saati, journalctl 8789 başlama 15:16:14). Canlı kanıt (kullanıcı, B, konsol, 2026-11-18 15:24 +02:00, Bükreş saati): documents 200, Invoice 36/Payment 20/CreditMemo 4/SalesReceipt 4/RefundReceipt 1, has_more false; yeni türlerde PII yok. Eski 3 türde BillEmail/BillAddr/ShipAddr/FreeFormAddress/CustomerMemo/CustomerRef dönüyor (IDEAS, yüksek öncelik, Adım 7 öncesi).
 - Adım 1–4 (ayrıntı `docs/history.md`). A=`hudys3-p0` realm `9341458613758425`, B=`vericon-tenant-b-test` realm `9341458641399133` (TRY). A ve B `financial_access_enabled=true` (AGENTS 6b; geri alma: bayrak `false`).
 - **Adım 5 kapandı (2026-11-18).** 5A `0f5155f`, 5B `af1e47e` + dar ekran `4d18934`, hepsi dağıtıldı (ayrıntı `docs/history.md`).
-- **5B canlı kabul** (kullanıcı, 2026-11-18 11:50–12:30 EET, tarayıcı): B sayfada kendi mağazası, 8 sipariş, doğrulanan 0, banka doğrulanmadı, salt-okunur, nedenler 4-4 ile uyumlu; A yalnız kendi mağazası ve 4 siparişi. Dar ekran: `.audit-scroll` var, scrollWidth 1265 > clientWidth 314, overflow-x auto, sebep sütunu yatay kaydırarak görüldü.
+- **5B canlı kabul** (kullanıcı, 2026-11-18 11:50–12:30 +02:00, tarayıcı): B sayfada kendi mağazası, 8 sipariş, doğrulanan 0, banka doğrulanmadı, salt-okunur, nedenler 4-4 ile uyumlu; A yalnız kendi mağazası ve 4 siparişi. Dar ekran: `.audit-scroll` var, scrollWidth 1265 > clientWidth 314, overflow-x auto, sebep sütunu yatay kaydırarak görüldü.
 
 ## BİTMEDİ
 - Adım 6 (Güvenilirlik testleri) kabul ölçütleri yazılmadı; 6A-2 taslağı onaylanana kadar bekler.
