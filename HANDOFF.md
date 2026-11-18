@@ -12,6 +12,7 @@ Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 **Sırada: 6A-2b** (6A-2a bitip onaylanınca): receipt'leri audit'e (`AUDIT_DOCUMENT_ENTITIES`) ve uca bağla, panel yalnız onaylı alanlar, canlı ölçüm, dağıtım ayrı onay. BLOKE (6A-2b): sipariş numarasıyla eşleşen 3-4 SalesReceipt'i kullanıcı sandbox'ta elle girecek. Bağlama profili belge numarası ayarına dayanır, gözlem yapılmadı, bilinmeyen = BLOKE.
 
 ## BİTTİ
+- 16-11 08:29 ve 11:01 callback hataları kapandı: kaynak belirlenemedi, kullanıcı hatırlamıyor (2026-11-18).
 - **6A-1 kapandı** (`78c59c5` dağıtıldı 2026-11-18 15:16 +02:00, sunucu saati, journalctl 8789 başlama 15:16:14). Canlı kanıt (kullanıcı, B, konsol, 2026-11-18 15:24 +02:00, Bükreş saati): documents 200, Invoice 36/Payment 20/CreditMemo 4/SalesReceipt 4/RefundReceipt 1, has_more false; yeni türlerde PII yok. Eski 3 türde BillEmail/BillAddr/ShipAddr/FreeFormAddress/CustomerMemo/CustomerRef dönüyor (IDEAS, yüksek öncelik, Adım 7 öncesi).
 - Adım 1–4 (ayrıntı `docs/history.md`). A=`hudys3-p0` realm `9341458613758425`, B=`vericon-tenant-b-test` realm `9341458641399133` (TRY). A ve B `financial_access_enabled=true` (AGENTS 6b; geri alma: bayrak `false`).
 - **Adım 5 kapandı (2026-11-18).** 5A `0f5155f`, 5B `af1e47e` + dar ekran `4d18934`, hepsi dağıtıldı (ayrıntı `docs/history.md`).
@@ -22,7 +23,6 @@ Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 - IDEAS: pilot şekil sınırı (Adım 7), B test verisi yeniden kurulumu (düşük öncelik), `index.html` eski `style=` nitelikleri CSP'de engelleniyor (düşük öncelik). `shopify_read.py` fail-open satırı kapandı (4-5a); IDEAS'ta işaretlemek kullanıcı kararı.
 
 ## BLOKE
-- 16-11 08:29 ve 11:01 callback hatalarının kaynağı: kullanıcı teyidi.
 - Eski CLI `invalid_grant` doğrulanmadı (dış çağrı gerekir).
 - Dış kapılar: 2.5 muhasebe politikası, 2.6–2.7 banka/ödeme verisi, 2.8 muhasebeci örneklemi, 4.3 Shopify dağıtım kararı.
 
