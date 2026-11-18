@@ -12,6 +12,7 @@ Açık soru (onayda): `store` değeri sayfada nereden alınır (mevcut bağlant�
 ## BİTTİ
 - Adım 1–4 (ayrıntı `docs/history.md`). A=`hudys3-p0` realm `9341458613758425`, B=`vericon-tenant-b-test` realm `9341458641399133` (TRY). A ve B `financial_access_enabled=true` (AGENTS 6b; geri alma: bayrak `false`).
 - **Dağıtım 5A:** `0f5155f` (`GET /tenant/finance/audit`, Nginx bloğu), 2026-11-17 17:18 EET; 8787–8789 sırayla yeniden başlatıldı. Kanıt: 3 birim active, /health 200 ×3, dış /health 200, audit oturumsuz 401. Nginx yedek: `/root/backup-nginx/vericon-app.conf.20261117-171430`.
+- **Dağıtım 5B (statik):** `af1e47e` (`web/finance-audit.js`, `index.html`, Nginx `location = /finance-audit.js`), 2026-11-18 EET; servis yeniden başlatılmadı (sunucu kodu değişmedi). Kanıt: cmp ok ×2, nginx -t ok + reload, dış /health 200, /finance-audit.js 200, audit oturumsuz 401, 8787–8789 dinliyor ve active. Nginx yedek: `/root/backup-nginx/vericon-app.conf.20261118-092239`; eski index.html: `/root/backup-nginx/index.html.20261118-092239`. Kalan: 5B tarayıcı kabulü (kullanıcı).
 - **Adım 5A kapandı** (kullanıcı canlı ölçümü, 2026-11-17 17:20–17:30 EET, konsol): B→B 200, 8 sipariş, hepsi `BLOCKED_ORDER_INVOICE_LINK`, `read_only: true`, `bank_settlement_verified: false`, alan listesi beyaz liste ile aynı; A→A 200; A→B 403; B→A 403; olmayan mağaza 403; oturumsuz 401.
 
 ## BİTMEDİ
