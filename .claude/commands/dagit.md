@@ -25,6 +25,6 @@ Beklenen commit: $ARGUMENTS. Her sert durak "DUR" ise işlemi bırak, çıktıy�
 - Dış `/health` 200.
 
 **5. Kayıt**
-- HANDOFF'a tek satır: dağıtım, SHA, saat (EET), kanıt, yedek dosya yolu. Eski "canlı eski kod" notunu kaldır. Commit, push (yalnızca HANDOFF), SHA raporla.
+- HANDOFF'a tek satır: dağıtım, SHA, saat (sunucunun kendi saati: `date +"%F %T %z"`, TZ değişkeni verilmeden), kanıt, yedek dosya yolu. Eski "canlı eski kod" notunu kaldır. Commit, push (yalnızca HANDOFF), SHA raporla.
 
 Yapma: Supabase'e dokunma, bayrak açma/kapama, dış API çağrısı, kod değişikliği, başka servisler (SMRS, Senal Plastik). Çıktı BİTTİ/BİTMEDİ/BLOKE, en çok 10 satır.
