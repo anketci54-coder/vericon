@@ -56,7 +56,11 @@
           tr.insertCell().textContent = text(row[field]);
         });
       });
-      nodes.push(table);
+      const scroll = document.createElement('div');
+      scroll.className = 'audit-scroll';
+      scroll.tabIndex = 0;
+      scroll.appendChild(table);
+      nodes.push(scroll);
     }
     if (data.blocked.length) {
       nodes.push(line('Engellenen sipariş sayısı', data.blocked.length));
