@@ -17,3 +17,4 @@ Aşama kapanışında ilgili fikirler için karar: yap / ertele / çöpe at.
 - [ ] 2026-11-18 | Adım 6A adayı: (1) denetim yalnız Invoice/Payment/CreditMemo okuyor, gerçek mağazalarda yaygın SalesReceipt/RefundReceipt yok; (2) bağlama kuralı VERICON_SHOPIFY_ORDER_ID işaretine bağlı, gerçek bağlayıcılar (MyWorks: sipariş numarası belge numarası olur) bunu yazmıyor; (3) önce gerçek bağlayıcı çıktısı gözlemlenmeli. Başlatılmadı | Adım 6A
 - [ ] 2026-11-18 | Callback hata logunda IP/zaman kaydı yok; hata tekrar ederse kaynak belirlenemez (düşük öncelik, kod değişikliği yok) | Adım 7 sonrası
 - [ ] 2026-11-20 | Numara eşleştirmesi (docnumber profili) QBO'da "Custom transaction numbers" gerektirir; aksi hâlde DocNumber otomatik sıralı olur ve marker şart | Adım 6A-2b
+- [ ] 2026-11-20 | Eşleşmeyen receipt'ler `receipts` çıktısında yalnız sayı (`unbound_count`, `qbo_oauth.py:941`); hangi belge olduğu gösterilmiyor | Adım 6
