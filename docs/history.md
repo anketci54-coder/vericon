@@ -535,3 +535,24 @@ A/B kendi Sandbox hesapları için, yalnızca okuma yetkisiyle `financial_access
 ## HANDOFF taşıması 2026-11-20 (receipts_marker kapanışı)
 - **PII whitelist** kod `f229a04`, dağıtım 2026-11-20 14:28 +0200 (8787–8789 sırayla, /health 200, oturumsuz audit 401, dış /health 200, 8782–8786 dinlemiyor). Canlı kabul (kullanıcı, B, 14:40 +02:00): audit hash'i değişmedi (SHA256 d585b018…f532e, LEN 3985, HTTP 200); documents 5 türde yasaklı alan yok, CustomerRef.name yok, alan listeleri whitelist'le birebir (Invoice 36, Payment 20, CreditMemo 4, SalesReceipt 7, RefundReceipt 1).
 - **Marker kabul ölçütü (yaklaşım a):** `receipts` (docnumber) aynen, yanına `receipts_marker` (`profile:"marker"`); aynı QBO okuması, ikinci `bind_documents_to_orders`; yeni sorgu/ayar/Supabase alanı yok; 5 GET /query bütçesi aynı. Marker kuralı `invoice_audit.py:799-821`, `:2215`: Memo (PrivateNote) `VERICON_SHOPIFY_ORDER_ID=<sayısal id | gid://shopify/Order/id>`, başta ya da ` | ` sonrası; sipariş adı kabul edilmez. Senaryolar M1 (FOUND), M2 (tutar+10 → REVIEW_AMOUNT_MISMATCH), M3 (çift → BLOCKED_DUPLICATE_DOCUMENT_REFERENCE), M5 (`not | ` biçimi → FOUND), M4 (`abc` → unbound+1, iki profilde BLOCKED_UNBOUND_DOCUMENTS). Kapsam dışı: iade marker'ı (`VERICON_SHOPIFY_REFUND_ID`), CustomField yolu (sorguda `include=enhancedAllCustomFields` yok, `qbo_oauth.py:598`).
+
+## HANDOFF taşıması 2026-11-20 (receipts_conflicts kapanışı)
+- Kabul ölçütü (taşındı):
+**Profiller arası çelişki işareti (`receipts_conflicts`). Kabul ölçütü onay bekliyor, KOD YOK.**
+Sınıf (her profil, sipariş başına): BOUND = `document_id` dolu (FOUND/AMOUNT_MISMATCH/CURRENCY_OR_TOTAL_UNKNOWN); AMBIG = `BLOCKED_DUPLICATE_*`; NONE = `REVIEW_NO_DOCUMENT`/`BLOCKED_UNBOUND_DOCUMENTS`/`BLOCKED_NO_ORDER_NUMBER`.
+Karar: BOUND+BOUND farklı id → `REVIEW_PROFILE_CONFLICT`. BOUND+AMBIG → `REVIEW_PROFILE_AMBIGUOUS` (hangi belge olduğu bilinmiyor, kanıtlanamaz). BOUND+BOUND aynı id, BOUND+NONE (tek profil normal; gerçek bağlayıcı yalnız birini yazar), AMBIG+AMBIG, AMBIG+NONE, NONE+NONE → `NO_CONFLICT` (AMBIG olanlar kendi profilinde zaten BLOCKED). Tanınmayan/eksik durum, id'siz BOUND, sipariş iki profilde eşleşmiyor, aynı id ama farklı durum → `REVIEW_CONFLICT_UNKNOWN` (fail-closed). Çelişki işareti hiçbir mevcut durumu değiştirmez, yalnız bayrak.
+Şekil: yeni ayrı anahtar `receipts_conflicts` = `{profiles:["docnumber","marker"], conflict_count, results:[{order, status, docnumber_status, marker_status, docnumber_document_id, marker_document_id, verified:false, cash_received_verified:false, bank_settlement_verified:false}]}`; yalnız bu alanlar (beyaz liste, `_audit_value`), PII yok. `receipts` ve `receipts_marker` AYNEN kalır. Profil bloklarından biri `None` ise `receipts_conflicts: null`. Yeni sorgu/ayar/Supabase alanı YOK; 5 GET /query bütçesi aynı (iki mevcut bağlama sonucundan saf hesap). Yanıt yalnız ek anahtar kadar büyür (~8 satır); `web/`/Nginx değişmez, dağıtım yalnız 8787–8789.
+**Kabul (B'nin MEVCUT verisi, yeni veri girilmez):**
+| Sipariş | docnumber | marker | Beklenen `status` |
+|---|---|---|---|
+| #1001 | FOUND(159) | FOUND(166) | REVIEW_PROFILE_CONFLICT |
+| #1002 | BLOCKED_DUPLICATE_DOCUMENT_NUMBER | REVIEW_AMOUNT_MISMATCH(163) | REVIEW_PROFILE_AMBIGUOUS |
+| #1003 | REVIEW_AMOUNT_MISMATCH(11) | BLOCKED_DUPLICATE_DOCUMENT_REFERENCE | REVIEW_PROFILE_AMBIGUOUS |
+| #1004 | REVIEW_NO_DOCUMENT | FOUND(162) | NO_CONFLICT |
+| #1005–#1007 | REVIEW_NO_DOCUMENT | REVIEW_NO_DOCUMENT | NO_CONFLICT |
+| #1008 | REVIEW_CURRENCY_OR_TOTAL_UNKNOWN(17) | REVIEW_NO_DOCUMENT | NO_CONFLICT |
+- `conflict_count`=3 (#1001–#1003). Her satırda verified/cash/bank false.
+- `receipts_conflicts` anahtarı çıkarılınca yanıt hash'i AYNI: SHA256 d585b018…f532e, LEN 3985 (`receipts`, `receipts_marker`, `results` değişmez).
+- Kod sonrası ve dağıtım öncesi yeni test yazılmaz; gerçek davranış canlı ölçümle kabul edilir (yeni test gerekirse önce sorulur).
+
+- 6A-2b marker kabul ayrıntısı: marker #1001 FOUND(166, `not | `), #1002 REVIEW_AMOUNT_MISMATCH(163, gid), #1003 BLOCKED_DUPLICATE_DOCUMENT_REFERENCE, #1004 FOUND(162), #1005–#1008 REVIEW_NO_DOCUMENT; B receipt'leri MKT-1(300), MKT-2(130), MKT-3A/3B(100), MKT-5(216); marker QBO'da "Message displayed on statement" = PrivateNote; #1005–#1007 TRY olduğundan M2/M3/M5 #1001–#1004'e kaydırıldı.
