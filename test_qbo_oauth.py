@@ -2044,3 +2044,67 @@ def test_stage4_http_finance_audit_gates_fields_and_read_only(stage4_http, monke
     monkeypatch.setattr(q.requests, 'post', lambda url, **kw: FakeResponse({}, 500))
     failed = call(row['shop_domain'])
     assert failed.status_code == 503 and 'results' not in failed.json()
+
+
+def test_stage4_http_finance_audit_receipts_marker_profile(stage4_http, monkeypatch):
+    """receipts_marker binds by Memo order id; receipts (docnumber) and the rest of the response stay unchanged."""
+    import copy
+    import invoice_audit
+    import shopify_read as s
+    from test_invoice_audit import _tenant_envelopes
+    h = stage4_http
+    row = h['rows']['B']
+    base = _tenant_envelopes()[0]['orders'][0]
+    def mk(num):
+        o = copy.deepcopy(base)
+        o.update(id=f'gid://shopify/Order/{num}', name=f'#{num}', refunds=[])
+        return o
+    orders = [mk(n) for n in (1004, 1005, 1006, 1007)]
+    def rc(i, doc, memo, total=216):
+        return {'Id': i, 'DocNumber': doc, 'TotalAmt': total, 'CurrencyRef': {'value': 'TRY'}, 'PrivateNote': memo}
+    marker = 'VERICON_SHOPIFY_ORDER_ID='
+    receipts = []
+    rows = {'SalesReceipt': receipts}
+    shop_post, qbo_get = q.requests.post, q.requests.get
+    def post(url, **kw):
+        if url.endswith('/access_token'):
+            return FakeResponse({'access_token': 'fake-shop-token',
+                                 'scope': ','.join(s.REQUIRED_SCOPES | {'read_orders'})})
+        if url.endswith('/graphql.json') and 'orders(' in kw['json']['query']:
+            return FakeResponse({'data': {'orders': {'pageInfo': {'hasNextPage': False}, 'nodes': orders}}})
+        return shop_post(url, **kw)
+    def get(url, **kw):
+        if url.endswith('/query'):
+            entity = kw['params']['query'].split()[3]
+            return FakeResponse({'QueryResponse': {entity: rows.get(entity, [])}})
+        return qbo_get(url, **kw)
+    monkeypatch.setattr(q.requests, 'post', post)
+    monkeypatch.setattr(q.requests, 'get', get)
+    def call():
+        r = h['client'].request('GET', '/tenant/finance/audit', params={'store': row['shop_domain']},
+                                headers={'Authorization': 'Bearer fixture-B'})
+        assert r.status_code == 200
+        return r.json()
+    def statuses(body):
+        return {r['order']: r['status'] for r in body['receipts_marker']['results']}
+    empty = call()
+    assert set(statuses(empty).values()) == {'REVIEW_NO_DOCUMENT'}
+    receipts += [rc('M1', 'MKT-1', marker + '1004'),
+                 rc('M2', 'MKT-2', marker + 'gid://shopify/Order/1005', 226),
+                 rc('M3A', 'MKT-3A', marker + '1006'), rc('M3B', 'MKT-3B', marker + '1006'),
+                 rc('M5', 'MKT-5', 'not | ' + marker + '1007')]
+    body = call()
+    assert statuses(body) == {'#1004': 'DOCUMENT_RECORD_FOUND', '#1005': 'REVIEW_AMOUNT_MISMATCH',
+                              '#1006': 'BLOCKED_DUPLICATE_DOCUMENT_REFERENCE', '#1007': 'DOCUMENT_RECORD_FOUND'}
+    assert body['receipts_marker']['profile'] == 'marker'
+    assert next(r for r in body['receipts_marker']['results'] if r['order'] == '#1004')['document_id'] == 'M1'
+    for r in body['receipts_marker']['results']:
+        assert r['verified'] is False and r['cash_received_verified'] is False
+        assert r['bank_settlement_verified'] is False
+    # Without the receipts_marker key the response equals the response with the marker binding disabled.
+    real_bind = invoice_audit.bind_documents_to_orders
+    monkeypatch.setattr(invoice_audit, 'bind_documents_to_orders',
+                        lambda *a, profile='marker', **kw: None if profile == 'marker' else real_bind(*a, profile=profile, **kw))
+    old = call()
+    assert old['receipts_marker'] is None
+    assert {k: v for k, v in body.items() if k != 'receipts_marker'} == {k: v for k, v in old.items() if k != 'receipts_marker'}

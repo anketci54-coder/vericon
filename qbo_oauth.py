@@ -978,6 +978,21 @@ def _audit_value(value):
     return None
 
 
+def _receipt_block(bound: dict | None, profile: str) -> dict | None:
+    """Whitelisted receipt binding result; verified/cash/bank are forced false."""
+    if bound is None:
+        return None
+    return {"profile": profile, "status": _audit_value(bound.get("status")),
+            "unbound_count": len(bound.get("unbound", [])),
+            "results": [{**{k: _audit_value(r.get(k)) for k in RECEIPT_RESULT_FIELDS},
+                         "document_record_found": r.get("document_record_found") is True,
+                         "verified": False, "cash_received_verified": False,
+                         "bank_settlement_verified": False,
+                         "refunds": [{k: _audit_value(f.get(k)) for k in RECEIPT_REFUND_FIELDS}
+                                     for f in r.get("refunds", []) if isinstance(f, dict)]}
+                        for r in bound.get("results", []) if isinstance(r, dict)]}
+
+
 @app.get("/tenant/finance/audit")
 def tenant_finance_audit(request: Request, store: str = "") -> dict:
     """On-demand read-only audit of the tenant's own orders vs QBO documents; nothing stored."""
@@ -998,6 +1013,9 @@ def tenant_finance_audit(request: Request, store: str = "") -> dict:
         bound = (invoice_audit.bind_documents_to_orders(
             adapted["orders"], adapted["receipts"], profile=RECEIPT_BINDING_PROFILE)
             if adapted["status"] == "READY" else None)
+        bound_marker = (invoice_audit.bind_documents_to_orders(
+            adapted["orders"], adapted["receipts"], profile="marker")
+            if adapted["status"] == "READY" else None)
         batch = (invoice_audit.audit_order_financial_batch(
             adapted["orders"], adapted["invoices"], adapted["credits"], adapted["payments"])
             if adapted["status"] == "READY" else None)
@@ -1005,18 +1023,10 @@ def tenant_finance_audit(request: Request, store: str = "") -> dict:
         raise HTTPException(status_code=503, detail="Financial audit unavailable") from None
     results = [{key: _audit_value(row.get(key)) for key in AUDIT_ROW_FIELDS if key in row}
                for row in (batch or {}).get("results", []) if isinstance(row, dict)]
-    receipts = None
-    if bound is not None:
-        receipts = {"profile": RECEIPT_BINDING_PROFILE, "status": _audit_value(bound.get("status")),
-                    "unbound_count": len(bound.get("unbound", [])),
-                    "results": [{**{k: _audit_value(r.get(k)) for k in RECEIPT_RESULT_FIELDS},
-                                 "document_record_found": r.get("document_record_found") is True,
-                                 "verified": False, "cash_received_verified": False,
-                                 "bank_settlement_verified": False,
-                                 "refunds": [{k: _audit_value(f.get(k)) for k in RECEIPT_REFUND_FIELDS}
-                                             for f in r.get("refunds", []) if isinstance(f, dict)]}
-                                for r in bound.get("results", []) if isinstance(r, dict)]}
+    receipts = _receipt_block(bound, RECEIPT_BINDING_PROFILE)
+    receipts_marker = _receipt_block(bound_marker, "marker")
     return {"store": connection["store"], "adapter_status": adapted["status"], "receipts": receipts,
+            "receipts_marker": receipts_marker,
             "status": batch["status"] if batch else adapted["status"],
             "verified": bool(batch and batch.get("verified") is True),
             "orders_checked": len(results),
