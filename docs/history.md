@@ -524,3 +524,10 @@ A/B kendi Sandbox hesapları için, yalnızca okuma yetkisiyle `financial_access
 - 5B canlı kabul (kullanıcı, 2026-11-18 11:50–12:30 +02:00): B kendi mağazası, 8 sipariş, doğrulanan 0, banka doğrulanmadı, salt-okunur; A yalnız kendi mağazası ve 4 siparişi. Dar ekran: `.audit-scroll` var, scrollWidth 1265 > clientWidth 314, overflow-x auto.
 - 16-11 08:29 ve 11:01 callback hataları kapandı: kaynak belirlenemedi, kullanıcı hatırlamıyor (2026-11-18).
 - B ölçümü 2026-11-20 (kullanıcı, kişisel veri yok): siparişler #1001–#1004 USD 216/120/100/300, #1005–#1008 TRY aynı tutarlar; SKU/kargo satırı yok, vergi 0, indirim 0. SalesReceipt Id11 no1003 337.50; Id17 no1008 225; Id38 no1011 78.75; Id47 no1014 140; Id159 no1001 216; Id160/Id161 no1002 120 (QBO yinelenen numarayı kabul etti); RefundReceipt Id66 no1020 87.50. CustomField/PrivateNote yok. Id11,17,159,160,161 USD. QBO DocNumber varsayılan otomatik; B'de "Custom transaction numbers" açıldı.
+
+
+## HANDOFF taşıması 2026-11-20 (PII whitelist kapanışı)
+- **6A-2b kapandı** (kod `bbebb7f`, dağıtım 2026-11-20 13:37 +0200 sunucu saati; 8787–8789 sırayla, /health 200, oturumsuz audit 401). Canlı kabul (kullanıcı, B, 13:41 +02:00): HTTP 200, profil docnumber; #1001 `DOCUMENT_RECORD_FOUND`(159); #1002 `BLOCKED_DUPLICATE_DOCUMENT_NUMBER`; #1003 `REVIEW_AMOUNT_MISMATCH`(11); #1004–#1007 `REVIEW_NO_DOCUMENT`; #1008 `REVIEW_CURRENCY_OR_TOTAL_UNKNOWN`(17); verified/cash/bank false; unbound_count=1 (RefundReceipt 1020, marker yok: `invoice_audit.py:2206`).
+- **6A-2a** (`dcdb40f`, main): `normalize_document`, `bind_documents_to_orders`; dağıtım yok.
+- **B ölçümü 2026-11-20** (kullanıcı): sipariş/receipt değerleri ve para birimleri `docs/history.md`. Receipt para birimi BLOKE'si kapandı: Id11,17,159,160,161 USD. QBO yinelenen DocNumber'ı kabul ediyor.
+- **Kod okuması:** `BLOCKED_UNSUPPORTED_ORDER_LINES` (`invoice_audit.py:1446`) yalnız Invoice yolunda, bağ+para birimi+toplam sonrası; bağlama satıra bakmaz.

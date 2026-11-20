@@ -4,19 +4,15 @@ Güncelleme: 2026-11-20
 Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 
 ## Şu an tek açık iş
-**PII whitelist: dağıtıldı, canlı önce/sonra karşılaştırma bekliyor (kullanıcı konsol, B ve A `/tenant/finance/audit` yanıtı önceki ile aynı mı; `/tenant/finance/documents` yanıtında BillEmail/BillAddr/ShipAddr/CustomerMemo/CustomerRef.name yok mu).** Sonra Adım 6 kabul ölçütleri.
+**Sonraki iş, kullanıcı kararı bekliyor.** (Aday: Adım 6 kabul ölçütleri; başlatılmadı.)
 
 ## BİTTİ
-- **PII whitelist dağıtıldı** (`f229a04`, 2026-11-20 14:28 +0200 sunucu saati; 8787–8789 sırayla, active, /health 200; oturumsuz audit 401, dış /health 200; yalnız 127.0.0.1:8787–8789 dinliyor, 8782–8786 yok; Nginx değişmedi, yedek gerekmedi). Canlı kabul bekliyor.
-- **6A-2b kapandı** (kod `bbebb7f`, dağıtım 2026-11-20 13:37 +0200 sunucu saati; 8787–8789 sırayla, /health 200, oturumsuz audit 401). Canlı kabul (kullanıcı, B, 13:41 +02:00): HTTP 200, profil docnumber; #1001 `DOCUMENT_RECORD_FOUND`(159); #1002 `BLOCKED_DUPLICATE_DOCUMENT_NUMBER`; #1003 `REVIEW_AMOUNT_MISMATCH`(11); #1004–#1007 `REVIEW_NO_DOCUMENT`; #1008 `REVIEW_CURRENCY_OR_TOTAL_UNKNOWN`(17); verified/cash/bank false; unbound_count=1 (RefundReceipt 1020, marker yok: `invoice_audit.py:2206`).
-- **6A-2a** (`dcdb40f`, main): `normalize_document`, `bind_documents_to_orders`; dağıtım yok.
-- **6A-1** (`78c59c5`, dağıtıldı 2026-11-18) ve **Adım 5** (`0f5155f`, `af1e47e`, `4d18934`) kapandı; ayrıntı `docs/history.md`. A=`hudys3-p0` realm `9341458613758425`, B=`vericon-tenant-b-test` realm `9341458641399133` (TRY). A ve B `financial_access_enabled=true` (AGENTS 6b; geri alma: bayrak `false`).
-- **B ölçümü 2026-11-20** (kullanıcı): sipariş/receipt değerleri ve para birimleri `docs/history.md`. Receipt para birimi BLOKE'si kapandı: Id11,17,159,160,161 USD. QBO yinelenen DocNumber'ı kabul ediyor.
-- **Kod okuması:** `BLOCKED_UNSUPPORTED_ORDER_LINES` (`invoice_audit.py:1446`) yalnız Invoice yolunda, bağ+para birimi+toplam sonrası; bağlama satıra bakmaz.
+- **PII whitelist (Invoice/Payment/CreditMemo)** kod `f229a04`, dağıtım 2026-11-20 14:28 +0200 (8787–8789 sırayla, /health 200, oturumsuz audit 401, dış /health 200, 8782–8786 dinlemiyor). Canlı kabul (kullanıcı, B, 14:40 +02:00): `/tenant/finance/audit` hash'i değişmedi (SHA256 d585b018…f532e, LEN 3985, HTTP 200); `/tenant/finance/documents` 5 türde yasaklı alan yok, CustomerRef.name yok, alan listeleri whitelist'le birebir (Invoice 36, Payment 20, CreditMemo 4, SalesReceipt 7, RefundReceipt 1 satır).
+- **6A-2b** (`bbebb7f`, dağıtım + canlı kabul 2026-11-20), **6A-2a** (`dcdb40f`), **6A-1** (`78c59c5`), **Adım 5**: ayrıntı `docs/history.md`. A=`hudys3-p0` realm `9341458613758425`, B=`vericon-tenant-b-test` realm `9341458641399133` (TRY). A ve B `financial_access_enabled=true` (AGENTS 6b; geri alma: bayrak `false`).
 
 ## BİTMEDİ
 - Adım 6 kabul ölçütleri yazılmadı; 6A-2b sonrası.
-- IDEAS: eski 3 türde PII (yüksek, Adım 7 öncesi), pilot şekil sınırı, `index.html` `style=` CSP (düşük).
+- IDEAS: pilot şekil sınırı, serbest metin PII (PrivateNote/CustomField, Adım 7 öncesi), `index.html` `style=` CSP (düşük).
 
 ## BLOKE
 - Receipt ödeme alanı (DepositToAccountRef/PaymentMethodRef/PaymentRefNum): beyaz liste döndürmüyor, bilinmiyor. Bilinene kadar yalnız "belge kaydı var", cash ve banka false.
