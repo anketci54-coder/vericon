@@ -2107,4 +2107,56 @@ def test_stage4_http_finance_audit_receipts_marker_profile(stage4_http, monkeypa
                         lambda *a, profile='marker', **kw: None if profile == 'marker' else real_bind(*a, profile=profile, **kw))
     old = call()
     assert old['receipts_marker'] is None
-    assert {k: v for k, v in body.items() if k != 'receipts_marker'} == {k: v for k, v in old.items() if k != 'receipts_marker'}
+    extra = ('receipts_marker', 'receipts_conflicts')
+    assert {k: v for k, v in body.items() if k not in extra} == {k: v for k, v in old.items() if k not in extra}
+    assert old['receipts_conflicts'] is None
+    # receipts_conflicts is additive: stripped, the response equals the response without the conflict block.
+    assert body['receipts_conflicts']['conflict_count'] == 0 and len(body['receipts_conflicts']['results']) == 4
+    monkeypatch.setattr(invoice_audit, 'bind_documents_to_orders', real_bind)
+    monkeypatch.setattr(q, '_conflict_block', lambda *a: None)
+    bare = call()
+    assert bare['receipts_conflicts'] is None
+    assert {k: v for k, v in body.items() if k != 'receipts_conflicts'} == {k: v for k, v in bare.items() if k != 'receipts_conflicts'}
+
+
+def test_receipts_conflicts_classification_and_response():
+    """Profile-conflict table, B's 8 orders (3 conflicts), None block (response equality: marker HTTP test)."""
+    import invoice_audit
+    def r(status, doc=None, order='#1'):
+        return {'order': order, 'status': status, 'document_id': doc}
+    F, MM, DUP = 'DOCUMENT_RECORD_FOUND', 'REVIEW_AMOUNT_MISMATCH', 'BLOCKED_DUPLICATE_DOCUMENT_NUMBER'
+    NONE = 'REVIEW_NO_DOCUMENT'
+    cls = invoice_audit.classify_profile_conflict
+    assert cls(r(F, 'A'), r(F, 'B')) == 'REVIEW_PROFILE_CONFLICT'
+    assert cls(r(F, 'A'), r(MM, 'B')) == 'REVIEW_PROFILE_CONFLICT'
+    assert cls(r(F, 'A'), r(F, 'A')) == 'NO_CONFLICT'
+    assert cls(r(F, 'A'), r(NONE)) == 'NO_CONFLICT' and cls(r(NONE), r(F, 'B')) == 'NO_CONFLICT'
+    assert cls(r(F, 'A'), r(DUP)) == 'REVIEW_PROFILE_AMBIGUOUS'
+    assert cls(r(DUP), r(MM, 'B')) == 'REVIEW_PROFILE_AMBIGUOUS'
+    assert cls(r(DUP), r(DUP)) == cls(r(DUP), r(NONE)) == cls(r(NONE), r(NONE)) == 'NO_CONFLICT'
+    assert cls(r(F), r(F, 'B')) == 'REVIEW_CONFLICT_UNKNOWN'          # BOUND without id
+    assert cls(r('SOMETHING_NEW', 'A'), r(F, 'A')) == 'REVIEW_CONFLICT_UNKNOWN'
+    assert cls(r(F, 'A'), None) == 'REVIEW_CONFLICT_UNKNOWN'
+    assert cls(r(F, 'A'), r(MM, 'A')) == 'REVIEW_CONFLICT_UNKNOWN'    # same id, different status
+    names = [f'#{n}' for n in range(1001, 1009)]
+    doc = [('FOUND', 159), ('DUP', None), ('MM', 11), ('NONE', None), ('NONE', None), ('NONE', None),
+           ('NONE', None), ('CUR', 17)]
+    mark = [('FOUND', 166), ('MM', 163), ('DUPREF', None), ('FOUND', 162), ('NONE', None), ('NONE', None),
+            ('NONE', None), ('NONE', None)]
+    full = {'FOUND': F, 'MM': MM, 'DUP': DUP, 'DUPREF': 'BLOCKED_DUPLICATE_DOCUMENT_REFERENCE', 'NONE': NONE,
+            'CUR': 'REVIEW_CURRENCY_OR_TOTAL_UNKNOWN'}
+    def bound(rows):
+        return {'status': 'OK', 'unbound': [], 'results': [
+            {'order': n, 'status': full[s], 'document_id': None if d is None else str(d)}
+            for n, (s, d) in zip(names, rows)]}
+    block = q._conflict_block(bound(doc), bound(mark))
+    assert block['conflict_count'] == 3
+    assert {x['order']: x['status'] for x in block['results']} == {
+        '#1001': 'REVIEW_PROFILE_CONFLICT', '#1002': 'REVIEW_PROFILE_AMBIGUOUS', '#1003': 'REVIEW_PROFILE_AMBIGUOUS',
+        '#1004': 'NO_CONFLICT', '#1005': 'NO_CONFLICT', '#1006': 'NO_CONFLICT', '#1007': 'NO_CONFLICT',
+        '#1008': 'NO_CONFLICT'}
+    for x in block['results']:
+        assert set(x) == set(q.CONFLICT_ROW_FIELDS) | {'verified', 'cash_received_verified', 'bank_settlement_verified'}
+        assert x['verified'] is False and x['cash_received_verified'] is False and x['bank_settlement_verified'] is False
+    assert block['results'][0]['docnumber_document_id'] == '159' and block['results'][0]['marker_document_id'] == '166'
+    assert q._conflict_block(None, bound(mark)) is None and q._conflict_block(bound(doc), None) is None

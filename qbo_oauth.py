@@ -993,6 +993,33 @@ def _receipt_block(bound: dict | None, profile: str) -> dict | None:
                         for r in bound.get("results", []) if isinstance(r, dict)]}
 
 
+CONFLICT_ROW_FIELDS = ("order", "status", "docnumber_status", "marker_status",
+                       "docnumber_document_id", "marker_document_id")
+
+
+def _conflict_block(bound: dict | None, bound_marker: dict | None) -> dict | None:
+    """Flags orders whose docnumber and marker bindings contradict; changes no existing status."""
+    import invoice_audit
+    if bound is None or bound_marker is None:
+        return None
+    docs = [r for r in bound.get("results", []) if isinstance(r, dict)]
+    marks = [r for r in bound_marker.get("results", []) if isinstance(r, dict)]
+    aligned = [r.get("order") for r in docs] == [r.get("order") for r in marks]
+    results = []
+    for i, d in enumerate(docs):
+        m = marks[i] if aligned else None
+        status = invoice_audit.classify_profile_conflict(d, m)
+        row = {"order": d.get("order"), "status": status,
+               "docnumber_status": d.get("status"), "marker_status": (m or {}).get("status"),
+               "docnumber_document_id": d.get("document_id"), "marker_document_id": (m or {}).get("document_id")}
+        results.append({**{k: _audit_value(row[k]) for k in CONFLICT_ROW_FIELDS},
+                        "verified": False, "cash_received_verified": False,
+                        "bank_settlement_verified": False})
+    return {"profiles": ["docnumber", "marker"],
+            "conflict_count": sum(1 for r in results if r["status"] != "NO_CONFLICT"),
+            "results": results}
+
+
 @app.get("/tenant/finance/audit")
 def tenant_finance_audit(request: Request, store: str = "") -> dict:
     """On-demand read-only audit of the tenant's own orders vs QBO documents; nothing stored."""
@@ -1027,6 +1054,7 @@ def tenant_finance_audit(request: Request, store: str = "") -> dict:
     receipts_marker = _receipt_block(bound_marker, "marker")
     return {"store": connection["store"], "adapter_status": adapted["status"], "receipts": receipts,
             "receipts_marker": receipts_marker,
+            "receipts_conflicts": _conflict_block(bound, bound_marker),
             "status": batch["status"] if batch else adapted["status"],
             "verified": bool(batch and batch.get("verified") is True),
             "orders_checked": len(results),

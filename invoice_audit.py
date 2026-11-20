@@ -2263,6 +2263,35 @@ def bind_documents_to_orders(orders: list[dict], documents: list[dict], *, profi
     return {"status": "OK", "results": results, "unbound": unbound}
 
 
+_CONFLICT_BOUND = {"DOCUMENT_RECORD_FOUND", "REVIEW_AMOUNT_MISMATCH", "REVIEW_CURRENCY_OR_TOTAL_UNKNOWN"}
+_CONFLICT_AMBIG = {"BLOCKED_DUPLICATE_DOCUMENT_NUMBER", "BLOCKED_DUPLICATE_DOCUMENT_REFERENCE"}
+_CONFLICT_NONE = {"REVIEW_NO_DOCUMENT", "BLOCKED_UNBOUND_DOCUMENTS", "BLOCKED_NO_ORDER_NUMBER"}
+
+
+def classify_profile_conflict(docnumber_row: dict | None, marker_row: dict | None) -> str:
+    """Pure: do the docnumber and marker bindings of one order contradict? Unknown = REVIEW_CONFLICT_UNKNOWN."""
+    kinds = []
+    for row in (docnumber_row, marker_row):
+        status = row.get("status") if isinstance(row, dict) else None
+        doc_id = row.get("document_id") if isinstance(row, dict) else None
+        if status in _CONFLICT_BOUND and isinstance(doc_id, (str, int)) and str(doc_id):
+            kinds.append("BOUND")
+        elif status in _CONFLICT_AMBIG:
+            kinds.append("AMBIG")
+        elif status in _CONFLICT_NONE:
+            kinds.append("NONE")
+        else:
+            return "REVIEW_CONFLICT_UNKNOWN"
+    if kinds == ["BOUND", "BOUND"]:
+        a, b = docnumber_row, marker_row
+        if str(a["document_id"]) != str(b["document_id"]):
+            return "REVIEW_PROFILE_CONFLICT"
+        return "NO_CONFLICT" if a["status"] == b["status"] else "REVIEW_CONFLICT_UNKNOWN"
+    if "BOUND" in kinds and "AMBIG" in kinds:
+        return "REVIEW_PROFILE_AMBIGUOUS"
+    return "NO_CONFLICT"
+
+
 if __name__ == "__main__" and sys.argv[1:] == ["--pilot-refunds"]:
     try:
         from shopify_read import read_shopify_test_order
