@@ -4,8 +4,9 @@ Güncelleme: 2026-11-18
 Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 
 ## Şu an tek açık iş
-**Adım 6A-2b (TASLAK, başlatılmadı; onay yok). Kod yok.** Receipt'leri audit'e (`AUDIT_DOCUMENT_ENTITIES`) ve uca bağla (6A-2a `bind_documents_to_orders` kullanılır), panel yalnız onaylı alanlar, canlı ölçüm, dağıtım ayrı onay. Kullanıcı sandbox'ta sipariş numarasıyla eşleşen 3-4 SalesReceipt'i elle girecek.
-**Kapı (başlamadan önce, kod gerektirmez, kullanıcının kararı): "gerçek kullanıcı sesi".** 6A-2b'ye başlamadan 3-5 gerçek Shopify+QBO kullanıcısıyla konuşulması önerilir: belgeleri hangi bağlayıcıyla/elle nasıl oluşturuyorlar (Invoice mı SalesReceipt mı), belge numarası = sipariş numarası mı, iade nasıl kaydediliyor. Sonuç docnumber profilinin ve önek kuralının gerçekten gerekli olup olmadığını belirler. Kararı kullanıcı verir; konuşma yapılmadan veya atlanmadan 6A-2b başlamaz.
+**Adım 6A-2b (HAZIRLIK TAMAM, başlatılmadı; onay yok). Kod yok.** Kapsam, kabul ölçütü ve B'ye elle girilecek 4 SalesReceipt listesi `PLAN.md` 6A-2b altında (son hal).
+**Bloke kalanlar:** ödeme kaydı tanımı (receipt ödeme alanı bilinmiyor, yalnız "belge kaydı var"); bağlama profili (`marker`/`docnumber`); #1001–#1004 sipariş toplam/satırları repoda yok (okuma gerekir); B'deki mevcut 4 SalesReceipt + 1 RefundReceipt'in DocNumber/işareti bilinmiyor; QBO aynı DocNumber'ı kabul ediyor mu bilinmiyor.
+**Gerçek kullanıcı sesi kapısı:** 3 gerçek Reddit konusu okundu (2026-11-18); yöntem sorusu cevaplandı; belge numarası = sipariş numarası mı belirsiz, bilinmeyen = BLOKE. Kullanıcı kararı: devam, atla veya daha fazla konuş. Karar yok, 6A-2b başlamaz.
 
 ## BİTTİ
 - **6A-2a kapandı** (`dcdb40f`, main'de, dağıtım yok, canlı yolda çağıran yok): `normalize_document`, `bind_documents_to_orders`, 3 test, suit 638. Kurallar (a) RefundReceipt/CreditMemo yalnız refund marker, (b) tutar eşleşirse yalnız `DOCUMENT_RECORD_FOUND`, (c) yalnız baştaki `#`, tek önek.

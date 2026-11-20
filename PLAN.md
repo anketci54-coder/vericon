@@ -61,6 +61,26 @@ Her adım sonu: `HANDOFF.md` güncellenir, kullanıcı onaylar, ancak sonra sonr
 - [x] 6A-1 Okuma dilimi: SalesReceipt/RefundReceipt GET /query, beyaz liste. Dağıtım `78c59c5`; canlı kanıt (kullanıcı, B, konsol): documents 200, Invoice 36/Payment 20/CreditMemo 4/SalesReceipt 4/RefundReceipt 1, has_more false, yeni türlerde PII anahtarı yok.
 - [x] 6A-2a Ortak belge modeli + docnumber/marker bağlama profili (saf fonksiyon, 3 test, canlı yol değişmedi). Kod `dcdb40f`, dağıtım yok. Ödeme alanı bulgusu: BLOKE (HANDOFF).
 - [ ] 6A-2b Receipt'leri audit'e ve uca bağla, canlı ölçüm, dağıtım ayrı onay (TASLAK; önce "gerçek kullanıcı sesi" kapısı, HANDOFF).
+  - **6A-2b kapsam (son hal, başlatılmadı):** (1) `AUDIT_DOCUMENT_ENTITIES` SalesReceipt/RefundReceipt'i de okur (6A-1 beyaz listesi değişmez); (2) audit `bind_documents_to_orders` (6A-2a) çağırır; (3) uç ve panel yalnız bağ çıktısındaki onaylı alanları döndürür. Kapsam dışı: ödeme alanı, beyaz liste genişletme, yazma, Profit/Intelligence.
+  - **Kabul ölçütü:** (a) receipt satırı hiçbir koşulda VERIFIED, cash true veya bank true üretmez; en iyi sonuç `DOCUMENT_RECORD_FOUND`; (b) B'de aşağıdaki 4 receipt girilince canlı ölçümde beklenen durumlar tabloyla birebir çıkar; (c) yazma çağrısı 0; (d) A yalnız kendi, B yalnız kendi verisi; (e) dağıtım ayrı onay, GitHub=VPS aynı SHA.
+  - **Kural (b) ödeme kaydı tanımı: BLOKE.** DepositToAccountRef/PaymentMethodRef/PaymentRefNum receipt'te var mı bilinmiyor (beyaz liste döndürmüyor). Bilinene kadar yalnız "belge kaydı var".
+  - **Bağlama profili: BLOKE.** `marker` mı `docnumber` mı (önek var mı) kullanıcı kararı; "gerçek kullanıcı sesi" kapısına bağlı.
+  - **Gerçek kullanıcı sesi (2026-11-18, 3 gerçek Reddit konusu okundu):** yöntem sorusu cevaplandı; belge numarası = sipariş numarası mı: belirsiz. Bilinmeyen = BLOKE; docnumber profili bu belirsizlik çözülmeden varsayılan yapılmaz.
+  - **Sandbox B elle girilecek SalesReceipt'ler (kaynak: kod + testler + HANDOFF; bilinmeyen = BLOKE).** Sabit: para birimi TRY, vergi 0, TaxCode NON. Kodun beklediği sipariş şekli (`_audit_pilot_line_items`): 1 ürün satırı SKU `VERICON-TEST-001` + 1 kargo satırı başlığı `Standart` (QBO'da kalem `SHIPPING-STANDARD`, adet 1, kargo>0 ise ayrı satır). Bağlama (6A-2a) satır şekline bakmaz, yalnız numara/işaret, toplam ve para birimine bakar; satır şekli yalnız faturadaki pilot doğrulamasında kullanılır, receipt'e uygulanması 6A-2b kararı değil, BLOKE.
+    - Uyan/uymayan B siparişleri: #1005–#1008 uymuyor (SKU yok, kargo satırı yok, #1008 1x300 vs 3x100; IDEAS 2026-11-17, PLAN 4-4). #1001–#1004: sipariş toplamı, satırları, kargosu repoda kayıtlı değil, uyup uymadığı BLOKE (canlı/Shopify okuma gerekir, bu oturumda yapılmadı). Aşağıdaki tablo bu yüzden #1001–#1004 üzerine kuruludur; toplam ve satır hücreleri sipariş okunana kadar BLOKE.
+    - B'de hâlihazırda 4 SalesReceipt + 1 RefundReceipt var (6A-1 canlı sayım); DocNumber ve işaretleri kayıtlı değil. Docnumber profilinde yeni belgelerle çakışabilir: BLOKE, girişten önce okunmalı.
+
+| # | Sipariş | DocNumber | Toplam | Para | Satırlar | Sınanan durum | Beklenen bağ sonucu |
+|---|---|---|---|---|---|---|---|
+| R1 | #1001 | `1001` | = sipariş toplamı (BLOKE: değer) | TRY | VERICON-TEST-001 x1 + SHIPPING-STANDARD x1 (sipariş şekline uyuyorsa; BLOKE) | tam eşleşme | `DOCUMENT_RECORD_FOUND` (docnumber profili) |
+| R2 | #1002 | `1002` | sipariş toplamı + 1.00 (BLOKE: değer) | TRY | R1 ile aynı | tutar uyuşmaz | `REVIEW_AMOUNT_MISMATCH` |
+| R3a | #1003 | `1003` | = sipariş toplamı (BLOKE: değer) | TRY | R1 ile aynı | aynı numara iki belgede | `BLOCKED_DUPLICATE_DOCUMENT_NUMBER` |
+| R3b | #1003 | `1003` | R3a ile aynı | TRY | R1 ile aynı | (R3a ile birlikte) | aynı satır |
+| - | #1004 | (receipt girilmez) | - | - | - | numara hiç yok | `REVIEW_NO_DOCUMENT` |
+
+    - R3a/R3b: QBO'nun aynı DocNumber'ı kabul edip etmediği (yinelenen numara uyarısı/engeli) bilinmiyor: BLOKE; kabul etmezse bu durum sandbox'ta girilemez, fixture testiyle sınanır.
+    - "Numara hiç yok" iki ayrı durumdur: siparişe ait receipt yok (#1004, `REVIEW_NO_DOCUMENT`) ve DocNumber'sız receipt (`BLOCKED_NO_DOCUMENT_NUMBER`). İkincisi sandbox'ta girilebilir mi (QBO otomatik numara verir mi) bilinmiyor: BLOKE; girilmeyecek.
+    - `marker` profilinde bu 4 receipt'in hiçbiri bağlanmaz (işaret yok) ve hepsi `REVIEW_NO_DOCUMENT`; marker durumunu sınamak istenirse PrivateNote'a `VERICON_SHOPIFY_ORDER_ID=<id>` elle eklenmesi gerekir (ayrı karar).
 - [ ] 6 Güvenilirlik testleri
 - [ ] 7 ABD pilot müşteri
 - [ ] 8 Hukuk ve uyumluluk
