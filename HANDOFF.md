@@ -4,9 +4,10 @@ Güncelleme: 2026-11-20
 Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 
 ## Şu an tek açık iş
-**Adım 6A-2b (ONAYLI, profil `docnumber`, kod yazılıyor, push/dağıtım onay bekler).** Kapsam ve kabul ölçütü `PLAN.md` 6A-2b. Değişiklik: `AUDIT_DOCUMENT_ENTITIES` + receipt'ler, `tenant_finance_audit` çıktısında ayrı `receipts` alanı. Receipt asla verified/cash/bank true üretmez.
+**Adım 6A-2b (kod `bbebb7f` dağıtıldı; canlı ölçüm bekliyor).** Kapsam ve kabul ölçütü `PLAN.md` 6A-2b. Değişiklik: `AUDIT_DOCUMENT_ENTITIES` + receipt'ler, `tenant_finance_audit` çıktısında ayrı `receipts` alanı. Receipt asla verified/cash/bank true üretmez.
 
 ## BİTTİ
+- **6A-2b dağıtım** `bbebb7f` 2026-11-20 13:37 +0200 (sunucu saati): 8787/8788/8789 sırayla yeniden başlatıldı, /health 200 ×3, oturumsuz /tenant/finance/audit 401, 8787–8789 yalnız 127.0.0.1, Nginx/web değişmedi (yedek yok). Canlı B ölçümü (receipts alanı) henüz yapılmadı.
 - **6A-2a** (`dcdb40f`, main): `normalize_document`, `bind_documents_to_orders`; dağıtım yok.
 - **6A-1** (`78c59c5`, dağıtıldı 2026-11-18) ve **Adım 5** (`0f5155f`, `af1e47e`, `4d18934`) kapandı; ayrıntı `docs/history.md`. A=`hudys3-p0` realm `9341458613758425`, B=`vericon-tenant-b-test` realm `9341458641399133` (TRY). A ve B `financial_access_enabled=true` (AGENTS 6b; geri alma: bayrak `false`).
 - **B ölçümü 2026-11-20** (kullanıcı): sipariş/receipt değerleri ve para birimleri `docs/history.md`. Receipt para birimi BLOKE'si kapandı: Id11,17,159,160,161 USD. QBO yinelenen DocNumber'ı kabul ediyor.
