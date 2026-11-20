@@ -998,6 +998,29 @@ def test_financial_batch_separates_refunds_and_credit_offsets(monkeypatch, curre
     multi_payments.append(new_payment)
     full=a.audit_order_financial_batch(multi_orders,multi_invoices,multi_credits,multi_payments)
     assert full["status"] == "FINANCIAL_BATCH_VERIFIED" and full["orders_verified"] == 2
+    # PII whitelist (qbo_oauth._audit_document_row): audit output identical on raw vs whitelisted rows.
+    import qbo_oauth as qo
+    pii = {"BillEmail": {"Address": "x@example.com"}, "BillAddr": {"Line1": "1 Main"}, "ShipAddr": {"Line1": "2 Main"},
+           "FreeFormAddress": True, "CustomerMemo": {"value": "memo"}}
+    def dirty(kind, row):
+        row = {**deepcopy(row), **pii}
+        row["CustomerRef"] = {**row.get("CustomerRef", {}), "name": "Jane Doe"}
+        for line in row.get("Line", []):
+            line["Description"] = "free text"
+            if "SalesItemLineDetail" in line:
+                line["SalesItemLineDetail"]["Description"] = "free text"
+        return row
+    clean = lambda kind, rows: [qo._audit_document_row(kind, dirty(kind, r)) for r in rows]
+    c_inv, c_cr, c_pay = clean("Invoice", multi_invoices), clean("CreditMemo", multi_credits), clean("Payment", multi_payments)
+    blob = repr((c_inv, c_cr, c_pay))
+    for leak in ("BillEmail", "BillAddr", "ShipAddr", "FreeFormAddress", "CustomerMemo", "Jane Doe", "free text", "x@example.com"):
+        assert leak not in blob
+    assert all(set(r["CustomerRef"]) <= {"value"} and set(r["CurrencyRef"]) <= {"value"} for r in c_inv + c_cr + c_pay)
+    via = a.audit_order_financial_batch(multi_orders, c_inv, c_cr, c_pay)
+    assert via == full
+    assert a.financial_discrepancy_report(via, multi_orders, c_inv) == a.financial_discrepancy_report(full, multi_orders, multi_invoices)
+    with pytest.raises(ValueError):
+        qo._audit_document_row("Invoice", {"Id": "1", "Line": "not-a-list"})
     assert full["results"][0]["credit_application"] == "MULTI_CREDIT_APPLICATION_VERIFIED"
     assert full["results"][0]["verified"] is True
     wrong_balance=deepcopy(multi_invoices)

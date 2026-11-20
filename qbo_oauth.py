@@ -474,6 +474,14 @@ TENANT_DOCUMENT_ENTITIES = ("Invoice", "Payment", "CreditMemo", "SalesReceipt", 
 # Receipt types are returned through a whitelist: no customer name, e-mail, address or phone.
 RECEIPT_ENTITIES = ("SalesReceipt", "RefundReceipt")
 AUDIT_DOCUMENT_ENTITIES = ("Invoice", "Payment", "CreditMemo", "SalesReceipt", "RefundReceipt")
+# Invoice/Payment/CreditMemo: only what invoice_audit reads (6A-2b+ PII whitelist). Everything else,
+# incl. BillEmail/BillAddr/ShipAddr/FreeFormAddress/CustomerMemo/CustomerRef.name/Line.Description, is dropped.
+AUDIT_DOC_SCALARS = {"Invoice": ("Id", "DocNumber", "TotalAmt", "Balance", "PrivateNote"),
+                     "Payment": ("Id", "TotalAmt", "UnappliedAmt"),
+                     "CreditMemo": ("Id", "TotalAmt", "Balance", "PrivateNote")}
+AUDIT_DOC_REFS = ("CurrencyRef", "CustomerRef")  # kept as {value} only
+AUDIT_DOC_HAS_FIELDS = {"Invoice": ("CustomField", "TxnTaxDetail", "LinkedTxn", "Line"),
+                        "Payment": ("Line",), "CreditMemo": ("CustomField", "TxnTaxDetail", "Line")}
 RECEIPT_ROW_FIELDS = ("Id", "DocNumber", "TxnDate", "TotalAmt", "HomeTotalAmt", "CurrencyRef",
                       "ExchangeRate", "PrivateNote", "CustomField", "LinkedTxn", "Line", "TxnTaxDetail")
 RECEIPT_LINE_FIELDS = ("Id", "LineNum", "Amount", "DetailType")
@@ -502,6 +510,66 @@ def _receipt_row(row: dict) -> dict:
             lines.append(item)
         out["Line"] = lines
     return out
+def _audit_scalar(value):
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    raise ValueError("Tenant document read invalid")
+
+
+def _audit_dict(value) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("Tenant document read invalid")
+    return value
+
+
+def _audit_list(value) -> list:
+    if not isinstance(value, list):
+        raise ValueError("Tenant document read invalid")
+    return value
+
+
+def _audit_linked(value) -> list:
+    return [{k: _audit_scalar(l[k]) for k in ("TxnId", "TxnType") if k in l}
+            for l in map(_audit_dict, _audit_list(value))]
+
+
+def _audit_line(line: dict) -> dict:
+    line = _audit_dict(line)
+    out = {k: _audit_scalar(line[k]) for k in ("Amount", "DetailType") if k in line}
+    if "LinkedTxn" in line:
+        out["LinkedTxn"] = _audit_linked(line["LinkedTxn"])
+    if "SalesItemLineDetail" in line:
+        d = _audit_dict(line["SalesItemLineDetail"])
+        det = {k: _audit_scalar(d[k]) for k in ("Qty", "UnitPrice") if k in d}
+        if "ItemRef" in d:
+            ref = _audit_dict(d["ItemRef"])
+            det["ItemRef"] = {k: _audit_scalar(ref[k]) for k in ("value", "name") if k in ref}
+        if "TaxCodeRef" in d:
+            ref = _audit_dict(d["TaxCodeRef"])
+            det["TaxCodeRef"] = {k: _audit_scalar(ref[k]) for k in ("value",) if k in ref}
+        out["SalesItemLineDetail"] = det
+    return out
+
+
+def _audit_document_row(entity: str, row: dict) -> dict:
+    """Whitelist one Invoice/Payment/CreditMemo row; malformed shape fails closed (ValueError -> 503)."""
+    out = {k: _audit_scalar(row[k]) for k in AUDIT_DOC_SCALARS[entity] if k in row}
+    for k in AUDIT_DOC_REFS:
+        if k in row:
+            ref = _audit_dict(row[k])
+            out[k] = {"value": _audit_scalar(ref["value"])} if "value" in ref else {}
+    if "CustomField" in AUDIT_DOC_HAS_FIELDS[entity] and "CustomField" in row:
+        out["CustomField"] = [{k: _audit_scalar(f[k]) for k in ("Name", "StringValue") if k in f}
+                              for f in map(_audit_dict, _audit_list(row["CustomField"]))]
+    if "TxnTaxDetail" in AUDIT_DOC_HAS_FIELDS[entity] and "TxnTaxDetail" in row:
+        out["TxnTaxDetail"] = {"TotalTax": _audit_scalar(_audit_dict(row["TxnTaxDetail"]).get("TotalTax"))}
+    if "LinkedTxn" in AUDIT_DOC_HAS_FIELDS[entity] and "LinkedTxn" in row:
+        out["LinkedTxn"] = _audit_linked(row["LinkedTxn"])
+    if "Line" in AUDIT_DOC_HAS_FIELDS[entity] and "Line" in row:
+        out["Line"] = [_audit_line(l) for l in _audit_list(row["Line"])]
+    return out
+
+
 TENANT_DOCUMENT_MAX_PAGE = 50
 TENANT_DOCUMENT_MAX_START = 1000
 
@@ -548,6 +616,8 @@ def read_tenant_documents(config: Config, *, user_id: str, start: int = 1, limit
             page = rows[:limit]
             if entity in RECEIPT_ENTITIES:
                 page = [_receipt_row(row) for row in page]
+            elif entity in AUDIT_DOC_SCALARS:
+                page = [_audit_document_row(entity, row) for row in page]
             documents[entity] = {"rows": page, "has_more": len(rows) > limit}
     except _TokenExchangeRefused as exc:
         if exc.invalid_grant:

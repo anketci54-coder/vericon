@@ -4,7 +4,12 @@ Güncelleme: 2026-11-20
 Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 
 ## Şu an tek açık iş
-**Adım 6 sonraki alt adım: kullanıcı kararı bekliyor.** Kabul ölçütleri yazılmadı; karar gelmeden başlanmaz.
+**PII whitelist (Invoice/Payment/CreditMemo): kod yazıldı ve commit edildi, push/dağıtım onay bekliyor.** Kök neden: `qbo_oauth.py:530` `SELECT *`, `:549-550` whitelist yalnız receipt türlerine; diğer 3 tür ham döner.
+**Kabul ölçütü (gerçek davranış, `/tenant/finance/documents` + `/tenant/finance/audit`):**
+- Yanıtta YALNIZ: Invoice = Id, DocNumber, TotalAmt, Balance, CurrencyRef.value, CustomerRef.value, CustomField[Name,StringValue], PrivateNote, TxnTaxDetail.TotalTax, LinkedTxn[TxnId,TxnType], Line[Amount, DetailType, LinkedTxn, SalesItemLineDetail{ItemRef, Qty, UnitPrice, TaxCodeRef.value}]; Payment = Id, TotalAmt, UnappliedAmt, CurrencyRef.value, CustomerRef.value, Line[Amount, LinkedTxn]; CreditMemo = Id, TotalAmt, Balance, CurrencyRef.value, CustomerRef.value, CustomField, PrivateNote, TxnTaxDetail.TotalTax, Line (Invoice ile aynı alt alanlar; eşitlik testi ilk denemede CreditMemo.Line eksikliğini yakaladı).
+- Yanıtta OLMAZ: BillEmail, BillAddr, ShipAddr, FreeFormAddress, CustomerMemo, CustomerRef.name, diğer tüm adlandırılmamış alan.
+- Denetim sonucu değişmez: aynı girdiyle `audit_order_financial_batch` + `financial_discrepancy_report` ham ve whitelist'li satırlarda birebir aynı (tek test); canlıda B ve A `/tenant/finance/audit` yanıtı önce/sonra aynı (kullanıcı konsol, dağıtım ayrı onay).
+- Yazma çağrısı 0; şekil bozuksa 503 (fail-closed, receipt kalıbı).
 
 ## BİTTİ
 - **6A-2b kapandı** (kod `bbebb7f`, dağıtım 2026-11-20 13:37 +0200 sunucu saati; 8787–8789 sırayla, /health 200, oturumsuz audit 401). Canlı kabul (kullanıcı, B, 13:41 +02:00): HTTP 200, profil docnumber; #1001 `DOCUMENT_RECORD_FOUND`(159); #1002 `BLOCKED_DUPLICATE_DOCUMENT_NUMBER`; #1003 `REVIEW_AMOUNT_MISMATCH`(11); #1004–#1007 `REVIEW_NO_DOCUMENT`; #1008 `REVIEW_CURRENCY_OR_TOTAL_UNKNOWN`(17); verified/cash/bank false; unbound_count=1 (RefundReceipt 1020, marker yok: `invoice_audit.py:2206`).

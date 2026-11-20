@@ -1887,11 +1887,16 @@ def test_6a1_receipts_read_whitelisted_no_pii_and_bad_page_blocks(cfg, monkeypat
     bad = {'on': False}
     def fake_get(url, *, params, headers, timeout, allow_redirects):
         entity = params['query'].split()[3]
-        if entity in q.RECEIPT_ENTITIES and bad['on']:
+        if bad['on']:
             return FakeResponse({'QueryResponse': {entity: [{'Id': '1', 'Line': 'broken'}]}})
-        return FakeResponse({'QueryResponse': {entity: [dict(row)] if entity in q.RECEIPT_ENTITIES else []}})
+        return FakeResponse({'QueryResponse': {entity: [dict(row, FreeFormAddress=True)]}})
     monkeypatch.setattr(q.requests, 'get', fake_get)
     docs = q.read_tenant_documents(tenant, user_id=user)['documents']
+    for e in ('Invoice', 'Payment', 'CreditMemo'):  # PII whitelist for the old three types
+        got = docs[e]['rows'][0]
+        assert got['CustomerRef'] == {'value': '1'} and got['Line'][0]['Amount'] == 10
+        assert not {'BillEmail', 'BillAddr', 'ShipAddr', 'FreeFormAddress', 'CustomerMemo'} & set(got)
+        assert 'Description' not in got['Line'][0] and 'Jane' not in json.dumps(got) and 'example.com' not in json.dumps(got)
     for e in q.RECEIPT_ENTITIES:
         got = docs[e]['rows'][0]
         assert got['DocNumber'] == '1001' and got['PrivateNote'].startswith('VERICON_SHOPIFY_ORDER_ID=')
