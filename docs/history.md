@@ -518,3 +518,9 @@ A/B kendi Sandbox hesapları için, yalnızca okuma yetkisiyle `financial_access
 - 5B statik dağıtım `af1e47e` (2026-11-18; cmp ok ×2, nginx -t + reload; yedek `/root/backup-nginx/vericon-app.conf.20261118-092239`, `/root/backup-nginx/index.html.20261118-092239`).
 - 5B dar ekran `4d18934` (2026-11-18 12:21 EET; yedek `/root/backup-nginx/finance-audit.js.20261118-122110`, `/root/backup-nginx/style.css.20261118-122110`).
 - 5A canlı ölçüm 2026-11-17 17:20–17:30 EET: B→B 200/8 sipariş `BLOCKED_ORDER_INVOICE_LINK`, A→A 200, A→B/B→A/olmayan mağaza 403, oturumsuz 401.
+
+## HANDOFF'tan taşındı (2026-11-20)
+- 6A-1 `78c59c5` dağıtıldı 2026-11-18 15:16 +02:00 (journalctl 8789 başlama 15:16:14). Canlı kanıt (kullanıcı, B, konsol, 15:24 +02:00): documents 200, Invoice 36/Payment 20/CreditMemo 4/SalesReceipt 4/RefundReceipt 1, has_more false; yeni türlerde PII yok. Eski 3 türde BillEmail/BillAddr/ShipAddr/FreeFormAddress/CustomerMemo/CustomerRef dönüyor (IDEAS, yüksek öncelik).
+- 5B canlı kabul (kullanıcı, 2026-11-18 11:50–12:30 +02:00): B kendi mağazası, 8 sipariş, doğrulanan 0, banka doğrulanmadı, salt-okunur; A yalnız kendi mağazası ve 4 siparişi. Dar ekran: `.audit-scroll` var, scrollWidth 1265 > clientWidth 314, overflow-x auto.
+- 16-11 08:29 ve 11:01 callback hataları kapandı: kaynak belirlenemedi, kullanıcı hatırlamıyor (2026-11-18).
+- B ölçümü 2026-11-20 (kullanıcı, kişisel veri yok): siparişler #1001–#1004 USD 216/120/100/300, #1005–#1008 TRY aynı tutarlar; SKU/kargo satırı yok, vergi 0, indirim 0. SalesReceipt Id11 no1003 337.50; Id17 no1008 225; Id38 no1011 78.75; Id47 no1014 140; Id159 no1001 216; Id160/Id161 no1002 120 (QBO yinelenen numarayı kabul etti); RefundReceipt Id66 no1020 87.50. CustomField/PrivateNote yok. Id11,17,159,160,161 USD. QBO DocNumber varsayılan otomatik; B'de "Custom transaction numbers" açıldı.

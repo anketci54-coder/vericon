@@ -1881,3 +1881,35 @@ def test_6a2a_refundreceipt_never_binds_by_docnumber_only_marker():
     assert out["results"][0]["refunds"][0]["status"] == "REFUND_RECORD_FOUND"
     out, _ = _bind([("RefundReceipt", {**rr, "TotalAmt": 5})], [order], profile="marker")
     assert out["results"][0]["refunds"][0]["status"] == "REVIEW_REFUND_AMOUNT_MISMATCH"
+
+
+def test_tenant_receipts_bind_by_docnumber_never_verified():
+    """6A-2b: B-like orders vs receipts through adapter + normalize + bind (docnumber profile)."""
+    orders_env, docs_env = _tenant_envelopes()
+    base = orders_env["orders"][0]
+    def order(n, cur, amt):
+        money = {"shopMoney": {"amount": amt, "currencyCode": cur}}
+        return {**base, "id": f"gid://shopify/Order/{n}", "name": f"#{n}", "totalPriceSet": money, "refunds": []}
+    orders_env["orders"] = [order(1001, "USD", "216.0"), order(1002, "USD", "120.0"), order(1003, "USD", "100.0"),
+                            order(1004, "USD", "300.0"), order(1008, "TRY", "300.0")]
+    rc = lambda i, no, amt, cur="USD": {"Id": i, "DocNumber": no, "TotalAmt": amt, "CurrencyRef": {"value": cur}}
+    page = lambda rows: {"rows": rows, "has_more": False}
+    docs_env["documents"]["SalesReceipt"] = page([rc("11", "1003", 337.50), rc("17", "1008", 225), rc("159", "1001", 216),
+                                                  rc("160", "1002", 120), rc("161", "1002", 120)])
+    docs_env["documents"]["RefundReceipt"] = page([rc("66", "1020", 87.50)])
+    out = a.adapt_tenant_envelopes(orders_env, docs_env, store="x.myshopify.com", realm="1", require_receipts=True)
+    assert out["status"] == "READY"
+    got = {r["order"]: r for r in a.bind_documents_to_orders(out["orders"], out["receipts"], profile="docnumber")["results"]}
+    assert got["#1001"]["status"] == "DOCUMENT_RECORD_FOUND" and got["#1001"]["document_id"] == "159"
+    assert got["#1002"]["status"] == "BLOCKED_DUPLICATE_DOCUMENT_NUMBER" and got["#1002"]["document_id"] is None
+    assert got["#1003"]["status"] == "REVIEW_AMOUNT_MISMATCH"
+    assert got["#1004"]["status"] == "REVIEW_NO_DOCUMENT"
+    assert got["#1008"]["status"] == "REVIEW_CURRENCY_OR_TOTAL_UNKNOWN"  # receipt USD vs order TRY
+    assert all(r["cash_received_verified"] is False and r["bank_settlement_verified"] is False for r in got.values())
+    # Incomplete receipt page blocks the whole audit input; missing receipts block when required.
+    docs_env["documents"]["SalesReceipt"]["has_more"] = True
+    assert a.adapt_tenant_envelopes(orders_env, docs_env, store="x.myshopify.com", realm="1",
+                                    require_receipts=True)["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT"
+    del docs_env["documents"]["SalesReceipt"]
+    assert a.adapt_tenant_envelopes(orders_env, docs_env, store="x.myshopify.com", realm="1",
+                                    require_receipts=True)["status"] == "BLOCKED_FINANCIAL_BATCH_INPUT"

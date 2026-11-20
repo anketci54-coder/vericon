@@ -1988,8 +1988,10 @@ def test_stage4_http_finance_audit_gates_fields_and_read_only(stage4_http, monke
     env_orders, env_docs = _tenant_envelopes()
     order = dict(env_orders['orders'][0], customer={'email': 'pii-order@example.com'})
     invoice = dict(env_docs['documents']['Invoice']['rows'][0], BillEmail={'Address': 'pii-qbo@example.com'})
+    receipt = {'Id': '5', 'DocNumber': '101', 'TotalAmt': 1, 'CurrencyRef': {'value': 'USD'},
+               'CustomerRef': {'name': 'pii-receipt'}, 'BillEmail': {'Address': 'pii-receipt@example.com'}}
     rows = {'Invoice': [invoice], 'CreditMemo': env_docs['documents']['CreditMemo']['rows'],
-            'Payment': env_docs['documents']['Payment']['rows']}
+            'Payment': env_docs['documents']['Payment']['rows'], 'SalesReceipt': [receipt]}
     shop_post, qbo_get = q.requests.post, q.requests.get
     def post(url, **kw):
         if url.endswith('/access_token'):
@@ -2025,9 +2027,14 @@ def test_stage4_http_finance_audit_gates_fields_and_read_only(stage4_http, monke
     assert set(body['results'][0]) <= set(q.AUDIT_ROW_FIELDS)
     assert body['results'][0]['order'] == '#101' and body['results'][0]['status'] == 'BLOCKED_ORDER_INVOICE_LINK'
     assert body['results'][0]['order_invoice'] == 'BLOCKED_UNSUPPORTED_ORDER_LINES'
-    for leak in ('pii-order', 'pii-qbo', 'fake-shop-token', 'fake-B', row['user_id']):
+    rc = body['receipts']
+    assert rc['profile'] == 'docnumber' and rc['results'][0]['order'] == '#101'
+    assert set(rc['results'][0]) <= set(q.RECEIPT_RESULT_FIELDS) | {'verified', 'cash_received_verified', 'bank_settlement_verified', 'refunds'}
+    assert rc['results'][0]['verified'] is False and rc['results'][0]['cash_received_verified'] is False
+    assert rc['results'][0]['bank_settlement_verified'] is False and rc['results'][0]['document_id'] == '5'
+    for leak in ('pii-order', 'pii-qbo', 'pii-receipt', 'fake-shop-token', 'fake-B', row['user_id']):
         assert leak not in own.text
-    assert [c[0] for c in h['calls']].count('query') == 3  # GET /query only; local budget files may change
+    assert [c[0] for c in h['calls']].count('query') == 5  # GET /query only; local budget files may change
     # Provider failure -> 503 without data.
     monkeypatch.setattr(q.requests, 'post', lambda url, **kw: FakeResponse({}, 500))
     failed = call(row['shop_domain'])

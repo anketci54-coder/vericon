@@ -473,7 +473,7 @@ def read_tenant_invoice_count(config: Config, *, user_id: str) -> int:
 TENANT_DOCUMENT_ENTITIES = ("Invoice", "Payment", "CreditMemo", "SalesReceipt", "RefundReceipt")
 # Receipt types are returned through a whitelist: no customer name, e-mail, address or phone.
 RECEIPT_ENTITIES = ("SalesReceipt", "RefundReceipt")
-AUDIT_DOCUMENT_ENTITIES = ("Invoice", "Payment", "CreditMemo")
+AUDIT_DOCUMENT_ENTITIES = ("Invoice", "Payment", "CreditMemo", "SalesReceipt", "RefundReceipt")
 RECEIPT_ROW_FIELDS = ("Id", "DocNumber", "TxnDate", "TotalAmt", "HomeTotalAmt", "CurrencyRef",
                       "ExchangeRate", "PrivateNote", "CustomField", "LinkedTxn", "Line", "TxnTaxDetail")
 RECEIPT_LINE_FIELDS = ("Id", "LineNum", "Amount", "DetailType")
@@ -894,6 +894,10 @@ def tenant_shopify_orders(request: Request, store: str = "", first: int = 10) ->
 AUDIT_ROW_FIELDS = ("order", "status", "order_invoice", "test_payment", "refund_credit",
                     "credit_application", "verified", "cash_received_verified",
                     "difference_amount", "expected_balance")
+# Receipt results: record-found only. Cash/bank/verified are forced false below, never copied.
+RECEIPT_RESULT_FIELDS = ("order", "status", "document_id", "document_kind", "document_record_found")
+RECEIPT_REFUND_FIELDS = ("refund", "status", "document_id")
+RECEIPT_BINDING_PROFILE = "docnumber"
 
 
 def _audit_value(value):
@@ -920,7 +924,10 @@ def tenant_finance_audit(request: Request, store: str = "") -> dict:
         docs = read_tenant_documents(config, user_id=connection["user_id"], start=1,
                                      limit=TENANT_DOCUMENT_MAX_PAGE, entities=AUDIT_DOCUMENT_ENTITIES)
         adapted = invoice_audit.adapt_tenant_envelopes(
-            orders, docs, store=connection["store"], realm=connection["realm"])
+            orders, docs, store=connection["store"], realm=connection["realm"], require_receipts=True)
+        bound = (invoice_audit.bind_documents_to_orders(
+            adapted["orders"], adapted["receipts"], profile=RECEIPT_BINDING_PROFILE)
+            if adapted["status"] == "READY" else None)
         batch = (invoice_audit.audit_order_financial_batch(
             adapted["orders"], adapted["invoices"], adapted["credits"], adapted["payments"])
             if adapted["status"] == "READY" else None)
@@ -928,7 +935,18 @@ def tenant_finance_audit(request: Request, store: str = "") -> dict:
         raise HTTPException(status_code=503, detail="Financial audit unavailable") from None
     results = [{key: _audit_value(row.get(key)) for key in AUDIT_ROW_FIELDS if key in row}
                for row in (batch or {}).get("results", []) if isinstance(row, dict)]
-    return {"store": connection["store"], "adapter_status": adapted["status"],
+    receipts = None
+    if bound is not None:
+        receipts = {"profile": RECEIPT_BINDING_PROFILE, "status": _audit_value(bound.get("status")),
+                    "unbound_count": len(bound.get("unbound", [])),
+                    "results": [{**{k: _audit_value(r.get(k)) for k in RECEIPT_RESULT_FIELDS},
+                                 "document_record_found": r.get("document_record_found") is True,
+                                 "verified": False, "cash_received_verified": False,
+                                 "bank_settlement_verified": False,
+                                 "refunds": [{k: _audit_value(f.get(k)) for k in RECEIPT_REFUND_FIELDS}
+                                             for f in r.get("refunds", []) if isinstance(f, dict)]}
+                                for r in bound.get("results", []) if isinstance(r, dict)]}
+    return {"store": connection["store"], "adapter_status": adapted["status"], "receipts": receipts,
             "status": batch["status"] if batch else adapted["status"],
             "verified": bool(batch and batch.get("verified") is True),
             "orders_checked": len(results),

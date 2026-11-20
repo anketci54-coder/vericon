@@ -1257,7 +1257,7 @@ ADAPTER_BLOCKED_INPUT = "BLOCKED_FINANCIAL_BATCH_INPUT"
 
 
 def adapt_tenant_envelopes(orders_envelope: dict, documents_envelope: dict, *,
-                           store: str, realm: str) -> dict:
+                           store: str, realm: str, require_receipts: bool = False) -> dict:
     """Pure: tenant /orders and /documents envelopes -> audit_order_financial_batch input.
 
     Incomplete data never passes silently. An incomplete page blocks the whole
@@ -1270,7 +1270,7 @@ def adapt_tenant_envelopes(orders_envelope: dict, documents_envelope: dict, *,
     store/realm, or a document page not starting at 1, block the whole input.
     """
     whole = {"status": ADAPTER_BLOCKED_INPUT, "orders": [], "invoices": [],
-             "credits": [], "payments": [], "blocked": []}
+             "credits": [], "payments": [], "receipts": [], "blocked": []}
     if not isinstance(orders_envelope, dict) or not isinstance(documents_envelope, dict):
         return whole
     if (not isinstance(store, str) or not store or orders_envelope.get("store") != store
@@ -1292,6 +1292,16 @@ def adapt_tenant_envelopes(orders_envelope: dict, documents_envelope: dict, *,
                 or any(not isinstance(row, dict) for row in part["rows"])):
             return whole
         lists[entity] = part["rows"]
+    receipts = []
+    for entity in ("SalesReceipt", "RefundReceipt"):
+        part = docs.get(entity)
+        if part is None and not require_receipts:
+            continue
+        if (not isinstance(part, dict) or not isinstance(part.get("rows"), list)
+                or part.get("has_more") is not False
+                or any(not isinstance(row, dict) for row in part["rows"])):
+            return whole
+        receipts += [normalize_document(entity, row) for row in part["rows"]]
     ready, blocked = [], []
     for order in orders:
         if not isinstance(order, dict):
@@ -1304,7 +1314,8 @@ def adapt_tenant_envelopes(orders_envelope: dict, documents_envelope: dict, *,
     if blocked:
         return {**whole, "blocked": blocked}
     return {"status": "READY", "orders": ready, "invoices": lists["Invoice"],
-            "credits": lists["CreditMemo"], "payments": lists["Payment"], "blocked": blocked}
+            "credits": lists["CreditMemo"], "payments": lists["Payment"],
+            "receipts": receipts, "blocked": blocked}
 
 
 def _page_complete(page_info) -> bool:
