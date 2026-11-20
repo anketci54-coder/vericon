@@ -19,3 +19,5 @@ Aşama kapanışında ilgili fikirler için karar: yap / ertele / çöpe at.
 - [ ] 2026-11-20 | Numara eşleştirmesi (docnumber profili) QBO'da "Custom transaction numbers" gerektirir; aksi hâlde DocNumber otomatik sıralı olur ve marker şart | Adım 6A-2b
 - [ ] 2026-11-20 | Eşleşmeyen receipt'ler `receipts` çıktısında yalnız sayı (`unbound_count`, `qbo_oauth.py:941`); hangi belge olduğu gösterilmiyor | Adım 6
 - [ ] 2026-11-20 | `PrivateNote`/`CustomField` serbest metin, bağlama işareti için gerekli; PII riski kalıyor (whitelist yalnız alan adını sınırlar, içeriği değil) | Adım 7 öncesi
+- [ ] 2026-11-20 | docnumber ve marker profilleri aynı siparişi farklı receipt'e bağlayabiliyor; profiller arası çelişki tespiti yok | Adım 6
+- [ ] 2026-11-20 | M4 (geçersiz marker `abc`, unbound+1 ve iki profilde BLOCKED_UNBOUND_DOCUMENTS) canlıda ölçülmedi; taban ölçümü bozar | Adım 6A-2b
