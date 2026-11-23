@@ -4,10 +4,12 @@ Güncelleme: 2026-11-23
 Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 
 ## Şu an tek açık iş
-**Adım 7 kabul ölçütü ONAYLANDI (2026-11-23); uygulama başlamadı.** Sıradaki tek iş: kullanıcı hangi maddeyle başlanacağını seçer (PLAN.md Adım 7).
+**Adım 7 kabul ölçütü ONAYLANDI (2026-11-23); 7.1-a BİTTİ.** Sıradaki tek iş: kullanıcı hangi maddeyle başlanacağını seçer (PLAN.md Adım 7).
 - İlk pilot 7 gün, elle kapatma (`financial_access_enabled=false`); admin paneli ve ödeme kapsam dışı.
 - Ölçütler 7.1–7.7: İngilizce arayüz, müşteri açma listesi, süre/403, silme yolu, ToS, destek, dış kapılar.
-- BLOKE: 7.4 token iptali (AGENTS §6), app.bundle.js kaynağı yok, "4-2 İzolasyon Testi" düğmesi okunmadı, arayüz Türkçe.
+- **7.1-a uygulandı (2026-11-23):** `web/index.html` :92-95 silindi (pdf42-check, tenant-isolation-check + sonuç alanları); script etiketi ve `tenant-isolation-check.js` KALDI (qbo-disconnect işleyicisi orada). Sıradaki: 7.1-b (kod→İngilizce açıklama + 4 receipts bloğu; `finance-audit.js` bunları şu an göstermiyor), sonra 7.1-c metin çevirisi, 7.1-d `app.bundle.js` (kaynak yok), 7.1-e B ekran kabulü.
+- Envanter: durum kodları `invoice_audit.py` (~190; FOUND :2242,:2259; VERIFIED :894,:1170,:1246,:1250,:1358), Nginx `= /tenant-isolation-check.js` location conf :165-167.
+- BLOKE: 7.4 token iptali (AGENTS §6), app.bundle.js kaynağı yok, arayüz Türkçe (7.1-c/d).
 
 ## BİTTİ
 - **Adım 7 kabul ölçütü** onaylandı ve `PLAN.md`'ye yazıldı (2026-11-23, kullanıcı); kod yok.
