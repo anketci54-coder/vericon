@@ -1,6 +1,6 @@
 # HANDOFF (en fazla yarım sayfa)
 
-Güncelleme: 2026-11-20
+Güncelleme: 2026-11-23
 Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 
 ## Şu an tek açık iş
@@ -16,6 +16,7 @@ Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
   truncated false; 160/161 (docnumber çift), 164/165 (marker çift) unmatched değil. `receipts_marker`, `receipts_conflicts`, `receipts_unmatched` çıkarılınca hash d585b018…f532e, LEN 3985.
 
 ## BİTTİ
+- **`receipts_unmatched`** kod `9fe6a9a` dağıtıldı 2026-11-23 10:24 +0200 (sunucu saati): 8787–8789 sırayla, /health 200, oturumsuz audit 401, dış /health 200, yalnız 127.0.0.1:8787–8789 dinliyor (8782–8786 yok); yedek yok, nginx değişmedi. Canlı kabul (B, yukarıdaki tablo) kullanıcıda bekliyor.
 - **`receipts_conflicts`** kod `9c308a0` (iki profil çelişki işareti; `receipts`/`receipts_marker`/ana denetim değişmedi; yeni sorgu yok). Dağıtım 2026-11-20 16:50 +0200: 8787–8789 sırayla, /health 200, oturumsuz audit 401, dış /health 200, 8782–8786 dinlemiyor; yedek yok, nginx değişmedi. Canlı kabul (kullanıcı, B, 17:16 +03:00 yerel): anahtarsız hash (receipts_marker ve receipts_conflicts çıkarılınca) d585b018…f532e LEN 3985; conflict_count 3; #1001 REVIEW_PROFILE_CONFLICT (159/166); #1002, #1003 REVIEW_PROFILE_AMBIGUOUS; #1004–#1008 NO_CONFLICT; verified/cash/bank false.
 - **6A-2b marker** `aa563b6` (dağıtım 15:29 +0200, canlı kabul 16:08 +02:00; hash d585b018…f532e, unbound 1; ayrıntı `docs/history.md`). **PII whitelist** `f229a04`, **6A-2b docnumber** `bbebb7f`, **6A-2a** `dcdb40f`, **6A-1** `78c59c5`, **Adım 5**: ayrıntı `docs/history.md`. A=`hudys3-p0` realm `9341458613758425`, B=`vericon-tenant-b-test` realm `9341458641399133` (TRY). A ve B `financial_access_enabled=true` (AGENTS 6b; geri alma: bayrak `false`).
 
