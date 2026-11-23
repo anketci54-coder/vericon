@@ -8,7 +8,8 @@ Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 - İlk pilot 7 gün, elle kapatma (`financial_access_enabled=false`); admin paneli ve ödeme kapsam dışı.
 - Ölçütler 7.1–7.7: İngilizce arayüz, müşteri açma listesi, süre/403, silme yolu, ToS, destek, dış kapılar.
 - **7.1-a uygulandı (2026-11-23):** `web/index.html` :92-95 silindi (pdf42-check, tenant-isolation-check + sonuç alanları); script etiketi ve `tenant-isolation-check.js` KALDI (qbo-disconnect işleyicisi orada). Sıradaki: 7.1-b (kod→İngilizce açıklama + 4 receipts bloğu; `finance-audit.js` bunları şu an göstermiyor), sonra 7.1-c metin çevirisi, 7.1-d `app.bundle.js` (kaynak yok), 7.1-e B ekran kabulü.
-- Envanter: durum kodları `invoice_audit.py` (~190; FOUND :2242,:2259; VERIFIED :894,:1170,:1246,:1250,:1358), Nginx `= /tenant-isolation-check.js` location conf :165-167.
+- **7.1-b+c KODLANDI (commit var, push ve dağıtım YOK; kullanıcı diff okuyacak):** `web/finance-audit.js` İngilizce + kod açıklamaları + 4 receipts bölümü, `style.css` +1 satır. Kabul (B canlı: conflict_count 3, unmatched 7/7, unbound 66, konsol temiz, Türkçe yok) dağıtımdan sonra. Dağıtım: yalnız finance-audit.js + style.css yedek+cp+cmp. Not: buton etiketi index.html'de Türkçe (7.1-c kalan).
+- BULGU (kapsam dışı): "Kapalı · Pilot" `index.html:76` sabit; "…finansal verilere erişim kapalıdır" `app.bundle.js:25` (/auth/me, tenant_authorized=false dalı) + 3 "Finansal erişim kapalı" mesajı bundle:25; `index.html:96` alt not. `/tenant/finance/access-check` bayrağı verir (`qbo_oauth.py:906`, `financial_access_enabled`).
 - BLOKE: 7.4 token iptali (AGENTS §6), app.bundle.js kaynağı yok, arayüz Türkçe (7.1-c/d).
 
 ## BİTTİ
