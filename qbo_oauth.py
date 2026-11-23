@@ -1020,6 +1020,26 @@ def _conflict_block(bound: dict | None, bound_marker: dict | None) -> dict | Non
             "results": results}
 
 
+UNMATCHED_FIELDS = ("document_id", "document_kind", "reason")
+
+
+def _unmatched_block(adapted: dict, bound: dict | None, bound_marker: dict | None) -> dict | None:
+    """Top-level, separate from receipts blocks: lists documents no order claims. Ids, kinds, codes only."""
+    import invoice_audit
+    if adapted.get("status") != "READY":
+        return None
+    out = {}
+    for name, profile, b in (("docnumber", RECEIPT_BINDING_PROFILE, bound), ("marker", "marker", bound_marker)):
+        r = invoice_audit.unmatched_documents(adapted["orders"], adapted["receipts"], b, profile=profile)
+        if r is None:
+            return None
+        out[name] = {"unbound": [{k: _audit_value(x.get(k)) for k in UNMATCHED_FIELDS} for x in r["unbound"]],
+                     "unmatched_count": r["unmatched_count"],
+                     "unmatched": [{k: _audit_value(x.get(k)) for k in UNMATCHED_FIELDS} for x in r["unmatched"]],
+                     "unmatched_truncated": r["unmatched_truncated"]}
+    return out
+
+
 @app.get("/tenant/finance/audit")
 def tenant_finance_audit(request: Request, store: str = "") -> dict:
     """On-demand read-only audit of the tenant's own orders vs QBO documents; nothing stored."""
@@ -1055,6 +1075,7 @@ def tenant_finance_audit(request: Request, store: str = "") -> dict:
     return {"store": connection["store"], "adapter_status": adapted["status"], "receipts": receipts,
             "receipts_marker": receipts_marker,
             "receipts_conflicts": _conflict_block(bound, bound_marker),
+            "receipts_unmatched": _unmatched_block(adapted, bound, bound_marker),
             "status": batch["status"] if batch else adapted["status"],
             "verified": bool(batch and batch.get("verified") is True),
             "orders_checked": len(results),

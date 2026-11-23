@@ -2107,7 +2107,7 @@ def test_stage4_http_finance_audit_receipts_marker_profile(stage4_http, monkeypa
                         lambda *a, profile='marker', **kw: None if profile == 'marker' else real_bind(*a, profile=profile, **kw))
     old = call()
     assert old['receipts_marker'] is None
-    extra = ('receipts_marker', 'receipts_conflicts')
+    extra = ('receipts_marker', 'receipts_conflicts', 'receipts_unmatched')
     assert {k: v for k, v in body.items() if k not in extra} == {k: v for k, v in old.items() if k not in extra}
     assert old['receipts_conflicts'] is None
     # receipts_conflicts is additive: stripped, the response equals the response without the conflict block.
@@ -2160,3 +2160,42 @@ def test_receipts_conflicts_classification_and_response():
         assert x['verified'] is False and x['cash_received_verified'] is False and x['bank_settlement_verified'] is False
     assert block['results'][0]['docnumber_document_id'] == '159' and block['results'][0]['marker_document_id'] == '166'
     assert q._conflict_block(None, bound(mark)) is None and q._conflict_block(bound(doc), None) is None
+
+
+def test_receipts_unmatched_b_table_cap_and_key_removal():
+    """B's 13 receipts: unbound (A) vs unmatched (B) per profile, 20 cap + truncated, additive top-level key."""
+    import invoice_audit
+    def doc(i, kind, num, ref=None, refund=None):
+        return {'kind': kind, 'id': str(i), 'doc_number': num, 'total': None, 'currency': 'TRY', 'order_ref': ref,
+                'refund_ref': refund, 'error': None, 'payment_record_verified': False}
+    S = 'SalesReceipt'
+    docs = [doc(11, S, '1003'), doc(17, S, '1008'), doc(38, S, '1011'), doc(47, S, '1014'), doc(159, S, '1001'),
+            doc(160, S, '1002'), doc(161, S, '1002'), doc(162, S, 'MKT-1', '1004'), doc(163, S, 'MKT-2', '1005'),
+            doc(164, S, 'MKT-3A', '1006'), doc(165, S, 'MKT-3B', '1006'), doc(166, S, 'MKT-5', '1007'),
+            doc(66, 'RefundReceipt', '1020')]
+    orders = [{'id': f'gid://shopify/Order/{n}', 'name': f'#{n}', 'refunds': []} for n in range(1001, 1009)]
+    def block(documents):
+        adapted = {'status': 'READY', 'orders': orders, 'receipts': documents}
+        b = lambda p: invoice_audit.bind_documents_to_orders(orders, documents, profile=p)
+        return q._unmatched_block(adapted, b('docnumber'), b('marker'))
+    out = block(docs)
+    ids = lambda rows, reason: [(x['document_id'], x['reason']) for x in rows if x['reason'] == reason]
+    for p in ('docnumber', 'marker'):
+        assert out[p]['unbound'] == [{'document_id': '66', 'document_kind': 'RefundReceipt',
+                                      'reason': 'BLOCKED_REFUND_MARKER_REQUIRED'}]
+        assert out[p]['unmatched_count'] == 7 and out[p]['unmatched_truncated'] is False
+        for x in out[p]['unmatched']:
+            assert set(x) == {'document_id', 'document_kind', 'reason'}
+    assert [x['document_id'] for x in out['docnumber']['unmatched']] == ['38', '47', '162', '163', '164', '165', '166']
+    assert {x['reason'] for x in out['docnumber']['unmatched']} == {'NO_ORDER_MATCH'}
+    assert [x['document_id'] for x in out['marker']['unmatched']] == ['11', '17', '38', '47', '159', '160', '161']
+    assert {x['reason'] for x in out['marker']['unmatched']} == {'NO_MARKER'}
+    # Cap: 25 more unmatched numbers -> count 32, 20 rows, truncated.
+    many = docs + [doc(1000 + i, S, f'X{i}') for i in range(25)]
+    big = block(many)['docnumber']
+    assert big['unmatched_count'] == 32 and len(big['unmatched']) == 20 and big['unmatched_truncated'] is True
+    # Binding results are unchanged by the listing; not-READY -> None.
+    before = invoice_audit.bind_documents_to_orders(orders, docs, profile='docnumber')
+    block(docs)
+    assert before == invoice_audit.bind_documents_to_orders(orders, docs, profile='docnumber')
+    assert q._unmatched_block({'status': 'BLOCKED'}, None, None) is None

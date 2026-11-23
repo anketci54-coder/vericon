@@ -2263,6 +2263,49 @@ def bind_documents_to_orders(orders: list[dict], documents: list[dict], *, profi
     return {"status": "OK", "results": results, "unbound": unbound}
 
 
+UNMATCHED_MAX = 20
+UNBOUND_MAX = 50
+
+
+def unmatched_documents(orders: list[dict], documents: list[dict], bound: dict | None, *,
+                        profile: str = "marker", prefix: str | None = None) -> dict | None:
+    """Pure listing of receipt documents no order claims; changes no binding result.
+
+    unbound (A): defective documents from bind_documents_to_orders. unmatched (B): well-formed
+    documents bound to no order (duplicates that hit an order are not unmatched).
+    """
+    if bound is None or bound.get("status") != "OK" or profile not in BIND_PROFILES:
+        return None
+    ids = {str(str(o.get("id") or "").split("/")[-1]) for o in orders}
+    names = set()
+    for o in orders:
+        n = _strip_hash(o.get("name"))
+        if n:
+            names |= {n} | ({prefix + n} if prefix else set())
+    refund_ids = {r.get("id") for o in orders for r in (o.get("refunds") if isinstance(o.get("refunds"), list) else [])
+                  if isinstance(r, dict)}
+    unmatched = []
+    for d in documents:
+        if d["error"]:
+            continue
+        if d["kind"] in REFUND_KINDS:
+            if d["refund_ref"] and d["refund_ref"] not in refund_ids:
+                unmatched.append((d, "NO_ORDER_MATCH"))
+        elif profile == "marker":
+            if not d["order_ref"]:
+                unmatched.append((d, "NO_MARKER"))
+            elif d["order_ref"] not in ids:
+                unmatched.append((d, "NO_ORDER_MATCH"))
+        elif _strip_hash(d["doc_number"]) and _strip_hash(d["doc_number"]) not in names:
+            unmatched.append((d, "NO_ORDER_MATCH"))
+    return {"unbound": [{"document_id": u["id"], "document_kind": u["kind"], "reason": u["status"]}
+                        for u in bound.get("unbound", [])][:UNBOUND_MAX],
+            "unmatched_count": len(unmatched),
+            "unmatched": [{"document_id": d["id"], "document_kind": d["kind"], "reason": r}
+                          for d, r in unmatched[:UNMATCHED_MAX]],
+            "unmatched_truncated": len(unmatched) > UNMATCHED_MAX}
+
+
 _CONFLICT_BOUND = {"DOCUMENT_RECORD_FOUND", "REVIEW_AMOUNT_MISMATCH", "REVIEW_CURRENCY_OR_TOTAL_UNKNOWN"}
 _CONFLICT_AMBIG = {"BLOCKED_DUPLICATE_DOCUMENT_NUMBER", "BLOCKED_DUPLICATE_DOCUMENT_REFERENCE"}
 _CONFLICT_NONE = {"REVIEW_NO_DOCUMENT", "BLOCKED_UNBOUND_DOCUMENTS", "BLOCKED_NO_ORDER_NUMBER"}
