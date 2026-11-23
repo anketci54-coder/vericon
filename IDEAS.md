@@ -7,7 +7,7 @@ Aşama kapanışında ilgili fikirler için karar: yap / ertele / çöpe at.
 ## Açık
 - [ ] 2026-11-16 | Disiplin kuralı: tüm ajan oturumları HANDOFF.md ile başlar ve biter | Adım 0
 - [x] 2026-11-18 | Eski 3 tür PII (Invoice/Payment/CreditMemo ham SELECT *): KAPANDI, whitelist `f229a04`, canlı kabul 2026-11-20 14:40 | Adım 7 öncesi
-- [ ] 2026-11-16 | envanter yapıldı (2026-11-23): 14 dal, KAPALI 6, KANITSIZ-GÜVENLİ 11 (hepsi hata kodu verip durur), satır 612 anahtar yoksa boş sayfa → REVIEW_NO_DOCUMENT; gerçek QBO sıfır-sonuç gövdesi ölçülmedi, ölçülene kadar kod değişmez | Adım 6
+- [ ] 2026-11-16 | envanter yapıldı (2026-11-23): 18 dal, KAPALI 6, KANITSIZ-GÜVENLİ 11 (hepsi hata kodu verip durur), KANITSIZ-RİSKLİ 1, satır 612 anahtar yoksa boş sayfa → REVIEW_NO_DOCUMENT; gerçek QBO sıfır-sonuç gövdesi ölçülmedi, ölçülene kadar kod değişmez | Adım 6
 - [ ] 2026-11-17 | shopify_read.py ~331-337: pageInfo/hasNextPage eksikse has_next_page=False üretiyor (fail-open); eksikse hata veya True olmalı. Canlı kod, dağıtım gerekir | Adım 4-5 öncesi
 - [ ] 2026-11-17 | Audit pilot şekil sınırı: yalnız tek ürün (SKU VERICON-TEST-001) + tek kargo satırı; gerçek müşteri için kapsam genişletme kararı, muhasebe politikası (dış kapı 2.5) gerekir | Adım 7
 - [ ] 2026-11-17 | B test siparişleri #1005-#1008 pilot şekline uymuyor (SKU yok, kargo satırı yok, #1008 1x300 vs faturada 3x100); doğrulanmış (VERIFIED) canlı örnek istenirse test verisi yeniden kurulmalı (düşük öncelik) | Adım 4-5 sonrası
