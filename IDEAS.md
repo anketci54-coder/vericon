@@ -17,7 +17,7 @@ Aşama kapanışında ilgili fikirler için karar: yap / ertele / çöpe at.
 - [ ] 2026-11-18 | Adım 6A adayı: (1) denetim yalnız Invoice/Payment/CreditMemo okuyor, gerçek mağazalarda yaygın SalesReceipt/RefundReceipt yok; (2) bağlama kuralı VERICON_SHOPIFY_ORDER_ID işaretine bağlı, gerçek bağlayıcılar (MyWorks: sipariş numarası belge numarası olur) bunu yazmıyor; (3) önce gerçek bağlayıcı çıktısı gözlemlenmeli. Başlatılmadı | Adım 6A
 - [ ] 2026-11-18 | Callback hata logunda IP/zaman kaydı yok; hata tekrar ederse kaynak belirlenemez (düşük öncelik, kod değişikliği yok) | Adım 7 sonrası
 - [ ] 2026-11-20 | Numara eşleştirmesi (docnumber profili) QBO'da "Custom transaction numbers" gerektirir; aksi hâlde DocNumber otomatik sıralı olur ve marker şart | Adım 6A-2b
-- [ ] 2026-11-20 | Eşleşmeyen receipt'ler `receipts` çıktısında yalnız sayı (`unbound_count`, `qbo_oauth.py:941`); hangi belge olduğu gösterilmiyor | Adım 6
+- [x] 2026-11-20 | Eşleşmeyen receipt listesi: KAPANDI, `receipts_unmatched` `9fe6a9a`, canlı kabul 2026-11-23 | Adım 6
 - [ ] 2026-11-20 | `PrivateNote`/`CustomField` serbest metin, bağlama işareti için gerekli; PII riski kalıyor (whitelist yalnız alan adını sınırlar, içeriği değil) | Adım 7 öncesi
 - [x] 2026-11-20 | docnumber/marker profil çelişkisi: KAPANDI, `receipts_conflicts` `9c308a0`, canlı kabul 2026-11-20 | Adım 6
 - [ ] 2026-11-20 | M4 (geçersiz marker `abc`, unbound+1 ve iki profilde BLOCKED_UNBOUND_DOCUMENTS) canlıda ölçülmedi; taban ölçümü bozar | Adım 6A-2b

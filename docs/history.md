@@ -556,3 +556,15 @@ Karar: BOUND+BOUND farklı id → `REVIEW_PROFILE_CONFLICT`. BOUND+AMBIG → `RE
 - Kod sonrası ve dağıtım öncesi yeni test yazılmaz; gerçek davranış canlı ölçümle kabul edilir (yeni test gerekirse önce sorulur).
 
 - 6A-2b marker kabul ayrıntısı: marker #1001 FOUND(166, `not | `), #1002 REVIEW_AMOUNT_MISMATCH(163, gid), #1003 BLOCKED_DUPLICATE_DOCUMENT_REFERENCE, #1004 FOUND(162), #1005–#1008 REVIEW_NO_DOCUMENT; B receipt'leri MKT-1(300), MKT-2(130), MKT-3A/3B(100), MKT-5(216); marker QBO'da "Message displayed on statement" = PrivateNote; #1005–#1007 TRY olduğundan M2/M3/M5 #1001–#1004'e kaydırıldı.
+
+## 2026-11-23 receipts_unmatched (HANDOFF devri)
+## Şu an tek açık iş
+**`receipts_unbound` kabul ölçütü (YAZILDI, kod yok, kullanıcı onayı bekliyor).** Şimdi: `unbound` yalnız (A) kusurlu belgeleri tutar (`invoice_audit.py:2197` error, `:2202` docnumber'da numarasız, `:2206` marker'sız iade); yanıtta yalnız `unbound_count` (`qbo_oauth.py:986`). (B) kusursuz ama eşleşmeyen satışlar hiçbir listede yok (sessiz); marker profilinde işaretsiz satışlar da öyle; siparişe bağlanmayan iade belgesi de öyle.
+- **Şekil (kullanıcı düzeltmesi 2026-11-23):** mevcut bloklara anahtar eklenmez (hash bozulur). Ayrı üst düzey tek anahtar `receipts_unmatched` = `{docnumber:{unbound:[≤50], unmatched_count, unmatched:[≤20], unmatched_truncated}, marker:{...}}`. Alanlar yalnız `document_id, document_kind, reason` (NO_ORDER_MATCH | NO_MARKER; A'da bind durum kodu). `bind_documents_to_orders` sonuçları değişmez; verified/cash/bank false; yeni sorgu yok.
+- **Gürültü/boyut:** okuma zaten ≤50 belge/tür (`qbo_oauth.py:573`), fazlası `has_more`=true ile kapanır; tavan 20 satır ≈ 1 KB. Gerçek mağazada B binlerce olursa yalnız sayı büyür.
+- **Bütçe:** yeni sorgu yok (5 GET /query aynı), yeni dış çağrı yok. Mevcut anahtarların hiçbiri/yapısı değişmez.
+- **Kabul (B, gerçek ölçüm, kullanıcı 2026-11-23):** 12 SalesReceipt (11 no1003, 17 no1008, 38 no1011, 47 no1014, 159 no1001, 160/161 no1002, 162 MKT-1, 163 MKT-2, 164 MKT-3A, 165 MKT-3B, 166 MKT-5; 162–166 ORDER_MARKER, diğerlerinde marker yok) + 1 RefundReceipt (66 no1020, marker yok).
+  | profil | unbound (A) | unmatched (B) |
+  |---|---|---|
+  | docnumber | 66 BLOCKED_REFUND_MARKER_REQUIRED | 7: 38, 47, 162, 163, 164, 165, 166 NO_ORDER_MATCH |
+- **`receipts_conflicts`** kod `9c308a0` (iki profil çelişki işareti; `receipts`/`receipts_marker`/ana denetim değişmedi; yeni sorgu yok). Dağıtım 2026-11-20 16:50 +0200: 8787–8789 sırayla, /health 200, oturumsuz audit 401, dış /health 200, 8782–8786 dinlemiyor; yedek yok, nginx değişmedi. Canlı kabul (kullanıcı, B, 17:16 +03:00 yerel): anahtarsız hash (receipts_marker ve receipts_conflicts çıkarılınca) d585b018…f532e LEN 3985; conflict_count 3; #1001 REVIEW_PROFILE_CONFLICT (159/166); #1002, #1003 REVIEW_PROFILE_AMBIGUOUS; #1004–#1008 NO_CONFLICT; verified/cash/bank false.
