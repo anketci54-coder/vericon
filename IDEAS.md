@@ -21,3 +21,4 @@ Aşama kapanışında ilgili fikirler için karar: yap / ertele / çöpe at.
 - [ ] 2026-11-20 | `PrivateNote`/`CustomField` serbest metin, bağlama işareti için gerekli; PII riski kalıyor (whitelist yalnız alan adını sınırlar, içeriği değil) | Adım 7 öncesi
 - [x] 2026-11-20 | docnumber/marker profil çelişkisi: KAPANDI, `receipts_conflicts` `9c308a0`, canlı kabul 2026-11-20 | Adım 6
 - [ ] 2026-11-20 | M4 (geçersiz marker `abc`, unbound+1 ve iki profilde BLOCKED_UNBOUND_DOCUMENTS) canlıda ölçülmedi; taban ölçümü bozar | Adım 6A-2b
+- [ ] 2026-11-23 | `receipts_unmatched.unbound` listesi 50'de sessizce kesiliyor, truncated bayrağı yok | Adım 6
