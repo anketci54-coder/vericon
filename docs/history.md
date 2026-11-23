@@ -580,3 +580,8 @@ Karar: BOUND+BOUND farklı id → `REVIEW_PROFILE_CONFLICT`. BOUND+AMBIG → `RE
 - **Önerilen kabul ölçütü (tek):** `QueryResponse` içinde entity anahtarı yokken yalnız `QueryResponse == {}` (veya yalnız sayfalama meta alanları) boş sayfa sayılır; başka anahtarlar içeren ama entity'siz şekil ValueError→503. Gerçek sıfır-sonuç gövdesi BLOKE olduğundan, kesin "boş" tanımı kullanıcı kararıdır.
 - **Test planı:** 1 test, `read_tenant_documents`, dal 612: (i) `{'QueryResponse': {'Invoice': []}}` ve gerçek-boş şekli → boş, has_more false; (ii) `{'QueryResponse': {'Other': [..]}}` → ValueError. Kod değişikliği yalnız satır 612. Dağıtım ayrı onay.
 - Karar (kullanıcı, 2026-11-23): envanter KAPANDI, kod YOK; satır 612 audit'te yalnız REVIEW_NO_DOCUMENT üretir; sıkılaştırma gerçek boş mağazayı 503'e çevirebilir; kanıtlı hata yok (AGENTS §10).
+
+
+## 2026-11-23 receipts_unmatched canlı kabul ayrıntısı (HANDOFF'tan taşındı)
+- **`receipts_unmatched`** kod `9fe6a9a`, dağıtım 2026-11-23 10:24 +0200 (sunucu saati): 8787–8789 sırayla, active, /health 200, oturumsuz audit 401, dış /health 200, yalnız 127.0.0.1:8787–8789 dinliyor; yedek yok, nginx değişmedi.
+  Canlı kabul (B, 2026-11-23 10:27 yerel, kullanıcı): anahtarsız hash (receipts_marker, receipts_conflicts, receipts_unmatched çıkarılınca) d585b018…f532e LEN 3985; docnumber unmatched 7 (38,47,162–166 NO_ORDER_MATCH); marker unmatched 7 (11,17,38,47,159,160,161 NO_MARKER); unbound iki profilde [66 BLOCKED_REFUND_MARKER_REQUIRED]; truncated false; alanlar document_id/document_kind/reason.

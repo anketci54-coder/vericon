@@ -82,7 +82,17 @@ Her adım sonu: `HANDOFF.md` güncellenir, kullanıcı onaylar, ancak sonra sonr
     - "Numara hiç yok" iki ayrı durumdur: siparişe ait receipt yok (#1004, `REVIEW_NO_DOCUMENT`) ve DocNumber'sız receipt (`BLOCKED_NO_DOCUMENT_NUMBER`). İkincisi sandbox'ta girilebilir mi (QBO otomatik numara verir mi) bilinmiyor: BLOKE; girilmeyecek.
     - `marker` profilinde bu 4 receipt'in hiçbiri bağlanmaz (işaret yok) ve hepsi `REVIEW_NO_DOCUMENT`; marker durumunu sınamak istenirse PrivateNote'a `VERICON_SHOPIFY_ORDER_ID=<id>` elle eklenmesi gerekir (ayrı karar).
 - [ ] 6 Güvenilirlik testleri
-- [ ] 7 ABD pilot müşteri
+- [ ] 7 ABD pilot müşteri (kabul ölçütü yazıldı 2026-11-23, onay bekliyor; başlatılmadı)
+  - **Karar (kullanıcı, 2026-11-23):** ilk pilot 7 gün; süre elle kapatılır (Supabase `financial_access_enabled=false`; uzatma = bayrağı `true` yapmak). Otomatik süre ve token iptali ilk pilot sonrasına. Kapsam DIŞI: admin paneli (3–5 müşteriden sonra), ödeme/abonelik (Adım 9).
+  - **Kabul ölçütü (her madde gerçek davranışla kanıtlanır; BİTTİ/BİTMEDİ/BLOKE):**
+    - **7.1** Arayüz tamamen İngilizce (görünür tüm metin, hata mesajları dahil). Bulgular (ana denetim, receipts, receipts_marker, receipts_conflicts, receipts_unmatched) konsolsuz ekranda sade dille görünür; her durum kodunun yanında kısa açıklama. Kanıt: B hesabında gerçek ekran, mevcut canlı veriyle beklenen sonuçlar.
+    - **7.2** Müşteri açma: yazılı tek sayfa elle kontrol listesi (Supabase: `ownership_verified`, `financial_access_enabled`), kod gerektirmez. Kanıt: yeni test hesabıyla baştan sona uygulanmış.
+    - **7.3** Süre: 7 gün, elle kapatma. Kanıt: bayrak `false` → `/tenant/finance/audit` 403 (daha önce ölçüldü, tekrar ölçülür); `true` → 200.
+    - **7.4** Bağlantıyı kesme/veri silme yolu: müşteri için QBO/Shopify tarafında kaldırma talimatı; bizde bağlantı satırı silme prosedürü. Token iptal çağrısı AGENTS §6 "POST yalnız token uç noktası" kuralına aykırı: **BLOKE** (ayrı onay).
+    - **7.5** Gizlilik/ToS sayfası: Adım 8'e bağlı. HANDOFF "yeni doküman" yasağı gereği metin üretimi ayrıca açık onay ister.
+    - **7.6** Destek e-postası ve geri bildirim yolu arayüzde görünür.
+    - **7.7** Dış kapılar (kod değil): Intuit üretim anahtarları/uygulama incelemesi, Shopify dağıtım kararı (4.3), 2.5 muhasebe politikası.
+  - **Açık bulgular (BLOKE):** `web/app.bundle.js` minified, kaynağı repoda yok; `index.html:92` "4-2 İzolasyon Testi" düğmesinin işlevi okunmadı; arayüz metinleri şu an Türkçe.
 - [ ] 8 Hukuk ve uyumluluk
 - [ ] 9 Abonelik ve ödeme
 - [ ] 10 Ticari lansman
