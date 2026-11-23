@@ -568,3 +568,15 @@ Karar: BOUND+BOUND farklı id → `REVIEW_PROFILE_CONFLICT`. BOUND+AMBIG → `RE
   |---|---|---|
   | docnumber | 66 BLOCKED_REFUND_MARKER_REQUIRED | 7: 38, 47, 162, 163, 164, 165, 166 NO_ORDER_MATCH |
 - **`receipts_conflicts`** kod `9c308a0` (iki profil çelişki işareti; `receipts`/`receipts_marker`/ana denetim değişmedi; yeni sorgu yok). Dağıtım 2026-11-20 16:50 +0200: 8787–8789 sırayla, /health 200, oturumsuz audit 401, dış /health 200, 8782–8786 dinlemiyor; yedek yok, nginx değişmedi. Canlı kabul (kullanıcı, B, 17:16 +03:00 yerel): anahtarsız hash (receipts_marker ve receipts_conflicts çıkarılınca) d585b018…f532e LEN 3985; conflict_count 3; #1001 REVIEW_PROFILE_CONFLICT (159/166); #1002, #1003 REVIEW_PROFILE_AMBIGUOUS; #1004–#1008 NO_CONFLICT; verified/cash/bank false.
+
+
+## 2026-11-23 documents/audit hata dalı envanteri (HANDOFF devri)
+**documents/audit hata dalı envanteri (yalnız okuma, kod yok). Kabul ölçütü onayı bekleniyor; commit yok.**
+- Envanter (`qbo_oauth.py` `read_tenant_documents` 577–640; rotalar 926, 1043; `bounded_query_get` 383):
+  - **KAPALI:** geçersiz sayfa/start (583; test 1872–74), has_more bayrağı (621; test 1868) ve audit'te fail-closed (`invoice_audit.py:1291,1301`; test_invoice_audit 1744, 1933), bozuk satır şekli (`Line:'broken'`, test 1909), ağ hatası `bounded_query_get` (398; test 54), sayaç 429 (test 926).
+  - **KANITSIZ-GÜVENLİ** (documents yolunda test yok; hepsi hata kodu verip durur): QBO 401→409 (600), 429 (603), 5xx→503 (605), diğer non-200→ValueError→503 (608), bozuk JSON (609), Fault/QueryResponse dict değil (610–611), rows liste/dict değil veya >limit+1 (613–615), invalid_grant→409 / token 429 / 5xx / diğer (622–633), RequestException→503 (634), realm uyuşmazlığı (591), rota 400 pencere (934). Kısmi sonuç yok: 5 sorgudan biri düşerse tümü atılır. IDEAS'a bırakıldı, test önerilmez.
+  - **KANITSIZ-RİSKLİ:** `rows = QueryResponse.get(entity, [])` (612). Anahtar yoksa sessizce boş sayfa, `has_more=false`. Gerçek QBO sıfır sonuçta anahtarı atlar, bu yüzden "boş" ile "bozuk" ayırt edilmiyor. Audit'te sonuç: belge yok → REVIEW_NO_DOCUMENT, sahte VERIFIED üretmez.
+  - **BLOKE:** QBO'nun gerçek sıfır-sonuç yanıt gövdesi bu repoda kayıtlı değil (yalnız `{'QueryResponse': {}}` varsayımı, test 54 ve count testleri).
+- **Önerilen kabul ölçütü (tek):** `QueryResponse` içinde entity anahtarı yokken yalnız `QueryResponse == {}` (veya yalnız sayfalama meta alanları) boş sayfa sayılır; başka anahtarlar içeren ama entity'siz şekil ValueError→503. Gerçek sıfır-sonuç gövdesi BLOKE olduğundan, kesin "boş" tanımı kullanıcı kararıdır.
+- **Test planı:** 1 test, `read_tenant_documents`, dal 612: (i) `{'QueryResponse': {'Invoice': []}}` ve gerçek-boş şekli → boş, has_more false; (ii) `{'QueryResponse': {'Other': [..]}}` → ValueError. Kod değişikliği yalnız satır 612. Dağıtım ayrı onay.
+- Karar (kullanıcı, 2026-11-23): envanter KAPANDI, kod YOK; satır 612 audit'te yalnız REVIEW_NO_DOCUMENT üretir; sıkılaştırma gerçek boş mağazayı 503'e çevirebilir; kanıtlı hata yok (AGENTS §10).
