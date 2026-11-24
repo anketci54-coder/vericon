@@ -39,3 +39,4 @@ label{font-size:12px;display:block;color:#cad6e1;font-weight:700;margin-bottom:1
 #finance-audit-result{min-width:0;font-size:12px}.audit-scroll{max-width:100%;overflow-x:auto}.audit-scroll table{border-collapse:collapse;min-width:max-content}.audit-scroll th,.audit-scroll td{padding:6px 10px;text-align:left;white-space:nowrap;border-bottom:1px solid #324253}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}
 #finance-audit-result h4{margin:16px 0 6px;font-size:13px}#finance-audit-result h5{margin:12px 0 4px;font-size:12px}.audit-note{display:block;white-space:normal;max-width:280px;opacity:.75;margin-top:2px}.audit-warning{border-left:3px solid #75F7D0;padding-left:10px}
+.proof-block{margin-top:14px}.proof-code{overflow-wrap:anywhere}
