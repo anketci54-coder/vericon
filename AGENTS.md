@@ -45,6 +45,9 @@ Her madde şu üç etiketten biriyle raporlanır:
 ## 6b. Onaylı karar (2026-11-16, kullanıcı)
 A/B kendi Sandbox hesapları için, yalnızca okuma yetkisiyle `financial_access_enabled` açılabilir. Sınırlar: yalnız A ve B, yalnız GET/query, scope artmaz, başka tenant yok. Geri alma: bayrağı tekrar `false` yap. Bu onay yalnızca `PLAN.md` Adım 2 ölçümü sonrasında, Adım 3'te kullanılır.
 
+## 6c. Onaylı karar (2026-11-25, kullanıcı)
+7.2 kabulü için tek bir test tenant'ı "C" oluşturulabilir ve yalnız kullanıcının kendi oluşturduğu test hesaplarıyla (kendi Supabase kullanıcısı, kendi Shopify geliştirme/test mağazası, kendi QBO Sandbox şirketi) `financial_access_enabled` açılabilir. Sınırlar: yalnız C, yalnız GET/query, scope artmaz, gerçek müşteri verisi yok, başka tenant yok. C'nin kullanıcı kimliği, mağaza alan adı ve realm'i C oluşturulunca HANDOFF'a yazılır; bu maddede yazılı olmayan hiçbir hesap için bayrak açılmaz. Shopify tenant kimliği (client_id/secret) sohbete ve Git'e girmez; kullanıcı kendi eliyle sunucuya koyar. Geri alma: C satırında bayrağı `false` yap. Bu onay yalnız PLAN 7.2 kabul denemesinde kullanılır.
+
 ## 7. Gizli bilgi
 Token, client secret, `.env`, JWT, gerçek müşteri kaydı, fatura ve tam log Git'e, sohbete veya devir notuna girmez. Sızıntı kanıtı olmadan rotasyon yapılmaz. Eski token arşivi otomatik geri yüklenmez.
 

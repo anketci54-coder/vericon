@@ -21,7 +21,7 @@ Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 - Adım 6 kabul ölçütleri yazılmadı. M4 bilerek ölçülmedi.
 
 ## BLOKE
-- C tenant için: AGENTS §6b'ye yeni onay (yalnız A ve B); Shopify tenant kimliğinin sunucuya alınma yöntemi (sır sohbete/Git'e girmez, 4.3).
+- C tenant: AGENTS §6c ile onaylı (2026-11-25). Kalan: Shopify tenant kimliğinin sunucuya alınma yöntemi (sır sohbete/Git'e girmez, 4.3).
 - 7.4 token iptali ve müşteri bağlantı kesme yolu (AGENTS §6 ayrı onay); `app.bundle.js` kaynağı repoda yok.
 - Gerçek müşteri QBO: Intuit üretim anahtarları (7.7). Receipt ödeme alanı beyaz listesi yok.
 - Eski CLI `invalid_grant` doğrulanmadı. Dış kapılar: 2.5, 2.6–2.7, 2.8, 4.3.
