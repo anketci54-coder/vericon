@@ -8,7 +8,6 @@
   <title>VERICON | Finance</title>
   <link rel="stylesheet" href="/style.css">
   <script type="module" defer src="/app.bundle.js"></script>
-  <script defer src="/tenant-isolation-check.js"></script>
   <script defer src="/finance-audit.js"></script>
 
 </head>
@@ -81,13 +80,13 @@
             <p id="shopify-proof-value" class="proof-code" hidden></p>
             <button class="secondary-button" id="shopify-proof-verify" type="button" hidden>Verify Shopify code</button>
           </section>
-          <section id="tenant-shopify-proof" class="proof-block">
+          <section id="tenant-shopify-proof" class="proof-block" hidden>
             <button class="secondary-button" id="tenant-shopify-start" type="button">Generate second-store verification code</button>
             <p id="tenant-shopify-code" class="proof-code" hidden></p>
             <button class="secondary-button" id="tenant-shopify-verify" type="button" hidden>Verify second-store code</button>
           </section>
           <button class="secondary-button" id="qbo-connect" type="button" hidden>Authorize QuickBooks Sandbox account</button>
-          <button class="secondary-button" id="qbo-disconnect" type="button">Disconnect QuickBooks</button>
+          <button class="secondary-button" id="qbo-disconnect" type="button" hidden>Disconnect QuickBooks</button>
           <p id="qbo-disconnect-result" role="status" aria-live="polite" hidden></p>
           <button class="secondary-button" id="finance-audit-run" type="button">Run financial audit (read-only)</button>
           <div id="finance-audit-result" role="status" aria-live="polite" hidden></div>
