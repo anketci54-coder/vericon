@@ -25,3 +25,6 @@ Aşama kapanışında ilgili fikirler için karar: yap / ertele / çöpe at.
 - [ ] 2026-11-23 | tenant-isolation-check.js hâlâ A/B realm ID'lerini taşıyor ve Nginx'ten servis ediliyor; iptal işleyicisini ayrı dosyaya taşı, eski dosyayı ve nginx location'ı kaldır (nginx reload ayrı onay) | Adım 7.1
 - [x] 2026-11-23 | ÇÖZÜLDÜ `4e0c5bd` (2026-11-24) | "Musteri veri erisimi: Kapali · Pilot" (index.html:76, :96, app.bundle.js /auth/me tenant_authorized=false mesajlari) bayragi true olan B'de yanlis; access-check financial_access_enabled donduruyor; cozum: notr metin veya bayraga gore guncelleme | Adim 7.1
 - [ ] 2026-11-24 | receipts bölüm başlığı 'Status: OK / Receipts were matched to orders' yanıltıcı, 8 siparişin 4'ünde belge yok | Adım 7
+- [ ] 2026-11-25 | Ownership mesajı ('This store is already verified.') stilsiz düz yazı çıkıyor; tenant-shopify-code alanına sınıf ver | Adım 7
+- [ ] 2026-11-25 | Pilot mağaza (A) tenant ownership düğmesine basarsa backend 409 döner ve ekranda yanıltıcı 'not authorized' mesajı çıkar | Adım 7
+- [ ] 2026-11-25 | tenant-isolation-check.js: script etiketi 7.2-0 ile index.html'den kalktı, dosya ve nginx location duruyor; dosyayı sil, location'ı kaldır (nginx reload ayrı onay) | Adım 7

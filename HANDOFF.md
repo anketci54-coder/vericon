@@ -1,30 +1,30 @@
 # HANDOFF (en fazla yarım sayfa)
 
-Güncelleme: 2026-11-24
+Güncelleme: 2026-11-25
 Son bilinen SHA: `git log -1` (bu dosyayı içeren commit)
 
 ## Şu an tek açık iş
-**7.2** (PLAN.md Adım 7): müşteri açma için yazılı tek sayfa elle kontrol listesi (Supabase `ownership_verified`, `financial_access_enabled`). Başlamadı; kapsam ve kabul ölçütü başlamadan kullanıcıyla yazılır.
-- Önce kullanıcı karar verir: müşteri ekranındaki 3 düğme (Shopify kod x2, Disconnect QuickBooks) kalsın mı.
+**7.2 kabulü** (PLAN.md Adım 7): kontrol listesi yazıldı (`docs/pilot-onboarding.md`), "yeni test hesabıyla baştan sona uygulanmış" kanıtı YOK. PARK: iki engel kullanıcı kararı bekliyor (aşağıda BLOKE). Karar gelmeden başlanmaz.
 - İlk pilot 7 gün, elle kapatma (`financial_access_enabled=false`); admin paneli ve ödeme kapsam dışı.
 
 ## BİTTİ
-- **7.1 İngilizce arayüz:** kodlar `cffd065` (a), `56b3c1e` (b), `ad63780` (c), `4e0c5bd` (d). GitHub=yerel `4e0c5bd` (ls-remote 2026-11-24). Yalnız statik dağıtım, cmp OK, nginx ve servis dokunulmadı; yedekler `/var/www/vericon-app/*.bak-20261124-*`.
-- Canlı kanıt (B, kullanıcı, 2026-11-24): tablo İngilizce; conflict_count 3; unmatched 7/7; kusurlu belge 1 (ID 66); oturum ekranı "Verified ✓", "Enabled · Pilot", doğru yeşil kutu; giriş ekranı ve kod sonrası düğme İngilizce; konsolda yalnız favicon 404. Bundle yaması bağımsız doğrulandı (38 değişiklik, kalan Türkçe 0).
-- Önceki: receipts_unmatched `9fe6a9a`, receipts_conflicts `9c308a0`, 6A-2b `aa563b6`, PII `f229a04`, docnumber `bbebb7f`, 6A-2a `dcdb40f`, 6A-1 `78c59c5`, Adım 5 (`docs/history.md`).
+- **7.1 İngilizce arayüz** kapandı (`cffd065`, `56b3c1e`, `ad63780`, `4e0c5bd`); B canlı kabul 2026-11-24. Ayrıntı `docs/history.md`.
+- **7.2-0** `eab8a1f`: `tenant-isolation-check.js` script etiketi `index.html`'den kalktı; "Disconnect QuickBooks" gizli (düğme Intuit'te refresh token iptal eder, `qbo_oauth.py:295-313`; tıklanırsa A/B bağlantısı kopar).
+- **7.2-0b** `2f6f7a3`: ownership bölümü düzeltildi. `/shopify/ownership/*` yalnız pilot mağaza (`STORE`) içindir, yeni mağaza için `/tenant/shopify/ownership/*` kullanılır; artık yalnız tenant bölümü görünür. B canlı: "This store is already verified.", konsol temiz. Bundle değişikliği bağımsız doğrulandı (bayt bayt).
+- **7.2-a** `c5b66a5`: `docs/pilot-onboarding.md` (30 satır, operatör adımları + müşteriye İngilizce blok).
 - A=`hudys3-p0` realm `9341458613758425`, B=`vericon-tenant-b-test` realm `9341458641399133` (TRY). İkisi `financial_access_enabled=true` (AGENTS 6b; geri alma: bayrak `false`).
 
 ## BİTMEDİ
+- 7.2 kabulü: yeni (C) tenant ile Adım 4 ve 7 canlıda denenmedi.
 - Bayrak `false` dalı (bundle metni) canlıda ölçülmedi; 7.3'te bayrak false/true ölçümüyle.
-- `tenant-isolation-check.js` A/B realm ID'leri açıkta (kaldırmak nginx reload onayı ister); `/favicon.ico` 404.
-- IDEAS: unbound 50'de sessiz kesiliyor; receipts bölüm başlığı "Status: OK" yanıltıcı; serbest metin PII.
-- Adım 6 kabul ölçütleri yazılmadı. M4 (geçersiz marker `abc`) bilerek ölçülmedi.
+- `tenant-isolation-check.js` dosyası ve nginx location duruyor, A/B realm ID'leri hâlâ erişilebilir (kaldırmak nginx reload onayı ister); `/favicon.ico` 404.
+- Adım 6 kabul ölçütleri yazılmadı. M4 bilerek ölçülmedi.
 
 ## BLOKE
-- 7.4 token iptali (AGENTS §6 ayrı onay); `app.bundle.js` kaynağı repoda yok (yalnız dizge yaması yapıldı).
-- Receipt ödeme alanı beyaz listesi yok; bilinene kadar cash/banka false.
-- Eski CLI `invalid_grant` doğrulanmadı (dış çağrı).
-- Dış kapılar: 2.5 muhasebe politikası, 2.6–2.7 banka/ödeme verisi, 2.8 muhasebeci örneklemi, 4.3 Shopify dağıtım kararı.
+- C tenant için: AGENTS §6b'ye yeni onay (yalnız A ve B); Shopify tenant kimliğinin sunucuya alınma yöntemi (sır sohbete/Git'e girmez, 4.3).
+- 7.4 token iptali ve müşteri bağlantı kesme yolu (AGENTS §6 ayrı onay); `app.bundle.js` kaynağı repoda yok.
+- Gerçek müşteri QBO: Intuit üretim anahtarları (7.7). Receipt ödeme alanı beyaz listesi yok.
+- Eski CLI `invalid_grant` doğrulanmadı. Dış kapılar: 2.5, 2.6–2.7, 2.8, 4.3.
 
 ## Yapılmayacaklar
 - Eski CLI OAuth kurtarma, OAuth URL üretme; yeni test yığını, refactor, yeni doküman; Profit/Intelligence
