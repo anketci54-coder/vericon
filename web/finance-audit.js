@@ -5,6 +5,8 @@
 
   // All user-visible text lives here. Codes are always shown raw; descriptions never claim more than the check does.
   const TEXT = {
+    receiptsNoneMatched: 'No receipts matched yet. See each order below.',
+    receiptsPartial: (m, n) => 'Receipts matched for ' + m + ' of ' + n + ' orders. See each order below.',
     failed: 'AUDIT NOT COMPLETED',
     sessionRequired: 'Session required',
     accessDenied: 'Access denied',
@@ -136,9 +138,9 @@
     return node;
   };
   const line = (label, value) => el('p', label + ': ' + value);
-  const codeLine = (label, code) => {
+  const codeLine = (label, code, override) => {
     const p = el('p', label + ': ' + text(code));
-    const note = describe(code);
+    const note = override || describe(code);
     if (note) p.appendChild(el('small', note, 'audit-note'));
     return p;
   };
@@ -203,12 +205,16 @@
 
   const receiptSection = (title, block) => section(title, () => {
     if (!isObject(block) || !Array.isArray(block.results)) return null;
+    const rows = objectRows(block.results);
+    // block.status 'OK' only means the run completed; matched count comes from results[].document_record_found
+    const matched = rows.filter(r => r.document_record_found === true).length;
+    const summary = block.status === 'OK' && matched < rows.length
+      ? (matched === 0 ? TEXT.receiptsNoneMatched : TEXT.receiptsPartial(matched, rows.length)) : null;
     const nodes = [
       line(TEXT.label.profile, text(block.profile)),
-      codeLine(TEXT.label.status, block.status),
+      codeLine(TEXT.label.status, block.status, summary),
       line(TEXT.label.unbound, text(block.unbound_count))
     ];
-    const rows = objectRows(block.results);
     if (rows.length) {
       nodes.push(table(['order', 'status', 'document_id', 'document_kind', 'document_record_found',
         'cash_received_verified', 'bank_settlement_verified'], rows));
